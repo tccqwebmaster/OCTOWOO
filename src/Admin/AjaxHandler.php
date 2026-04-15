@@ -48,6 +48,7 @@ class AjaxHandler {
             'octowoo_import_images',
             'octowoo_purge_imported',
             'octowoo_scan_counts',
+            'octowoo_drop_sql',
         ];
 
         foreach ( $actions as $action ) {
@@ -115,6 +116,10 @@ class AjaxHandler {
 
             case 'octowoo_scan_counts':
                 $this->actionScanCounts();
+                break;
+
+            case 'octowoo_drop_sql':
+                $this->actionDropSql();
                 break;
 
             default:
@@ -420,8 +425,19 @@ class AjaxHandler {
             $saved['source'] = 'local';
             update_option( 'octowoo_config', $saved, false );
 
+            // Persist import metadata so the Settings page can show an 'already imported' status.
+            $table_count = SqlImporter::getImportedInfo()['tables'];
+            update_option( 'octowoo_sql_import_meta', [
+                'filename'    => $name,
+                'imported_at' => current_time( 'mysql' ),
+                'prefix'      => $prefix,
+                'tables'      => $table_count,
+            ], false );
+
             wp_send_json_success( [
-                'message' => $last['message'] ?? 'Import complete.',
+                'message'  => $last['message'] ?? 'Import complete.',
+                'tables'   => $table_count,
+                'filename' => $name,
             ] );
         } catch ( \Throwable $e ) {
             wp_send_json_error( [ 'message' => 'SQL import failed: ' . $e->getMessage() ] );
@@ -582,6 +598,28 @@ class AjaxHandler {
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
         ] );
+    }
+
+    // ── Action: drop imported SQL tables ─────────────────────────────────────
+
+    private function actionDropSql(): void {
+        if ( CheckpointManager::getActiveRunId() ) {
+            wp_send_json_error( [ 'message' => __( 'Cannot drop tables while a migration is active. Abort it first.', 'octowoo' ) ] );
+            return;
+        }
+
+        $importer = new SqlImporter();
+        $importer->dropImportedTables();
+        delete_option( 'octowoo_sql_import_meta' );
+
+        // Switch source back to remote since local tables are gone.
+        $config = get_option( 'octowoo_config', [] );
+        if ( ( $config['source'] ?? '' ) === 'local' ) {
+            $config['source'] = 'remote';
+            update_option( 'octowoo_config', $config, false );
+        }
+
+        wp_send_json_success( [ 'message' => __( 'Imported tables dropped. Source mode reset to Remote.', 'octowoo' ) ] );
     }
 
     // ── Action: scan source entity counts ─────────────────────────────────────

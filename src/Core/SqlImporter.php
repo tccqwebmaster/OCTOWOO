@@ -41,6 +41,7 @@ class SqlImporter {
      * Drop all previously-imported OC tables (clean slate before re-import).
      */
     public function dropImportedTables(): void {
+    public function dropImportedTables(): void {
         global $wpdb;
 
         $tables = $wpdb->get_col(
@@ -54,6 +55,36 @@ class SqlImporter {
         foreach ( $tables as $tbl ) {
             $wpdb->query( "DROP TABLE IF EXISTS `" . esc_sql( $tbl ) . "`" ); // phpcs:ignore WordPress.DB.PreparedSQL
         }
+    }
+
+    /**
+     * Return info about a previously-imported SQL dump.
+     *
+     * Checks two sources:
+     *  1. Stored WP option  octowoo_sql_import_meta  (written by actionImportSql).
+     *  2. Live table count  in information_schema     (reliable even if option is stale).
+     *
+     * @return array{tables:int, filename:string, imported_at:string, prefix:string}
+     */
+    public static function getImportedInfo(): array {
+        global $wpdb;
+
+        $count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME LIKE %s",
+                DB_NAME,
+                self::IMPORT_PREFIX . '%'
+            )
+        );
+
+        $meta = get_option( 'octowoo_sql_import_meta', [] );
+
+        return [
+            'tables'      => $count,
+            'filename'    => $meta['filename']    ?? '',
+            'imported_at' => $meta['imported_at'] ?? '',
+            'prefix'      => $meta['prefix']      ?? '',
+        ];
     }
 
     /**

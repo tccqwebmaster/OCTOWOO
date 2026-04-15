@@ -303,6 +303,29 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                     </div>
                     <div id="ow-sql-result" style="margin-top:8px;font-size:13px;"></div>
 
+                    <?php
+                    $sql_info = \OctoWoo\Core\SqlImporter::getImportedInfo();
+                    if ( $sql_info['tables'] > 0 ):
+                    ?>
+                        <div id="ow-sql-imported-status" class="ow-alert ow-alert-success" style="margin-top:10px;padding:8px 12px;font-size:12px;">
+                            ✔ <strong><?php esc_html_e( 'SQL data ready:', 'octowoo' ); ?></strong>
+                            <?php echo esc_html( $sql_info['tables'] ); ?> <?php esc_html_e( 'tables imported', 'octowoo' ); ?>
+                            <?php if ( $sql_info['filename'] ): ?>
+                                — <code><?php echo esc_html( $sql_info['filename'] ); ?></code>
+                            <?php endif; ?>
+                            <?php if ( $sql_info['imported_at'] ): ?>
+                                <span style="color:#555;"> (<?php echo esc_html( $sql_info['imported_at'] ); ?>)</span>
+                            <?php endif; ?>
+                            <span style="float:right;">
+                                <a href="#" id="ow-btn-drop-sql" style="color:#c62828;font-size:11px;" title="<?php esc_attr_e( 'Drop all imported tables and clear this status', 'octowoo' ); ?>">
+                                    ✕ <?php esc_html_e( 'Clear', 'octowoo' ); ?>
+                                </a>
+                            </span>
+                        </div>
+                    <?php else: ?>
+                        <div id="ow-sql-imported-status" class="ow-alert" style="display:none;margin-top:10px;padding:8px 12px;font-size:12px;"></div>
+                    <?php endif; ?>
+
                     <h3 style="margin:18px 0 12px;font-size:14px;"><?php esc_html_e( '2 — Upload Images ZIP (optional)', 'octowoo' ); ?></h3>
                     <p style="font-size:12px;color:#666;margin:0 0 10px;">
                         <?php esc_html_e( 'ZIP your OpenCart /image/ folder and upload it here. The images will be extracted to wp-content/uploads/octowoo-images/ and used during migration instead of a remote path.', 'octowoo' ); ?>

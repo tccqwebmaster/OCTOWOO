@@ -134,8 +134,18 @@
                 if (res.success) {
                     $('#ow-sql-result').text('✔ ' + res.data.message).css('color', '#2e7d32');
                     $('#ow-sql-progress-bar').css('width', '100%').addClass('done');
-                    $('#ow-sql-status').text('Done');
-                } else {
+                    $('#ow-sql-status').text('Done');                    // Refresh the persistent status banner without a page reload.
+                    var d = res.data;
+                    var tables   = d.tables   || 0;
+                    var filename = d.filename || '';
+                    var $status  = $('#ow-sql-imported-status');
+                    if (tables > 0) {
+                        var html = '\u2714 <strong>SQL data ready:</strong> ' + tables + ' tables imported';
+                        if (filename) { html += ' \u2014 <code>' + $('<span>').text(filename).html() + '</code>'; }
+                        html += ' <span style="float:right;"><a href="#" id="ow-btn-drop-sql" style="color:#c62828;font-size:11px;">\u2715 Clear</a></span>';
+                        $status.html(html)
+                               .css({'background':'#edf7ed','border-color':'#4caf50','color':'#1b5e20','display':'block'});
+                    }                } else {
                     $('#ow-sql-result').text('✘ ' + (res.data && res.data.message ? res.data.message : 'Import failed.')).css('color', '#c62828');
                 }
             })
@@ -145,6 +155,24 @@
             .always(function () {
                 $('#ow-btn-import-sql').prop('disabled', false).text('⬆ Import SQL');
                 setTimeout(function () { $('#ow-sql-progress').hide(); }, 2000);
+            });
+        });
+
+        // ── Drop imported SQL tables (Clear button) ───────────────────────
+        $(document).on('click', '#ow-btn-drop-sql', function (e) {
+            e.preventDefault();
+            if (!confirm('This will drop all imported OpenCart tables (octowoo_oc_*) from this WordPress database. Continue?')) { return; }
+            $.post(octoWoo.ajaxUrl, {
+                action: 'octowoo_drop_sql',
+                nonce:  octoWoo.nonce,
+            })
+            .done(function (res) {
+                if (res.success) {
+                    $('#ow-sql-imported-status').hide();
+                    $('#ow-sql-result').text('\u2714 ' + res.data.message).css('color', '#2e7d32');
+                } else {
+                    alert((res.data && res.data.message) ? res.data.message : 'Drop failed.');
+                }
             });
         });
 
