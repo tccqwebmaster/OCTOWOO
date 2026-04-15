@@ -1,0 +1,16 @@
+# Nested copy of this plugin (development artifact)
+OCTOWOO/
+
+# Deployment archives
+*.zip
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE / editor folders
+.idea/
+.vscode/
+
+# PHP error logs
+*.log

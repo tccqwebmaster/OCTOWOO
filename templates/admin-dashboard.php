@@ -180,6 +180,18 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
             </p>
         </div>
 
+        <!-- Source Data Summary -->
+        <div class="ow-card" id="ow-source-summary-card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+                <h2 style="margin:0;"><?php esc_html_e( 'Source Data Summary', 'octowoo' ); ?></h2>
+                <button type="button" id="ow-btn-scan" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:4px 12px;">
+                    🔍 <?php esc_html_e( 'Scan Database', 'octowoo' ); ?>
+                </button>
+            </div>
+            <p class="ow-form-hint" style="margin:0 0 8px;"><?php esc_html_e( 'Shows row counts for all major entities in your OpenCart source database. Run this before migrating to confirm the connection is working and to know what will be imported.', 'octowoo' ); ?></p>
+            <div id="ow-scan-result" style="min-height:24px;"></div>
+        </div>
+
         <!-- Progress table -->
         <div class="ow-card">
             <h2><?php esc_html_e( 'Migration Progress', 'octowoo' ); ?></h2>

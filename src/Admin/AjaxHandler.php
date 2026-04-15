@@ -47,6 +47,7 @@ class AjaxHandler {
             'octowoo_import_sql',
             'octowoo_import_images',
             'octowoo_purge_imported',
+            'octowoo_scan_counts',
         ];
 
         foreach ( $actions as $action ) {
@@ -110,6 +111,10 @@ class AjaxHandler {
 
             case 'octowoo_purge_imported':
                 $this->actionPurgeImported();
+                break;
+
+            case 'octowoo_scan_counts':
+                $this->actionScanCounts();
                 break;
 
             default:
@@ -577,6 +582,34 @@ class AjaxHandler {
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
         ] );
+    }
+
+    // ── Action: scan source entity counts ─────────────────────────────────────
+
+    private function actionScanCounts(): void {
+        $defaults  = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved     = get_option( 'octowoo_config', [] );
+
+        $db_config           = array_merge(
+            $defaults['db'],
+            is_array( $saved['db'] ?? null ) ? $saved['db'] : []
+        );
+        $db_config['source'] = $saved['source'] ?? 'remote';
+
+        $connector = new \OctoWoo\Core\DatabaseConnector( $db_config );
+        $error     = $connector->testConnection();
+
+        if ( $error !== null ) {
+            wp_send_json_error( [ 'message' => 'Cannot connect to source database: ' . $error ] );
+            return;
+        }
+
+        try {
+            $counts = $connector->scanSourceCounts();
+            wp_send_json_success( [ 'counts' => $counts ] );
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => 'Scan failed: ' . $e->getMessage() ] );
+        }
     }
 
     // ── Action: purge imported data ───────────────────────────────────────────

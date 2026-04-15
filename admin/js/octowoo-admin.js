@@ -56,6 +56,10 @@
 
         $('#ow-btn-test-conn').on('click', testConnection);
 
+        $('#ow-btn-scan').on('click', scanSourceCounts);
+
+        $('#ow-btn-scan').on('click', scanSourceCounts);
+
         // Log controls.
         $('#ow-log-level-filter').on('change', function () { refreshLogs(); });
         $('#ow-btn-refresh-logs').on('click', function () { refreshLogs(); });
@@ -232,6 +236,63 @@
             .always(function () {
                 $btn.prop('disabled', false).text('🗑 Purge Selected');
             });
+        });
+    }
+
+    /* ── Source database scan ─────────────────────────────────────────── */
+    function scanSourceCounts() {
+        var $btn    = $('#ow-btn-scan');
+        var $result = $('#ow-scan-result');
+        $btn.prop('disabled', true).text('Scanning…');
+        $result.html('<span style="color:#888;">Connecting to source database…</span>');
+
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_scan_counts',
+            nonce:  octoWoo.nonce,
+        })
+        .done(function (res) {
+            if (res.success) {
+                var counts = res.data.counts;
+                var labels = {
+                    products:       'Products',
+                    categories:     'Categories',
+                    manufacturers:  'Manufacturers / Brands',
+                    customers:      'Customers',
+                    orders:         'Orders',
+                    reviews:        'Reviews',
+                    tax_classes:    'Tax Classes',
+                    coupons:        'Coupons',
+                    languages:      'Languages',
+                    information:    'Information Pages',
+                    order_statuses: 'Order Statuses',
+                    product_images: 'Product Images',
+                    tags:           'Tags',
+                    filter_groups:  'Filter Groups',
+                    downloads:      'Downloads',
+                };
+                var html = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px 24px;font-size:13px;margin-top:6px;">';
+                $.each(labels, function (key, label) {
+                    var val = counts[key];
+                    if (val === undefined || val === -1) {
+                        html += '<div style="color:#bbb;">― ' + label + '</div>';
+                    } else {
+                        html += '<div><strong style="font-size:15px;color:#1d2327;">' +
+                                parseInt(val, 10).toLocaleString() +
+                                '</strong> <span style="color:#555;">' + label + '</span></div>';
+                    }
+                });
+                html += '</div>';
+                $result.html(html);
+            } else {
+                $result.html('<span style="color:#c62828;">✘ ' +
+                    ((res.data && res.data.message) ? res.data.message : 'Scan failed.') + '</span>');
+            }
+        })
+        .fail(function (xhr) {
+            $result.html('<span style="color:#c62828;">✘ ' + xhr.statusText + '</span>');
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('🔍 Scan Database');
         });
     }
 

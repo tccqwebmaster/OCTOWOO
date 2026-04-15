@@ -216,4 +216,51 @@ class DatabaseConnector {
     public function table( string $name ): string {
         return $this->prefix . $name;
     }
+
+    // ── Source scan ───────────────────────────────────────────────────────────
+
+    /**
+     * Count all major entities in the source OpenCart database.
+     *
+     * Each table is tried individually so missing tables in older OC versions
+     * (e.g. `tag` which appeared in OC 2+) do not abort the whole scan.
+     *
+     * Returns -1 for any table that does not exist or is inaccessible.
+     *
+     * @return array<string, int>
+     */
+    public function scanSourceCounts(): array {
+        $tables = [
+            'products'        => 'product',
+            'categories'      => 'category',
+            'manufacturers'   => 'manufacturer',
+            'customers'       => 'customer',
+            'orders'          => 'order',
+            'reviews'         => 'review',
+            'tax_classes'     => 'tax_class',
+            'coupons'         => 'coupon',
+            'languages'       => 'language',
+            'information'     => 'information',
+            'order_statuses'  => 'order_status',
+            'product_images'  => 'product_image',
+            'tags'            => 'tag',
+            'filter_groups'   => 'filter_group',
+            'downloads'       => 'download',
+        ];
+
+        $counts = [];
+        $this->connect(); // Ensure connection is open before looping.
+
+        foreach ( $tables as $label => $table_name ) {
+            $qualified = $this->prefix . $table_name;
+            try {
+                // Table name is from our own safe list — not user input.
+                $counts[ $label ] = (int) $this->fetchColumn( "SELECT COUNT(*) FROM `{$qualified}`" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            } catch ( \Throwable $e ) {
+                $counts[ $label ] = -1; // table missing or inaccessible
+            }
+        }
+
+        return $counts;
+    }
 }
