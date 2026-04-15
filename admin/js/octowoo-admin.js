@@ -70,9 +70,10 @@
             pollProgress();
         }
 
-        // If there's an active run in the DB (interrupted), enable Abort so
-        // the user can clear the lock without having to Resume first.
+        // If there's an active run in the DB (interrupted), start continuous
+        // polling so the table stays live — and enable Abort.
         if (octoWoo.activeRunId) {
+            startPolling();
             $btnAbort.prop('disabled', false);
         }
 
@@ -356,6 +357,7 @@
         }
         chunkFailCount = 0;
         isRunning = true;
+        startPolling(); // continuous fallback polling so table stays live if chunks fail
         runNextChunk();
     }
 
@@ -421,6 +423,7 @@
             setBannerInfo(
                 'Chunk failed (HTTP ' + (httpStatus || '?') + ') — retrying in ' + retryIn + 's… (' + chunkFailCount + '/3)'
             );
+            pollProgress(); // refresh table from DB so any completed rows stay visible
             setTimeout(runNextChunk, retryIn * 1000);
         });
     }

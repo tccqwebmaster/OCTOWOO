@@ -295,6 +295,10 @@ class MigrationManager {
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
     private function bootstrap(): void {
+        // Ensure the plugin's DB tables exist (covers plugin upgrades where
+        // activation hook was not re-fired after files were replaced).
+        \OctoWoo_Activator::maybeCreateTables();
+
         // Inject the top-level 'source' flag into the db config so DatabaseConnector
         // can switch to the locally-imported WP tables when source = 'local'.
         // Without this, local-mode migration always tries the remote OC DB and fails.

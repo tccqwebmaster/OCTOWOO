@@ -22,6 +22,22 @@ class OctoWoo_Activator {
         flush_rewrite_rules();
     }
 
+    /**
+     * Ensure tables exist and are up to date.
+     *
+     * Safe to call on every migration run: dbDelta() is a no-op if the schema
+     * already matches.  This covers plugin upgrades where files are replaced
+     * without a WP deactivate/activate cycle (a common deployment pattern).
+     */
+    public static function maybeCreateTables(): void {
+        $installed = get_option( 'octowoo_db_version', '' );
+        if ( $installed === OCTOWOO_VERSION ) {
+            return; // Already up to date — skip.
+        }
+        self::create_tables();
+        update_option( 'octowoo_db_version', OCTOWOO_VERSION );
+    }
+
     // ── Database tables ───────────────────────────────────────────────────────
 
     private static function create_tables(): void {
