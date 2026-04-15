@@ -65,101 +65,153 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
         <!-- Status banner (populated by JS) -->
         <div id="ow-status-banner" class="ow-alert ow-alert-info" style="display:none;"></div>
 
-        <!-- Migration controls -->
+        <?php if ( $active_run ): ?>
+            <div id="ow-active-run-banner" class="ow-alert ow-alert-warning">
+                <?php printf( esc_html__( 'A migration is in progress (Run ID: %s). Resume or Abort it below.', 'octowoo' ), '<code>' . esc_html( $active_run ) . '</code>' ); ?>
+            </div>
+        <?php elseif ( $last_run ): ?>
+            <div class="ow-alert ow-alert-info">
+                <?php printf( esc_html__( 'Last migration: Run ID %1$s completed at %2$s.', 'octowoo' ), '<code>' . esc_html( $last_run ) . '</code>', esc_html( $last_run_at ) ); ?>
+            </div>
+        <?php endif; ?>
+
+        <!-- ── STEP 1: Select Entities ──────────────────────────────────── -->
         <div class="ow-card">
-            <h2><?php esc_html_e( 'Run Migration', 'octowoo' ); ?></h2>
-
-            <?php if ( $active_run ): ?>
-                <div id="ow-active-run-banner" class="ow-alert ow-alert-warning">
-                    <?php
-                    printf(
-                        /* translators: %s = run ID */
-                        esc_html__( 'A migration is currently in progress (Run ID: %s). You can resume it or abort it below.', 'octowoo' ),
-                        '<code>' . esc_html( $active_run ) . '</code>'
-                    );
-                    ?>
-                </div>
-            <?php elseif ( $last_run ): ?>
-                <div class="ow-alert ow-alert-info">
-                    <?php
-                    printf(
-                        /* translators: 1 = run ID, 2 = date */
-                        esc_html__( 'Last migration: Run ID %1$s completed at %2$s.', 'octowoo' ),
-                        '<code>' . esc_html( $last_run ) . '</code>',
-                        esc_html( $last_run_at )
-                    );
-                    ?>
-                </div>
-            <?php endif; ?>
-
-            <!-- Options row -->
-            <div class="ow-form-grid" style="margin-bottom:16px;">
-                <div class="ow-form-group">
-                    <label>
-                        <input type="checkbox" id="ow-dry-run" value="1">
-                        <?php esc_html_e( 'Dry Run (simulate – no data written)', 'octowoo' ); ?>
-                    </label>
-                    <span class="ow-form-hint"><?php esc_html_e( 'Use this to test configuration before a real migration.', 'octowoo' ); ?></span>
-                </div>
-                <div class="ow-form-group">
-                    <label>
-                        <input type="checkbox" id="ow-demo-mode" value="1">
-                        <?php esc_html_e( 'Demo Mode (import first', 'octowoo' ); ?>
-                        <input type="number" id="ow-demo-limit" value="10" min="1" max="500"
-                               style="width:55px; padding:2px 4px; margin:0 4px; display:none;">
-                        <?php esc_html_e( 'items per migrator)', 'octowoo' ); ?>
-                    </label>
-                    <span class="ow-form-hint"><?php esc_html_e( 'Quick sanity-check: imports a small sample so you can verify the output before running the full migration.', 'octowoo' ); ?></span>
-                </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+                <h2 style="margin:0;"><?php esc_html_e( '1 — Select Entities to Migrate', 'octowoo' ); ?></h2>
+                <button type="button" id="ow-btn-scan" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
+                    🔍 <?php esc_html_e( 'Scan Source DB', 'octowoo' ); ?>
+                </button>
             </div>
+            <div id="ow-scan-result" style="display:none;margin-bottom:12px;padding:8px 12px;background:#f0f6fc;border-left:3px solid #2271b1;border-radius:4px;font-size:12px;color:#444;"></div>
 
-            <!-- Migrator selection -->
-            <div style="margin-bottom:18px; background:#f9f9f9; border:1px solid #ddd; border-radius:4px; padding:14px 16px;">
-                <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
-                    <strong style="font-size:13px;"><?php esc_html_e( 'Migrators to run:', 'octowoo' ); ?></strong>
-                    <a href="#" id="ow-sel-all" style="font-size:12px;"><?php esc_html_e( 'All', 'octowoo' ); ?></a>
-                    <a href="#" id="ow-sel-none" style="font-size:12px;"><?php esc_html_e( 'None', 'octowoo' ); ?></a>
-                </div>
-                <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:7px 20px; font-size:13px;">
-                    <?php
-                    $ow_migrators = [
-                        'tax'           => __( 'Tax Classes', 'octowoo' ),
-                        'order_statuses'=> __( 'Order Statuses', 'octowoo' ),
-                        'categories'    => __( 'Categories', 'octowoo' ),
-                        'manufacturers' => __( 'Manufacturers / Brands', 'octowoo' ),
-                        'images'        => __( 'Images', 'octowoo' ),
-                        'products'      => __( 'Products', 'octowoo' ),
-                        'related'       => __( 'Related Products', 'octowoo' ),
-                        'bundles'       => __( 'Product Bundles *', 'octowoo' ),
-                        'customers'     => __( 'Customers', 'octowoo' ),
-                        'orders'        => __( 'Orders', 'octowoo' ),
-                        'coupons'       => __( 'Coupons', 'octowoo' ),
-                        'seo'           => __( 'SEO slugs + meta', 'octowoo' ),
-                        'information'   => __( 'Information pages', 'octowoo' ),
-                        'tags'          => __( 'Tags', 'octowoo' ),
-                        'filters'       => __( 'Filters', 'octowoo' ),
-                        'downloads'     => __( 'Downloads', 'octowoo' ),
-                        'reviews'       => __( 'Reviews', 'octowoo' ),
-                        'multilingual'  => __( 'Multilingual (WPML)', 'octowoo' ),
-                    ];
-                    foreach ( $ow_migrators as $ow_key => $ow_label ) {
+            <!-- Entity grid -->
+            <div style="border:1px solid #e0e0e0;border-radius:6px;overflow:hidden;font-size:13px;">
+                <?php
+                $ow_entity_rows = [
+                    [
+                        'label' => __( 'Products', 'octowoo' ), 'value' => 'products', 'scan_key' => 'products',
+                        'children' => [
+                            [ 'label' => __( 'Reviews', 'octowoo' ),           'value' => 'reviews',  'scan_key' => 'reviews' ],
+                            [ 'label' => __( 'Product Bundles *', 'octowoo' ),  'value' => 'bundles',  'scan_key' => '' ],
+                        ],
+                    ],
+                    [
+                        'label' => __( 'Customers', 'octowoo' ), 'value' => 'customers', 'scan_key' => 'customers',
+                        'children' => [
+                            [ 'label' => __( 'Orders', 'octowoo' ), 'value' => 'orders', 'scan_key' => 'orders' ],
+                        ],
+                    ],
+                    [
+                        'label' => __( 'Categories', 'octowoo' ), 'value' => 'categories', 'scan_key' => 'categories',
+                        'children' => [],
+                    ],
+                    [
+                        'label' => __( 'CMS Pages', 'octowoo' ), 'value' => 'information', 'scan_key' => 'information',
+                        'children' => [],
+                    ],
+                    [
+                        'label' => __( 'Manufacturers / Brands', 'octowoo' ), 'value' => 'manufacturers', 'scan_key' => 'manufacturers',
+                        'children' => [],
+                    ],
+                    [
+                        'label' => __( 'Coupons', 'octowoo' ), 'value' => 'coupons', 'scan_key' => 'coupons',
+                        'children' => [],
+                    ],
+                    [
+                        'label' => __( 'Tax Classes', 'octowoo' ), 'value' => 'tax_classes', 'scan_key' => 'tax_classes',
+                        'children' => [],
+                    ],
+                    [
+                        'label' => __( 'Tags &amp; Filters', 'octowoo' ), 'value' => 'tags_filters', 'scan_key' => 'tags',
+                        'children' => [],
+                    ],
+                ];
+                $ow_total = count( $ow_entity_rows );
+                for ( $oi = 0; $oi < $ow_total; $oi += 2 ) {
+                    $ow_left    = $ow_entity_rows[ $oi ];
+                    $ow_right   = $ow_entity_rows[ $oi + 1 ] ?? null;
+                    $ow_is_last = ( $oi + 2 >= $ow_total );
+                    echo '<div style="display:grid;grid-template-columns:1fr 1fr;' . ( $ow_is_last ? '' : 'border-bottom:1px solid #e0e0e0;' ) . '">';
+                    foreach ( [ $ow_left, $ow_right ] as $ow_ci => $ow_ent ) {
+                        if ( ! $ow_ent ) { echo '<div></div>'; continue; }
+                        echo '<div style="padding:12px 16px;' . ( $ow_ci === 0 ? 'border-right:1px solid #e0e0e0;' : '' ) . '">';
+                        $ow_badge = $ow_ent['scan_key']
+                            ? ' <span class="ow-count-badge" data-scan="' . esc_attr( $ow_ent['scan_key'] ) . '" style="display:none;background:#2271b1;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:normal;"></span>'
+                            : '';
                         printf(
-                            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' .
-                            '<input type="checkbox" class="ow-migrator-chk" value="%s" checked> %s</label>',
-                            esc_attr( $ow_key ),
-                            esc_html( $ow_label )
+                            '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">' .
+                            '<input type="checkbox" class="ow-entity-chk" value="%s" checked> %s%s</label>',
+                            esc_attr( $ow_ent['value'] ), esc_html( $ow_ent['label'] ), $ow_badge
                         );
+                        foreach ( $ow_ent['children'] as $ow_ch ) {
+                            $ow_ch_badge = $ow_ch['scan_key']
+                                ? ' <span class="ow-count-badge" data-scan="' . esc_attr( $ow_ch['scan_key'] ) . '" style="display:none;background:#2271b1;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:normal;"></span>'
+                                : '';
+                            printf(
+                                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin:6px 0 0 26px;">' .
+                                '<input type="checkbox" class="ow-entity-chk" value="%s" checked> %s%s</label>',
+                                esc_attr( $ow_ch['value'] ), esc_html( $ow_ch['label'] ), $ow_ch_badge
+                            );
+                        }
+                        echo '</div>';
                     }
-                    ?>
-                </div>
-                <p class="ow-form-hint" style="margin-top:6px;">
-                    <?php esc_html_e( '* Product Bundles requires "WooCommerce Product Bundles" (SomewhereWarm) + OpenCart 4.x.', 'octowoo' ); ?>
-                </p>
+                    echo '</div>';
+                }
+                ?>
             </div>
+            <p class="ow-form-hint" style="margin-top:8px;">
+                * <?php esc_html_e( 'Bundles requires WooCommerce Product Bundles (SomewhereWarm) + OpenCart 4.x.', 'octowoo' ); ?>
+            </p>
+        </div>
 
+        <!-- ── STEP 2: Additional Options ───────────────────────────────── -->
+        <div class="ow-card">
+            <h2><?php esc_html_e( '2 — Additional Options', 'octowoo' ); ?></h2>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 32px;font-size:13px;">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-images" checked style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Transfer images from Categories &amp; Product descriptions', 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-passwords" checked style="margin-top:2px;">
+                    <span><?php esc_html_e( "Migrate customers' passwords", 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-seo" checked style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Migrate categories &amp; products SEO URLs', 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-redirects" style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Create 301 redirects on your store after migration', 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-strip-html" style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Strip HTML from category &amp; product names', 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-downloads" checked style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Migrate downloadable products', 'octowoo' ); ?></span>
+                </label>
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="ow-opt-multilingual" style="margin-top:2px;">
+                    <span><?php esc_html_e( 'Multilingual data (WPML / Polylang)', 'octowoo' ); ?></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- ── STEP 3: Run Migration ────────────────────────────────────── -->
+        <div class="ow-card">
+            <h2 style="margin-bottom:6px;"><?php esc_html_e( '3 — Run Migration', 'octowoo' ); ?></h2>
+            <p class="ow-form-hint" style="margin:0 0 14px;">
+                <?php esc_html_e( 'Run a Demo first (migrates ~20 items per entity) to verify the result, then run a Full Migration.', 'octowoo' ); ?>
+            </p>
             <div class="ow-actions">
+                <button type="button" id="ow-btn-demo" class="ow-btn ow-btn-warning">
+                    ▷ <?php esc_html_e( 'Start Demo Migration', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-start" class="ow-btn ow-btn-primary">
-                    ▶ <?php esc_html_e( 'Start Migration', 'octowoo' ); ?>
+                    ▶ <?php esc_html_e( 'Start Full Migration', 'octowoo' ); ?>
                 </button>
                 <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ! $active_run ? 'disabled' : ''; ?>>
                     ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
@@ -171,34 +223,20 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                     ↺ <?php esc_html_e( 'Reset Progress', 'octowoo' ); ?>
                 </button>
             </div>
-
-            <p class="ow-form-hint" style="margin-top:12px;">
-                <?php esc_html_e( 'WP-CLI alternative: ', 'octowoo' ); ?>
-                <code>wp octowoo migrate</code> &nbsp;|&nbsp;
+            <p class="ow-form-hint" style="margin-top:10px;">
+                WP-CLI: <code>wp octowoo migrate</code> &nbsp;|&nbsp;
                 <code>wp octowoo migrate --resume</code> &nbsp;|&nbsp;
                 <code>wp octowoo migrate --dry-run</code>
             </p>
         </div>
 
-        <!-- Source Data Summary -->
-        <div class="ow-card" id="ow-source-summary-card">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-                <h2 style="margin:0;"><?php esc_html_e( 'Source Data Summary', 'octowoo' ); ?></h2>
-                <button type="button" id="ow-btn-scan" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:4px 12px;">
-                    🔍 <?php esc_html_e( 'Scan Database', 'octowoo' ); ?>
-                </button>
-            </div>
-            <p class="ow-form-hint" style="margin:0 0 8px;"><?php esc_html_e( 'Shows row counts for all major entities in your OpenCart source database. Run this before migrating to confirm the connection is working and to know what will be imported.', 'octowoo' ); ?></p>
-            <div id="ow-scan-result" style="min-height:24px;"></div>
-        </div>
-
-        <!-- Progress table -->
+        <!-- Migration Progress -->
         <div class="ow-card">
             <h2><?php esc_html_e( 'Migration Progress', 'octowoo' ); ?></h2>
             <table class="ow-progress-table" id="ow-progress-table">
                 <thead>
                     <tr>
-                        <th><?php esc_html_e( 'Migrator', 'octowoo' ); ?></th>
+                        <th><?php esc_html_e( 'Entity', 'octowoo' ); ?></th>
                         <th><?php esc_html_e( 'Status', 'octowoo' ); ?></th>
                         <th><?php esc_html_e( 'Items', 'octowoo' ); ?></th>
                         <th style="min-width:150px;"><?php esc_html_e( 'Progress', 'octowoo' ); ?></th>
@@ -211,37 +249,6 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                     </tr>
                 </tbody>
             </table>
-        </div>
-
-        <!-- Module checklist -->
-        <div class="ow-card">
-            <h2><?php esc_html_e( 'What Gets Migrated', 'octowoo' ); ?></h2>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 24px;font-size:13px;">
-                <?php
-                $items = [
-                    '✔ Categories (with hierarchy)', '✔ Products (simple + variable)',
-                    '✔ Product images + gallery', '✔ Product attributes',
-                    '✔ Product filters', '✔ Product options / variations',
-                    '✔ Product downloads', '✔ Product tags',
-                    '✔ Related products', '✔ Manufacturers / Brands',
-                    '✔ Information pages', '✔ External media',
-                    '✔ Customers + passwords', '✔ Orders + items + totals',
-                    '✔ Coupons', '✔ Product reviews',
-                    '✔ SEO slugs + meta', '✔ 301 redirects (.htaccess / WP)',
-                    '✔ WPML / Polylang multilingual', '✔ Yoast SEO compatible',
-                    '✔ OpenCart 1 / 2 / 3 / 4', '✔ Batch + resume system',
-                    '✔ Dry-run mode', '✔ Dropshipping cron',
-                    '✔ Add-on hooks system', '',
-                ];
-                foreach ( $items as $item ) {
-                    if ( $item ) {
-                        echo '<div>' . esc_html( $item ) . '</div>';
-                    } else {
-                        echo '<div></div>';
-                    }
-                }
-                ?>
-            </div>
         </div>
 
     </div><!-- /tab-migration -->

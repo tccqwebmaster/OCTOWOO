@@ -46,17 +46,14 @@
         switchTab(urlParams.get('tab') || 'migration');
 
         // Button handlers.
-        $btnStart.on('click', function () { startMigration(false); });
-        $btnResume.on('click', function () { startMigration(true); });
+        $btnStart.on('click', function () { startMigration(false, false); });
+        $btnResume.on('click', function () { startMigration(true,  false); });
         $btnAbort.on('click', abortMigration);
         $btnReset.on('click', resetMigration);
 
-        $('#ow-sel-all').on('click',  function (e) { e.preventDefault(); $('.ow-migrator-chk').prop('checked', true); });
-        $('#ow-sel-none').on('click', function (e) { e.preventDefault(); $('.ow-migrator-chk').prop('checked', false); });
+        $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
 
         $('#ow-btn-test-conn').on('click', testConnection);
-
-        $('#ow-btn-scan').on('click', scanSourceCounts);
 
         $('#ow-btn-scan').on('click', scanSourceCounts);
 
@@ -273,55 +270,55 @@
         var $btn    = $('#ow-btn-scan');
         var $result = $('#ow-scan-result');
         $btn.prop('disabled', true).text('Scanning…');
-        $result.html('<span style="color:#888;">Connecting to source database…</span>');
+        $result.show().html('<em style="color:#888;">Connecting to source database…</em>');
 
         $.post(octoWoo.ajaxUrl, {
             action: 'octowoo_scan_counts',
             nonce:  octoWoo.nonce,
         })
         .done(function (res) {
+            $result.data('scanned', true);
             if (res.success) {
                 var counts = res.data.counts;
-                var labels = {
-                    products:       'Products',
-                    categories:     'Categories',
-                    manufacturers:  'Manufacturers / Brands',
-                    customers:      'Customers',
-                    orders:         'Orders',
-                    reviews:        'Reviews',
-                    tax_classes:    'Tax Classes',
-                    coupons:        'Coupons',
-                    languages:      'Languages',
-                    information:    'Information Pages',
-                    order_statuses: 'Order Statuses',
-                    product_images: 'Product Images',
-                    tags:           'Tags',
-                    filter_groups:  'Filter Groups',
-                    downloads:      'Downloads',
-                };
-                var html = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px 24px;font-size:13px;margin-top:6px;">';
-                $.each(labels, function (key, label) {
+
+                // Populate count badges next to entity checkboxes.
+                $('.ow-count-badge[data-scan]').each(function () {
+                    var key = $(this).data('scan');
                     var val = counts[key];
-                    if (val === undefined || val === -1) {
-                        html += '<div style="color:#bbb;">― ' + label + '</div>';
-                    } else {
-                        html += '<div><strong style="font-size:15px;color:#1d2327;">' +
-                                parseInt(val, 10).toLocaleString() +
-                                '</strong> <span style="color:#555;">' + label + '</span></div>';
+                    if (val !== undefined && val !== -1) {
+                        $(this).text(parseInt(val, 10).toLocaleString()).show();
                     }
                 });
-                html += '</div>';
-                $result.html(html);
+
+                // Inline summary line.
+                var parts = [];
+                var summary = {
+                    products: 'Products', categories: 'Categories', customers: 'Customers',
+                    orders: 'Orders', coupons: 'Coupons', reviews: 'Reviews',
+                    manufacturers: 'Manufacturers', information: 'Pages',
+                    tax_classes: 'Tax', tags: 'Tags',
+                };
+                $.each(summary, function (k, label) {
+                    var v = counts[k];
+                    if (v !== undefined && v !== -1) {
+                        parts.push('<strong>' + parseInt(v,10).toLocaleString() + '</strong>&nbsp;' + label);
+                    }
+                });
+                $result.html(
+                    '<span style="color:#2271b1;font-weight:600;">✔ Source scanned.</span>&nbsp;&nbsp;' +
+                    parts.join('&nbsp;&nbsp;·&nbsp;&nbsp;')
+                );
             } else {
                 $result.html('<span style="color:#c62828;">✘ ' +
                     ((res.data && res.data.message) ? res.data.message : 'Scan failed.') + '</span>');
             }
         })
         .fail(function (xhr) {
-            $result.html('<span style="color:#c62828;">✘ ' + xhr.statusText + '</span>');
+            $result.data('scanned', true);
+            $result.show().html('<span style="color:#c62828;">✘ ' + xhr.statusText + '</span>');
         })
         .always(function () {
-            $btn.prop('disabled', false).text('🔍 Scan Database');
+            $btn.prop('disabled', false).text('🔍 Scan Source DB');
         });
     }
 
@@ -337,6 +334,11 @@
             refreshLogs();
         }
 
+        // Auto-scan when migration tab first opened.
+        if (tab === 'migration' && !$('#ow-scan-result').data('scanned')) {
+            scanSourceCounts();
+        }
+
         // Update URL without reload.
         const url = new URL(window.location.href);
         url.searchParams.set('tab', tab);
@@ -349,30 +351,53 @@
     let chunkDemoLimit = 0;
     let chunkFailCount = 0;
 
-    // Toggle demo limit number input when checkbox changes.
-    $(document).on('change', '#ow-demo-mode', function () {
-        $('#ow-demo-limit').toggle($(this).is(':checked'));
-    });
+    /**
+     * Build a comma-separated migrator list from the entity + option checkboxes.
+     */
+    function buildMigrators() {
+        const ENTITY_MAP = {
+            'products':      ['products', 'related'],
+            'reviews':       ['reviews'],
+            'bundles':       ['bundles'],
+            'categories':    ['categories'],
+            'manufacturers': ['manufacturers'],
+            'tax_classes':   ['tax', 'order_statuses'],
+            'customers':     ['customers'],
+            'orders':        ['orders'],
+            'information':   ['information'],
+            'coupons':       ['coupons'],
+            'tags_filters':  ['tags', 'filters'],
+        };
+        const list = [];
+        function add(m) { if (!list.includes(m)) list.push(m); }
 
-    function startMigration(resume) {
+        $('.ow-entity-chk:checked').each(function () {
+            const key = $(this).val();
+            if (ENTITY_MAP[key]) { ENTITY_MAP[key].forEach(add); }
+        });
+
+        if ($('#ow-opt-images').is(':checked'))       add('images');
+        if ($('#ow-opt-seo').is(':checked'))          add('seo');
+        if ($('#ow-opt-downloads').is(':checked'))    add('downloads');
+        if ($('#ow-opt-multilingual').is(':checked')) add('multilingual');
+
+        return list.join(',');
+    }
+
+    function startMigration(resume, isDemo) {
         if (isRunning) { return; }
 
-        const dryRun   = $('#ow-dry-run').is(':checked') ? 1 : 0;
-        const demoMode = $('#ow-demo-mode').is(':checked');
-        const demoLimitVal = demoMode ? (parseInt($('#ow-demo-limit').val(), 10) || 10) : 0;
+        const demoLimitVal = isDemo ? 20 : 0;
 
-        if (!resume && !dryRun) {
-            const confirmMsg = demoMode
-                ? octoWoo.i18n.starting + ' (Demo: first ' + demoLimitVal + ' items per migrator)\n\nProceed?'
-                : octoWoo.i18n.starting + '\n\nProceed?';
-            if (!confirm(confirmMsg)) { return; }
+        if (!resume) {
+            const modeStr = isDemo
+                ? 'Demo Migration (first 20 items per entity)'
+                : 'Full Migration';
+            if (!confirm('Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.')) { return; }
         }
 
-        // Collect selected migrators.
-        const migrators = [];
-        $('.ow-migrator-chk:checked').each(function () { migrators.push($(this).val()); });
-        chunkMigrators = migrators.join(',');
-        chunkDryRun    = dryRun;
+        chunkMigrators = buildMigrators();
+        chunkDryRun    = 0;
         chunkDemoLimit = demoLimitVal;
 
         setButtonState('running');
