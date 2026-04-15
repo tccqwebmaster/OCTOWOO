@@ -1,0 +1,348 @@
+<?php
+/**
+ * Category migrator.
+ *
+ * Reads OpenCart categories (including nested parent–child hierarchy) and
+ * creates WooCommerce product_cat terms.
+ *
+ * OpenCart tables used:
+ *   oc_category             – IDs, parent_id, status
+ *   oc_category_description – name, description, meta fields (per language)
+ *   oc_seo_url              – SEO slug if available
+ *
+ * Algorithm:
+ *   1. Fetch all OC categories sorted by parent_id ASC so parents always
+ *      come before their children.
+ *   2. For each category, look up:
+ *        - Primary language description (English, lang_id=1)
+ *        - Secondary language description (Arabic, lang_id=2)
+ *   3. Resolve the WC parent term_id from the checkpoint ID-map.
+ *   4. Create / update the product_cat term.
+ *   5. Store the OC→WC ID mapping in the checkpoint manager.
+ */
+
+namespace OctoWoo\Migrators;
+
+defined( 'ABSPATH' ) || exit;
+
+class CategoryMigrator extends AbstractMigrator {
+
+    /** Migrator key used in checkpoints, logs, ID map. */
+    private const KEY = 'category';
+
+    /** @var ImageMigrator Shared image importer instance. */
+    private ImageMigrator $imageMigrator;
+
+    // ── Entry point ───────────────────────────────────────────────────────────
+
+    public function migrate(): array {
+        $this->imageMigrator = new ImageMigrator(
+            $this->oc, $this->logger, $this->checkpoint, $this->batch, $this->config
+        );
+
+        $pfx         = $this->pfx();
+        $lang_id     = $this->langId();
+        $resume_id   = $this->checkpoint->getLastId( self::KEY );
+
+        if ( $resume_id === PHP_INT_MAX ) {
+            $this->logger->info( '[categories] Already completed – skipping.' );
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        }
+
+        // Pre-fetch all descriptions so we avoid N+1 queries.
+        $descriptions = $this->fetchAllDescriptions();
+        $seo_urls     = $this->fetchSeoUrls();
+
+        $total_callback = function () use ( $pfx ): int {
+            return $this->oc->count( 'category', 'status = 1' );
+        };
+
+        $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
+            return $this->oc->fetchBatch(
+                "SELECT category_id, parent_id, sort_order, image
+                 FROM `{$pfx}category`
+                 WHERE status = 1
+                 ORDER BY parent_id ASC, sort_order ASC, category_id ASC",
+                [],
+                $limit,
+                $offset
+            );
+        };
+
+        $item_callback = function ( array $row ) use ( $descriptions, $seo_urls, $lang_id ): bool {
+            return $this->processCategory( $row, $descriptions, $seo_urls, $lang_id );
+        };
+
+        return $this->batch->run(
+            total_callback:   $total_callback,
+            batch_callback:   $batch_callback,
+            item_callback:    $item_callback,
+            migrator:         self::KEY,
+            checkpoint:       $this->checkpoint,
+            resume_after_id:  $resume_id,
+            id_field:         'category_id'
+        );
+    }
+
+    // ── Per-item processing ───────────────────────────────────────────────────
+
+    private function processCategory(
+        array $row,
+        array $descriptions,
+        array $seo_urls,
+        int   $lang_id
+    ): bool {
+        $oc_id    = (int) $row['category_id'];
+        $oc_parent = (int) $row['parent_id'];
+
+        // Description for primary language.
+        $desc = $descriptions[ $oc_id ][ $lang_id ] ?? $descriptions[ $oc_id ][ array_key_first( $descriptions[ $oc_id ] ?? [] ) ] ?? null;
+
+        if ( ! $desc ) {
+            $this->logger->warning( "[categories] No description found for OC category #{$oc_id} – skipping." );
+            return false;
+        }
+
+        $name        = $this->sanitizeText( $desc['name'] ?? '' );
+        $description = $this->sanitizeText( $desc['description'] ?? '' );
+
+        if ( $name === '' ) {
+            $this->logger->warning( "[categories] Empty name for OC #{$oc_id} – skipping." );
+            return false;
+        }
+
+        // Secondary language description (Arabic).
+        $lang_id_sec = $this->langIdSecondary();
+        $desc_ar     = ( $lang_id_sec > 0 ) ? ( $descriptions[ $oc_id ][ $lang_id_sec ] ?? [] ) : [];
+
+        // Category thumbnail image path.
+        $image = $row['image'] ?? '';
+
+        // Resolve SEO slug.
+        $slug = $seo_urls[ $oc_id ] ?? $this->toSlug( $name );
+
+        // Resolve WC parent term ID.
+        $wc_parent = 0;
+        if ( $oc_parent > 0 ) {
+            $wc_parent = (int) ( $this->checkpoint->getWcId( self::KEY, $oc_parent ) ?? 0 );
+        }
+
+        // Duplicate check.
+        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+
+        if ( $existing_wc_id ) {
+            if ( $this->onDuplicate() === 'update' ) {
+                return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image );
+            }
+            $this->logger->debug( "[categories] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
+            return false; // 'skip'
+        }
+
+        if ( $this->isDry() ) {
+            $this->logger->debug( "[DRY-RUN] Would create category: {$name} (slug: {$slug}, parent WC: {$wc_parent})" );
+            return true;
+        }
+
+        return $this->createCategory( $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image );
+    }
+
+    // ── Create / update ───────────────────────────────────────────────────────
+
+    private function createCategory(
+        string $name,
+        string $slug,
+        string $description,
+        int    $wc_parent,
+        int    $oc_id,
+        array  $desc,
+        array  $desc_ar = [],
+        string $image   = ''
+    ): bool {
+        // Ensure slug uniqueness.
+        $slug = $this->uniqueSlug( $slug, 0 );
+
+        $result = wp_insert_term(
+            $name,
+            'product_cat',
+            [
+                'slug'        => $slug,
+                'description' => $description,
+                'parent'      => $wc_parent,
+            ]
+        );
+
+        if ( is_wp_error( $result ) ) {
+            // If term already exists by slug, retrieve it.
+            if ( $result->get_error_code() === 'term_exists' ) {
+                $existing = get_term_by( 'slug', $slug, 'product_cat' );
+                if ( $existing ) {
+                    $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing->term_id );
+                    $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image );
+                    $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id}." );
+                    return true;
+                }
+            }
+
+            $this->logger->error(
+                "[categories] wp_insert_term failed for OC #{$oc_id}: " . $result->get_error_message(),
+                [ 'name' => $name, 'slug' => $slug ]
+            );
+            return false;
+        }
+
+        $wc_term_id = (int) $result['term_id'];
+
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image );
+        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $wc_term_id );
+
+        $this->logger->info( "[categories] Created WC term #{$wc_term_id} from OC #{$oc_id}: \"{$name}\"" );
+        return true;
+    }
+
+    private function updateCategory(
+        int    $wc_term_id,
+        string $name,
+        string $slug,
+        string $description,
+        int    $wc_parent,
+        int    $oc_id,
+        array  $desc,
+        array  $desc_ar = [],
+        string $image   = ''
+    ): bool {
+        $result = wp_update_term(
+            $wc_term_id,
+            'product_cat',
+            [
+                'name'        => $name,
+                'slug'        => $slug,
+                'description' => $description,
+                'parent'      => $wc_parent,
+            ]
+        );
+
+        if ( is_wp_error( $result ) ) {
+            $this->logger->error(
+                "[categories] wp_update_term failed for WC #{$wc_term_id}: " . $result->get_error_message()
+            );
+            return false;
+        }
+
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image );
+        $this->logger->info( "[categories] Updated WC term #{$wc_term_id} (OC #{$oc_id})." );
+        return true;
+    }
+
+    // ── Term meta ─────────────────────────────────────────────────────────────
+
+    private function addTermMeta( int $wc_term_id, int $oc_id, array $desc, array $desc_ar = [], string $image = '' ): void {
+        // Store OC source ID for cross-referencing.
+        update_term_meta( $wc_term_id, '_octowoo_oc_id', $oc_id );
+
+        // Yoast / Rank Math SEO meta.
+        if ( ! empty( $desc['meta_title'] ) ) {
+            update_term_meta( $wc_term_id, '_yoast_wpseo_title', $this->sanitizeText( $desc['meta_title'] ) );
+        }
+        if ( ! empty( $desc['meta_description'] ) ) {
+            update_term_meta( $wc_term_id, '_yoast_wpseo_metadesc', $this->sanitizeText( $desc['meta_description'] ) );
+        }
+        if ( ! empty( $desc['meta_keyword'] ) ) {
+            update_term_meta( $wc_term_id, '_yoast_wpseo_focuskw', $this->sanitizeText( $desc['meta_keyword'] ) );
+        }
+
+        // Secondary language data for WPML / Polylang translation pass.
+        if ( ! empty( $desc_ar ) ) {
+            update_term_meta( $wc_term_id, '_octowoo_name_ar',        $this->sanitizeText( $desc_ar['name']             ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_description_ar', $this->sanitizeText( $desc_ar['description']      ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metatitle_ar',   $this->sanitizeText( $desc_ar['meta_title']       ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metadesc_ar',    $this->sanitizeText( $desc_ar['meta_description'] ?? '' ) );
+        }
+
+        // Category thumbnail: import the OC image and assign as WC thumbnail.
+        if ( ! empty( $image ) && ! $this->isDry() ) {
+            $attachment_id = $this->imageMigrator->importByOcPath( $image );
+            if ( $attachment_id && $attachment_id > 0 ) {
+                update_term_meta( $wc_term_id, 'thumbnail_id', $attachment_id );
+            }
+        }
+    }
+
+    // ── Data fetching helpers ─────────────────────────────────────────────────
+
+    /**
+     * Fetch all category descriptions keyed by [category_id][language_id].
+     *
+     * @return array<int, array<int, array<string, mixed>>>
+     */
+    private function fetchAllDescriptions(): array {
+        $pfx  = $this->pfx();
+        $rows = $this->oc->fetchAll(
+            "SELECT category_id, language_id, name, description, meta_title, meta_description, meta_keyword
+             FROM `{$pfx}category_description`"
+        );
+
+        $indexed = [];
+        foreach ( $rows as $row ) {
+            $indexed[ (int) $row['category_id'] ][ (int) $row['language_id'] ] = $row;
+        }
+        return $indexed;
+    }
+
+    /**
+     * Fetch SEO slugs for categories from oc_seo_url.
+     * Returns an array of [oc_category_id => slug].
+     *
+     * @return array<int, string>
+     */
+    private function fetchSeoUrls(): array {
+        $pfx = $this->pfx();
+
+        // Check if the seo_url table exists (OpenCart 3.x).
+        $has_seo = $this->oc->fetchColumn(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE()
+               AND table_name = '{$pfx}seo_url'"
+        );
+
+        if ( ! $has_seo ) {
+            return [];
+        }
+
+        $rows = $this->oc->fetchAll(
+            "SELECT keyword, query
+             FROM `{$pfx}seo_url`
+             WHERE query LIKE 'category_id=%'
+               AND store_id = 0
+               AND language_id = ?",
+            [ $this->langId() ]
+        );
+
+        $map = [];
+        foreach ( $rows as $row ) {
+            if ( preg_match( '/^category_id=(\d+)$/', $row['query'], $m ) ) {
+                $map[ (int) $m[1] ] = sanitize_title( $row['keyword'] );
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Generate a unique slug within the product_cat taxonomy.
+     */
+    private function uniqueSlug( string $slug, int $term_id ): string {
+        $existing = get_term_by( 'slug', $slug, 'product_cat' );
+
+        if ( ! $existing || (int) $existing->term_id === $term_id ) {
+            return $slug;
+        }
+
+        $i = 1;
+        do {
+            $candidate = $slug . '-' . $i;
+            $existing  = get_term_by( 'slug', $candidate, 'product_cat' );
+            $i++;
+        } while ( $existing && (int) $existing->term_id !== $term_id );
+
+        return $candidate;
+    }
+}

@@ -1,0 +1,113 @@
+<?php
+/**
+ * Plugin activation handler.
+ *
+ * Creates all required database tables and ensures the /logs/ directory exists.
+ * Called once when the plugin is activated from the WP admin.
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+class OctoWoo_Activator {
+
+    /**
+     * Entry point called by register_activation_hook().
+     */
+    public static function activate(): void {
+        self::create_tables();
+        self::create_log_dir();
+        self::set_default_options();
+
+        // Flush rewrite rules so any new WP redirect rules take effect.
+        flush_rewrite_rules();
+    }
+
+    // ── Database tables ───────────────────────────────────────────────────────
+
+    private static function create_tables(): void {
+        global $wpdb;
+
+        $charset_collate = $wpdb->get_charset_collate();
+
+        // ── Log table ─────────────────────────────────────────────────────────
+        $logs_table = $wpdb->prefix . 'octowoo_logs';
+        $sql_logs   = "CREATE TABLE IF NOT EXISTS `{$logs_table}` (
+            `id`         BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            `run_id`     VARCHAR(64)         NOT NULL DEFAULT '',
+            `level`      VARCHAR(20)         NOT NULL DEFAULT 'INFO',
+            `migrator`   VARCHAR(100)        NOT NULL DEFAULT '',
+            `message`    TEXT                NOT NULL,
+            `context`    LONGTEXT,
+            `created_at` DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_run_id`   (`run_id`),
+            KEY `idx_level`    (`level`),
+            KEY `idx_migrator` (`migrator`)
+        ) {$charset_collate};";
+
+        // ── Checkpoint / resume table ─────────────────────────────────────────
+        $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
+        $sql_cp   = "CREATE TABLE IF NOT EXISTS `{$cp_table}` (
+            `id`              BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            `run_id`          VARCHAR(64)         NOT NULL DEFAULT '',
+            `migrator`        VARCHAR(100)        NOT NULL,
+            `last_oc_id`      BIGINT(20)          NOT NULL DEFAULT 0,
+            `processed_count` BIGINT(20)          NOT NULL DEFAULT 0,
+            `total_count`     BIGINT(20)          NOT NULL DEFAULT 0,
+            `status`          VARCHAR(20)         NOT NULL DEFAULT 'pending',
+            `started_at`      DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at`      DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_run_migrator` (`run_id`, `migrator`)
+        ) {$charset_collate};";
+
+        // ── ID map table (OC ID → WC ID) ──────────────────────────────────────
+        $map_table = $wpdb->prefix . 'octowoo_id_map';
+        $sql_map   = "CREATE TABLE IF NOT EXISTS `{$map_table}` (
+            `id`          BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            `entity_type` VARCHAR(50)         NOT NULL,
+            `oc_id`       BIGINT(20)          NOT NULL,
+            `wc_id`       BIGINT(20)          NOT NULL,
+            `run_id`      VARCHAR(64)         NOT NULL DEFAULT '',
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_entity_oc` (`entity_type`, `oc_id`),
+            KEY `idx_entity_wc` (`entity_type`, `wc_id`)
+        ) {$charset_collate};";
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $sql_logs );
+        dbDelta( $sql_cp );
+        dbDelta( $sql_map );
+    }
+
+    // ── Filesystem ────────────────────────────────────────────────────────────
+
+    private static function create_log_dir(): void {
+        $log_dir = OCTOWOO_PLUGIN_DIR . 'logs/';
+        if ( ! is_dir( $log_dir ) ) {
+            wp_mkdir_p( $log_dir );
+        }
+
+        // Prevent direct browsing.
+        $htaccess = $log_dir . '.htaccess';
+        if ( ! file_exists( $htaccess ) ) {
+            file_put_contents( $htaccess, "Options -Indexes\nDeny from all\n" );
+        }
+
+        $index = $log_dir . 'index.html';
+        if ( ! file_exists( $index ) ) {
+            file_put_contents( $index, '' );
+        }
+    }
+
+    // ── Default options ───────────────────────────────────────────────────────
+
+    private static function set_default_options(): void {
+        if ( false === get_option( 'octowoo_config' ) ) {
+            add_option( 'octowoo_config', [] );
+        }
+        if ( false === get_option( 'octowoo_db_version' ) ) {
+            add_option( 'octowoo_db_version', OCTOWOO_VERSION );
+        }
+    }
+}

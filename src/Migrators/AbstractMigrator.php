@@ -1,0 +1,237 @@
+<?php
+/**
+ * Abstract base for all migrator classes.
+ *
+ * Injects the four shared services every migrator needs and exposes
+ * common helper utilities (duplicate detection, WC term helpers, etc.).
+ */
+
+namespace OctoWoo\Migrators;
+
+use OctoWoo\Core\DatabaseConnector;
+use OctoWoo\Core\Logger;
+use OctoWoo\Core\CheckpointManager;
+use OctoWoo\Core\BatchProcessor;
+
+defined( 'ABSPATH' ) || exit;
+
+abstract class AbstractMigrator {
+
+    /** @var DatabaseConnector OpenCart database. */
+    protected DatabaseConnector $oc;
+
+    /** @var Logger */
+    protected Logger $logger;
+
+    /** @var CheckpointManager */
+    protected CheckpointManager $checkpoint;
+
+    /** @var BatchProcessor */
+    protected BatchProcessor $batch;
+
+    /** @var array<string, mixed> Full resolved config. */
+    protected array $config;
+
+    // ── Construction ─────────────────────────────────────────────────────────
+
+    public function __construct(
+        DatabaseConnector $oc,
+        Logger            $logger,
+        CheckpointManager $checkpoint,
+        BatchProcessor    $batch,
+        array             $config
+    ) {
+        $this->oc         = $oc;
+        $this->logger     = $logger;
+        $this->checkpoint = $checkpoint;
+        $this->batch      = $batch;
+        $this->config     = $config;
+    }
+
+    // ── Contract ──────────────────────────────────────────────────────────────
+
+    /**
+     * Run the migration for this entity type.
+     *
+     * @return array{processed: int, skipped: int, failed: int}
+     */
+    abstract public function migrate(): array;
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Return the resolved OC table prefix (default "oc_").
+     */
+    protected function pfx(): string {
+        return $this->oc->getPrefix();
+    }
+
+    /**
+     * True when in dry-run mode (no writes should occur).
+     */
+    protected function isDry(): bool {
+        return $this->batch->isDryRun();
+    }
+
+    /**
+     * Return the configured OC language ID (primary language).
+     */
+    protected function langId(): int {
+        return (int) ( $this->config['opencart']['language_id'] ?? 1 );
+    }
+
+    /**
+     * Return the secondary OC language ID (e.g. Arabic = 2).  0 = disabled.
+     */
+    protected function langIdSecondary(): int {
+        return (int) ( $this->config['opencart']['language_id_secondary'] ?? 0 );
+    }
+
+    /**
+     * Sanitise a string value for use as a WordPress post slug.
+     * Preserves Arabic characters (does NOT transliterate them).
+     */
+    protected function toSlug( string $text ): string {
+        // Let WP's sanitize_title handle the basic normalisation.
+        // We then strip leftover characters that are not URL-safe.
+        $slug = sanitize_title( $text );
+
+        // sanitize_title may strip all Arabic chars on some setups.
+        // Fallback: manually lowercase + replace spaces.
+        if ( $slug === '' ) {
+            $slug = mb_strtolower( trim( $text ), 'UTF-8' );
+            $slug = preg_replace( '/\s+/u', '-', $slug );
+            $slug = preg_replace( '/[^\p{L}\p{N}\-]/u', '', $slug );
+        }
+
+        return $slug ?: 'item-' . wp_rand( 1000, 9999 );
+    }
+
+    /**
+     * Return the duplicate-handling strategy: "skip" or "update".
+     */
+    protected function onDuplicate(): string {
+        return $this->config['migration']['on_duplicate'] ?? 'skip';
+    }
+
+    /**
+     * Sanitise text values coming from OpenCart (ensure valid UTF-8).
+     */
+    protected function sanitizeText( string $text ): string {
+        // Convert encoding to UTF-8 if necessary.
+        if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
+            $text = mb_convert_encoding( $text, 'UTF-8', 'auto' );
+        }
+        return $text;
+    }
+
+    /**
+     * Clean an OpenCart HTML description for use as a WooCommerce product/category description.
+     *
+     * Strips any leading <h1>–<h6> block that OpenCart editors commonly prepend as a copy of
+     * the product title (e.g. <h1><b>Product Name</b></h1>). WooCommerce already stores the
+     * title separately, so repeating it in post_content creates a duplicate visible heading.
+     *
+     * Does NOT strip headings that appear mid-description — only the very first element when
+     * it is a heading tag.
+     */
+    protected function cleanDescription( string $html ): string {
+        $html = $this->sanitizeText( $html );
+        // Remove one optional leading heading block (h1–h6), including any inner tags.
+        $html = preg_replace( '/^\s*<h[1-6][^>]*>.*?<\/h[1-6]>\s*/is', '', $html );
+        return trim( $html );
+    }
+
+    /**
+     * Map an OC product stock-status to a WC stock status string.
+     */
+    protected function mapStockStatus( int $oc_stock_status_id, int $quantity ): string {
+        // OC stock status IDs vary; cover common defaults.
+        // 5 = In Stock, 6 = 2-3 days, 7 = Pre-Order, 8 = Out of Stock.
+        if ( $quantity > 0 ) {
+            return 'instock';
+        }
+        return in_array( $oc_stock_status_id, [ 7 ], true ) ? 'onbackorder' : 'outofstock';
+    }
+
+    /**
+     * Map an OpenCart order status ID to a WooCommerce order status string.
+     *
+     * Resolution order:
+     *  1. Dynamic map built by OrderStatusMigrator (option 'octowoo_order_status_map').
+     *     This is the preferred source when order_statuses migrator has run.
+     *  2. Hardcoded defaults for the standard OC status IDs (1–15).
+     *  3. Configured fallback ('woocommerce.default_order_status') or 'pending'.
+     */
+    protected function mapOrderStatus( int $oc_status_id ): string {
+        // 1. Dynamic map from OrderStatusMigrator (populated at migration time).
+        $dynamic_map = (array) get_option( 'octowoo_order_status_map', [] );
+
+        if ( isset( $dynamic_map[ $oc_status_id ] ) ) {
+            return (string) $dynamic_map[ $oc_status_id ];
+        }
+
+        // 2. Hardcoded built-in OC status defaults.
+        /*
+         * OpenCart default status IDs (English):
+         *  1  = Pending
+         *  2  = Processing
+         *  3  = Shipped
+         *  5  = Complete
+         *  7  = Cancelled
+         *  8  = Failed
+         *  9  = Refunded
+         *  10 = Reversed
+         *  11 = Chargeback
+         *  15 = Denied
+         */
+        $static_map = [
+            1  => 'pending',
+            2  => 'processing',
+            3  => 'on-hold',
+            5  => 'completed',
+            7  => 'cancelled',
+            8  => 'failed',
+            9  => 'refunded',
+            10 => 'refunded',
+            11 => 'cancelled',
+            15 => 'failed',
+        ];
+
+        return $static_map[ $oc_status_id ]
+            ?? ( $this->config['woocommerce']['default_order_status'] ?? 'pending' );
+    }
+
+    /**
+     * Ensure a WC product attribute exists (global PA_ taxonomy).
+     * Returns the attribute (term group) ID.
+     */
+    protected function ensureProductAttribute( string $name, string $slug ): int {
+        // Check if the attribute taxonomy exists first.
+        $attribute_id = wc_attribute_taxonomy_id_by_name( 'pa_' . $slug );
+
+        if ( ! $attribute_id ) {
+            $args = [
+                'name'         => $name,
+                'slug'         => $slug,
+                'type'         => 'select',
+                'order_by'     => 'menu_order',
+                'has_archives' => false,
+            ];
+            $attribute_id = wc_create_attribute( $args );
+
+            if ( is_wp_error( $attribute_id ) ) {
+                $this->logger->error( "Could not create attribute [{$name}]: " . $attribute_id->get_error_message() );
+                return 0;
+            }
+
+            // Register the taxonomy immediately so subsequent term inserts work.
+            $taxonomy_name = wc_attribute_taxonomy_name( $slug );
+            if ( ! taxonomy_exists( $taxonomy_name ) ) {
+                register_taxonomy( $taxonomy_name, 'product' );
+            }
+        }
+
+        return $attribute_id;
+    }
+}

@@ -1,0 +1,391 @@
+/* ==========================================================================
+   OctoWoo – Admin Dashboard Styles
+   ========================================================================== */
+
+/* ── Variables ─────────────────────────────────────────────────────────── */
+:root {
+    --ow-primary:   #7952b3;
+    --ow-success:   #28a745;
+    --ow-warning:   #ffc107;
+    --ow-danger:    #dc3545;
+    --ow-info:      #17a2b8;
+    --ow-light:     #f8f9fa;
+    --ow-border:    #dee2e6;
+    --ow-text:      #333;
+    --ow-muted:     #6c757d;
+    --ow-radius:    6px;
+    --ow-shadow:    0 2px 8px rgba(0,0,0,.08);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+#octowoo-app {
+    max-width: 1200px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ow-text);
+}
+
+.ow-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.ow-header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+}
+
+.ow-logo {
+    width: 36px;
+    height: 36px;
+    background: var(--ow-primary);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+.ow-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--ow-border);
+    margin-bottom: 24px;
+}
+
+.ow-tab-btn {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ow-muted);
+    transition: color .15s, border-color .15s;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.ow-tab-btn:hover,
+.ow-tab-btn.active {
+    color: var(--ow-primary);
+    border-bottom-color: var(--ow-primary);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.ow-card {
+    background: #fff;
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius);
+    box-shadow: var(--ow-shadow);
+    padding: 24px;
+    margin-bottom: 20px;
+}
+
+.ow-card h2 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--ow-border);
+    padding-bottom: 10px;
+}
+
+/* ── Settings form ──────────────────────────────────────────────────────── */
+.ow-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.ow-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ow-form-group label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ow-text);
+}
+
+.ow-form-group input[type="text"],
+.ow-form-group input[type="number"],
+.ow-form-group input[type="password"],
+.ow-form-group input[type="url"],
+.ow-form-group select {
+    padding: 8px 10px;
+    border: 1px solid var(--ow-border);
+    border-radius: 4px;
+    font-size: 13px;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color .15s;
+}
+
+.ow-form-group input:focus,
+.ow-form-group select:focus {
+    border-color: var(--ow-primary);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(121,82,179,.15);
+}
+
+.ow-form-hint {
+    font-size: 11px;
+    color: var(--ow-muted);
+}
+
+.ow-checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.ow-checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.ow-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 18px;
+    border-radius: var(--ow-radius);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background .15s, opacity .15s;
+    text-decoration: none;
+}
+
+.ow-btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+.ow-btn-primary   { background: var(--ow-primary); color: #fff; }
+.ow-btn-success   { background: var(--ow-success); color: #fff; }
+.ow-btn-danger    { background: var(--ow-danger);  color: #fff; }
+.ow-btn-secondary { background: var(--ow-light);   color: var(--ow-text); border: 1px solid var(--ow-border); }
+.ow-btn-warning   { background: var(--ow-warning); color: var(--ow-text); }
+
+.ow-btn-primary:hover   { background: #6741a4; color: #fff; }
+.ow-btn-success:hover   { background: #218838; color: #fff; }
+.ow-btn-danger:hover    { background: #c82333; color: #fff; }
+.ow-btn-secondary:hover { background: #e9ecef; }
+
+.ow-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 16px;
+}
+
+/* ── Status badge ───────────────────────────────────────────────────────── */
+.ow-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+
+.ow-badge-pending   { background: #e9ecef; color: #495057; }
+.ow-badge-running   { background: #cce5ff; color: #004085; }
+.ow-badge-completed { background: #d4edda; color: #155724; }
+.ow-badge-failed    { background: #f8d7da; color: #721c24; }
+
+/* ── Progress bars ──────────────────────────────────────────────────────── */
+.ow-progress-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.ow-progress-table th,
+.ow-progress-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--ow-border);
+}
+
+.ow-progress-table th {
+    font-weight: 600;
+    background: var(--ow-light);
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--ow-muted);
+    letter-spacing: .5px;
+}
+
+.ow-progress-bar-wrap {
+    background: #e9ecef;
+    border-radius: 10px;
+    height: 10px;
+    min-width: 120px;
+    overflow: hidden;
+}
+
+.ow-progress-bar {
+    height: 100%;
+    border-radius: 10px;
+    background: var(--ow-primary);
+    transition: width .4s ease;
+}
+
+.ow-progress-bar.done { background: var(--ow-success); }
+
+.ow-expand-btn {
+    cursor: pointer;
+    color: var(--ow-primary);
+    font-size: 11px;
+    user-select: none;
+    margin-right: 4px;
+    display: inline-block;
+    transition: color .15s;
+}
+.ow-expand-btn:hover { color: var(--ow-accent, #0073aa); }
+
+.ow-log-detail-row td {
+    background: #f9f9f9;
+    padding: 0 12px 4px 28px;
+}
+
+/* ── Log viewer ─────────────────────────────────────────────────────────── */
+.ow-log-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.ow-log-container {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border-radius: var(--ow-radius);
+    padding: 12px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: "Cascadia Code", "SF Mono", "Fira Code", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.ow-log-entry {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+}
+
+.ow-log-entry:last-child { border-bottom: none; }
+
+.ow-log-ts       { color: #6e6e6e; white-space: nowrap; }
+.ow-log-level    { min-width: 64px; font-weight: 700; }
+.ow-log-migrator { color: #9cdcfe; min-width: 80px; }
+.ow-log-msg      { flex: 1; word-break: break-word; }
+
+.ow-log-level-DEBUG   { color: #6e6e6e; }
+.ow-log-level-INFO    { color: #4fc3f7; }
+.ow-log-level-WARNING { color: #ffcc02; }
+.ow-log-level-ERROR   { color: #f44747; }
+.ow-log-level-SUCCESS { color: #6fcf5c; }
+
+/* ── Alerts ─────────────────────────────────────────────────────────────── */
+.ow-alert {
+    padding: 10px 16px;
+    border-radius: var(--ow-radius);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.ow-alert-success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+.ow-alert-error   { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+.ow-alert-info    { background: #cce5ff; border: 1px solid #b8daff; color: #004085; }
+.ow-alert-warning { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; }
+
+/* ── Spinner ────────────────────────────────────────────────────────────── */
+.ow-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: ow-spin .7s linear infinite;
+    vertical-align: middle;
+}
+
+.ow-spinner.dark {
+    border-color: rgba(0,0,0,.15);
+    border-top-color: var(--ow-primary);
+}
+
+@keyframes ow-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 782px) {
+    .ow-form-grid { grid-template-columns: 1fr; }
+    .ow-tabs { overflow-x: auto; }
+}
+
+/* ── Source-mode selector buttons ───────────────────────────────────────── */
+.ow-source-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border: 2px solid var(--ow-border);
+    border-radius: var(--ow-radius);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+    user-select: none;
+}
+.ow-source-btn input[type="radio"] {
+    accent-color: var(--ow-primary);
+}
+.ow-source-btn.active,
+.ow-source-btn:has(input[type="radio"]:checked) {
+    border-color: var(--ow-primary);
+    background: rgba(121, 82, 179, .07);
+    color: var(--ow-primary);
+}
+.ow-source-btn:hover:not(.active) {
+    background: var(--ow-light);
+}
+
+/* ── Local import area (SQL + images upload) ────────────────────────────── */
+#ow-local-import-area {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--ow-light);
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius);
+}
+
+/* ── Remote DB card dim-out in local mode ───────────────────────────────── */
+#ow-remote-db-card {
+    transition: opacity .2s;
+}
