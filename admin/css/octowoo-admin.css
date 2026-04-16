@@ -251,6 +251,7 @@
 }
 
 .ow-progress-bar.done { background: var(--ow-success); }
+.ow-progress-bar.failed { background: #dc3545; }
 
 .ow-expand-btn {
     cursor: pointer;

@@ -109,7 +109,7 @@ class AjaxHandler {
                 }
             };
             $recursive_mask( $safe_req );
-            $logger->debug( 'AJAX request received', [ 'action' => $action, 'user' => get_current_user_id(), 'request' => $safe_req ] );
+            $logger->info( 'AJAX dispatch: ' . $action, [ 'user' => get_current_user_id() ] );
             $logger->flush();
         } catch ( \Throwable $e ) {
             // Ignore logging failures — do not block AJAX.
@@ -318,10 +318,14 @@ class AjaxHandler {
 
     private function actionGetProgress(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
-                ?? CheckpointManager::getActiveRunId()
-                ?? get_option( 'octowoo_last_run_id', '' )
+            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) ?? ''
         );
+
+        // Fall back to the active run, then the last finished run.
+        if ( ! $run_id ) {
+            $run_id = CheckpointManager::getActiveRunId()
+                ?? get_option( 'octowoo_last_run_id', '' );
+        }
 
         if ( ! $run_id ) {
             wp_send_json_success( [ 'checkpoints' => [], 'active' => false ] );
@@ -341,10 +345,13 @@ class AjaxHandler {
 
     private function actionGetLogs(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
-                ?? CheckpointManager::getActiveRunId()
-                ?? get_option( 'octowoo_last_run_id', '' )
+            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) ?? ''
         );
+
+        if ( ! $run_id ) {
+            $run_id = CheckpointManager::getActiveRunId()
+                ?? get_option( 'octowoo_last_run_id', '' );
+        }
 
         $level    = sanitize_key( filter_input( INPUT_GET, 'level', FILTER_SANITIZE_SPECIAL_CHARS ) ?? '' );
         $migrator = sanitize_key( filter_input( INPUT_GET, 'migrator', FILTER_SANITIZE_SPECIAL_CHARS ) ?? '' );
@@ -450,6 +457,13 @@ class AjaxHandler {
                 'migrator'    => $result['migrator'],
                 'checkpoints' => $result['checkpoints'],
                 'report'      => $result['report'],
+            ] );
+        } catch ( \RuntimeException $e ) {
+            // RuntimeException from DatabaseConnector means the OC database is unreachable.
+            wp_send_json_error( [
+                'message'   => __( 'Cannot connect to OpenCart database – check your Settings tab. ', 'octowoo' ) . $e->getMessage(),
+                'exception' => get_class( $e ),
+                'db_error'  => true,
             ] );
         } catch ( \Throwable $e ) {
             wp_send_json_error( [

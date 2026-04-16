@@ -45,49 +45,54 @@ class OctoWoo_Activator {
 
         $charset_collate = $wpdb->get_charset_collate();
 
+        // NOTE: dbDelta() requires exact formatting:
+        //  - "CREATE TABLE" (no IF NOT EXISTS, no backticks on table name)
+        //  - Two spaces between PRIMARY KEY and the column definition
+        //  - KEY definitions on their own line
+
         // ── Log table ─────────────────────────────────────────────────────────
         $logs_table = $wpdb->prefix . 'octowoo_logs';
-        $sql_logs   = "CREATE TABLE IF NOT EXISTS `{$logs_table}` (
-            `id`         BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            `run_id`     VARCHAR(64)         NOT NULL DEFAULT '',
-            `level`      VARCHAR(20)         NOT NULL DEFAULT 'INFO',
-            `migrator`   VARCHAR(100)        NOT NULL DEFAULT '',
-            `message`    TEXT                NOT NULL,
-            `context`    LONGTEXT,
-            `created_at` DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            KEY `idx_run_id`   (`run_id`),
-            KEY `idx_level`    (`level`),
-            KEY `idx_migrator` (`migrator`)
+        $sql_logs   = "CREATE TABLE {$logs_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            run_id varchar(64) NOT NULL DEFAULT '',
+            level varchar(20) NOT NULL DEFAULT 'INFO',
+            migrator varchar(100) NOT NULL DEFAULT '',
+            message text NOT NULL,
+            context longtext,
+            created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            KEY idx_run_id (run_id),
+            KEY idx_level (level),
+            KEY idx_migrator (migrator)
         ) {$charset_collate};";
 
         // ── Checkpoint / resume table ─────────────────────────────────────────
         $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
-        $sql_cp   = "CREATE TABLE IF NOT EXISTS `{$cp_table}` (
-            `id`              BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            `run_id`          VARCHAR(64)         NOT NULL DEFAULT '',
-            `migrator`        VARCHAR(100)        NOT NULL,
-            `last_oc_id`      BIGINT(20)          NOT NULL DEFAULT 0,
-            `processed_count` BIGINT(20)          NOT NULL DEFAULT 0,
-            `total_count`     BIGINT(20)          NOT NULL DEFAULT 0,
-            `status`          VARCHAR(20)         NOT NULL DEFAULT 'pending',
-            `started_at`      DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            `updated_at`      DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_run_migrator` (`run_id`, `migrator`)
+        $sql_cp   = "CREATE TABLE {$cp_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            run_id varchar(64) NOT NULL DEFAULT '',
+            migrator varchar(100) NOT NULL,
+            last_oc_id bigint(20) NOT NULL DEFAULT 0,
+            processed_count bigint(20) NOT NULL DEFAULT 0,
+            total_count bigint(20) NOT NULL DEFAULT 0,
+            status varchar(20) NOT NULL DEFAULT 'pending',
+            started_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_run_migrator (run_id,migrator)
         ) {$charset_collate};";
 
         // ── ID map table (OC ID → WC ID) ──────────────────────────────────────
         $map_table = $wpdb->prefix . 'octowoo_id_map';
-        $sql_map   = "CREATE TABLE IF NOT EXISTS `{$map_table}` (
-            `id`          BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            `entity_type` VARCHAR(50)         NOT NULL,
-            `oc_id`       BIGINT(20)          NOT NULL,
-            `wc_id`       BIGINT(20)          NOT NULL,
-            `run_id`      VARCHAR(64)         NOT NULL DEFAULT '',
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_entity_oc` (`entity_type`, `oc_id`),
-            KEY `idx_entity_wc` (`entity_type`, `wc_id`)
+        $sql_map   = "CREATE TABLE {$map_table} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            entity_type varchar(50) NOT NULL,
+            oc_id bigint(20) NOT NULL,
+            wc_id bigint(20) NOT NULL,
+            run_id varchar(64) NOT NULL DEFAULT '',
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_entity_oc (entity_type,oc_id),
+            KEY idx_entity_wc (entity_type,wc_id)
         ) {$charset_collate};";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';

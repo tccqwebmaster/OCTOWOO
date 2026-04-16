@@ -57,7 +57,7 @@ class Logger {
     private array $buffer = [];
 
     /** @var int How many buffer entries to accumulate before flushing to DB. */
-    private const BUFFER_FLUSH = 25;
+    private const BUFFER_FLUSH = 5;
 
     // ── Construction ─────────────────────────────────────────────────────────
 
@@ -67,6 +67,10 @@ class Logger {
         $this->db_enabled    = (bool) ( $config['db_enabled']    ?? true );
         $this->min_level     = $config['min_level']     ?? self::INFO;
         $this->max_file_size = (int)  ( $config['max_file_size'] ?? 10 * 1024 * 1024 );
+
+        // Ensure buffered log entries are written on shutdown (covers fatal
+        // errors, early exit, or callers that forget to call flush()).
+        register_shutdown_function( [ $this, 'flush' ] );
     }
 
     // ── Public API ────────────────────────────────────────────────────────────

@@ -627,7 +627,12 @@
         })
         .done(function (res) {
             if (!res.success) {
-                setBannerError(res.data.message || 'Chunk error.');
+                // If this is a DB connection error, give a helpful message.
+                var msg = (res.data && res.data.message) ? res.data.message : 'Chunk error.';
+                if (res.data && res.data.db_error) {
+                    msg = '🔌 ' + msg + '\n\nPlease go to Settings tab and configure your OpenCart database credentials, then try again.';
+                }
+                setBannerError(msg);
                 setButtonState('idle');
                 isRunning = false;
                 return;
@@ -784,10 +789,12 @@
             const total     = parseInt(cp.total_count, 10)     || 0;
             const pct       = total > 0 ? Math.round(processed / total * 100) : (cp.status === 'completed' ? 100 : 0);
             const isDone    = cp.status === 'completed';
+            const isFailed  = cp.status === 'failed';
 
+            const barClass = isFailed ? ' failed' : (isDone ? ' done' : '');
             const $bar = $('<div class="ow-progress-bar-wrap">').append(
-                $('<div class="ow-progress-bar' + (isDone ? ' done' : '') + '">')
-                    .css('width', pct + '%')
+                $('<div class="ow-progress-bar' + barClass + '">')
+                    .css('width', (isFailed ? 100 : pct) + '%')
             );
 
             // Expand button — click to toggle a sub-row with recent logs for this migrator.

@@ -253,6 +253,57 @@ class CheckpointManager {
         return $status === self::STATUS_COMPLETED;
     }
 
+    /**
+     * Check if a specific migrator has been marked as failed.
+     */
+    public function isFailed( string $migrator ): bool {
+        global $wpdb;
+
+        $status = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                $this->run_id,
+                $migrator
+            )
+        );
+
+        return $status === self::STATUS_FAILED;
+    }
+
+    /**
+     * Create a checkpoint row only if it does not already exist (idempotent).
+     *
+     * Unlike init(), this will NOT reset an existing row's status or counts.
+     * Used to pre-populate the progress table so the UI always has rows to show.
+     */
+    public function ensureExists( string $migrator ): void {
+        global $wpdb;
+
+        $exists = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                $this->run_id,
+                $migrator
+            )
+        );
+
+        if ( ! $exists ) {
+            $wpdb->insert(
+                $this->table,
+                [
+                    'run_id'          => $this->run_id,
+                    'migrator'        => $migrator,
+                    'last_oc_id'      => 0,
+                    'processed_count' => 0,
+                    'total_count'     => 0,
+                    'status'          => self::STATUS_PENDING,
+                    'started_at'      => current_time( 'mysql' ),
+                ],
+                [ '%s', '%s', '%d', '%d', '%d', '%s', '%s' ]
+            );
+        }
+    }
+
     // ── ID map helpers ────────────────────────────────────────────────────────
 
     /**

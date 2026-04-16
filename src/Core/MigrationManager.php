@@ -123,6 +123,16 @@ class MigrationManager {
 
         $migration_config = $this->config['migration'];
 
+        // Pre-populate checkpoint rows for all enabled migrators so
+        // getAll() always returns data for the progress UI.
+        foreach ( self::MIGRATOR_ORDER as $key ) {
+            $run_key = 'run_' . $key;
+            if ( isset( $migration_config[ $run_key ] ) && ! $migration_config[ $run_key ] ) {
+                continue;
+            }
+            $this->checkpoint->ensureExists( $key );
+        }
+
         foreach ( self::MIGRATOR_ORDER as $key ) {
             if ( $this->isAborted() ) {
                 $this->logger->warning( 'Migration aborted by user flag.' );
@@ -192,14 +202,6 @@ class MigrationManager {
     public function runNextChunk(): array {
         $this->bootstrap();
 
-        // Debug log: runNextChunk invoked.
-        try {
-            $this->logger->debug( 'runNextChunk invoked', [ 'user' => get_current_user_id(), 'migration_config' => $this->config['migration'] ?? [] ] );
-            $this->logger->flush();
-        } catch ( \Throwable $e ) {
-            // swallow logging errors
-        }
-
         // ── Concurrency guard ─────────────────────────────────────────────────
         // Prevents two simultaneous AJAX chunk requests from running the same
         // batch (race condition in fast-clicking browsers or server-side retries).
@@ -218,14 +220,10 @@ class MigrationManager {
 
         try {
             $res = $this->doRunNextChunk();
-            try {
-                $this->logger->debug( 'runNextChunk result', [ 'result' => $res ] );
-                $this->logger->flush();
-            } catch ( \Throwable $e ) {
-                // ignore
-            }
             return $res;
         } finally {
+            // Always flush logs and release the lock.
+            try { $this->logger->flush(); } catch ( \Throwable $e ) { /* ignore */ }
             delete_transient( $lock_key );
         }
     }
@@ -255,6 +253,17 @@ class MigrationManager {
 
         $migration_config = $this->config['migration'];
 
+        // Pre-populate checkpoint rows for ALL enabled migrators so the UI
+        // always has data to render in the progress table — even before the
+        // first migrator actually starts processing.
+        foreach ( self::MIGRATOR_ORDER as $key ) {
+            $run_key = 'run_' . $key;
+            if ( isset( $migration_config[ $run_key ] ) && ! $migration_config[ $run_key ] ) {
+                continue;
+            }
+            $this->checkpoint->ensureExists( $key );
+        }
+
         foreach ( self::MIGRATOR_ORDER as $key ) {
             // Skip disabled migrators.
             $run_key = 'run_' . $key;
@@ -262,8 +271,8 @@ class MigrationManager {
                 continue;
             }
 
-            // Skip already-completed migrators.
-            if ( $this->checkpoint->isCompleted( $key ) ) {
+            // Skip already-completed or permanently-failed migrators.
+            if ( $this->checkpoint->isCompleted( $key ) || $this->checkpoint->isFailed( $key ) ) {
                 continue;
             }
 
@@ -276,6 +285,9 @@ class MigrationManager {
                     "Chunk [{$key}] threw exception: " . $e->getMessage(),
                     [ 'trace' => $e->getTraceAsString() ]
                 );
+                // Mark the migrator as FAILED so it is skipped on the next chunk
+                // request instead of being retried in an infinite loop.
+                $this->checkpoint->fail( $key );
                 $chunk = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
             }
 
@@ -342,20 +354,32 @@ class MigrationManager {
         // activation hook was not re-fired after files were replaced).
         \OctoWoo_Activator::maybeCreateTables();
 
-        // Inject the top-level 'source' flag into the db config so DatabaseConnector
-        // can switch to the locally-imported WP tables when source = 'local'.
-        // Without this, local-mode migration always tries the remote OC DB and fails.
-        $db_config           = $this->config['db'];
-        $db_config['source'] = $this->config['source'] ?? 'remote';
-        $this->db = new DatabaseConnector( $db_config );
-        $this->db->connect(); // Validate credentials early; throws on failure.
-
+        // Logger is created BEFORE the OC database connection so that bootstrap
+        // errors (e.g. wrong DB credentials) are captured in logs/DB.
         $this->logger = new Logger(
             $this->run_id,
             $this->config['logging'] ?? []
         );
 
         $this->checkpoint = new CheckpointManager( $this->run_id );
+
+        // Inject the top-level 'source' flag into the db config so DatabaseConnector
+        // can switch to the locally-imported WP tables when source = 'local'.
+        // Without this, local-mode migration always tries the remote OC DB and fails.
+        $db_config           = $this->config['db'];
+        $db_config['source'] = $this->config['source'] ?? 'remote';
+
+        try {
+            $this->db = new DatabaseConnector( $db_config );
+            $this->db->connect(); // Validate credentials early; throws on failure.
+        } catch ( \Throwable $e ) {
+            $this->logger->error(
+                'Cannot connect to OpenCart database. Check your Settings → Database Connection.',
+                [ 'error' => $e->getMessage() ]
+            );
+            $this->logger->flush();
+            throw $e;
+        }
 
         $this->batch = new BatchProcessor(
             $this->logger,
