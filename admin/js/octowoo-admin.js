@@ -663,7 +663,17 @@
         .fail(function (xhr) {
             chunkFailCount++;
             const httpStatus = xhr.status || 0;
-            const preview    = (xhr.responseText || '').replace(/<[^>]*>/g, ' ').trim().substring(0, 300);
+
+            // Try to parse JSON body from our shutdown handler.
+            let fatalMsg = '';
+            try {
+                const j = JSON.parse(xhr.responseText);
+                if (j && j.data && j.data.message) {
+                    fatalMsg = j.data.message;
+                }
+            } catch (e) { /* not JSON */ }
+
+            const preview = fatalMsg || (xhr.responseText || '').replace(/<[^>]*>/g, ' ').trim().substring(0, 300);
 
             if (chunkFailCount >= 3) {
                 // Too many failures — stop and show diagnostic.

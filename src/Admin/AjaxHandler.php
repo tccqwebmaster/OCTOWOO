@@ -373,6 +373,41 @@ class AjaxHandler {
     // ── Action: run one chunk ─────────────────────────────────────────────────
 
     private function actionRunChunk(): void {
+        // Register a shutdown handler to capture fatal errors that bypass try/catch
+        // (e.g. memory exhaustion, class-not-found, parse errors in loaded files).
+        register_shutdown_function( function (): void {
+            $error = error_get_last();
+            if ( $error && in_array( $error['type'], [ E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR ], true ) ) {
+                // If headers already sent (normal JSON response), don't interfere.
+                if ( headers_sent() ) {
+                    return;
+                }
+                // Log the fatal error to OctoWoo's own log table.
+                try {
+                    $run = \OctoWoo\Core\CheckpointManager::getActiveRunId() ?? get_option( 'octowoo_last_run_id', 'fatal' );
+                    $logger = new \OctoWoo\Core\Logger( $run );
+                    $logger->error( 'PHP Fatal in chunk: ' . $error['message'], [
+                        'file' => $error['file'],
+                        'line' => $error['line'],
+                        'type' => $error['type'],
+                    ] );
+                    $logger->flush();
+                } catch ( \Throwable $ignore ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement
+                }
+                // Return a JSON error so the JS retry logic sees a meaningful message.
+                http_response_code( 500 );
+                header( 'Content-Type: application/json; charset=utf-8' );
+                echo wp_json_encode( [
+                    'success' => false,
+                    'data'    => [
+                        'message' => 'PHP Fatal: ' . $error['message']
+                            . ' in ' . basename( $error['file'] ) . ':' . $error['line'],
+                        'fatal'   => true,
+                    ],
+                ] );
+            }
+        } );
+
         // phpcs:ignore WordPress.Security.NonceVerification
         $run_id   = sanitize_text_field( (string) filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) );
         // phpcs:ignore WordPress.Security.NonceVerification
