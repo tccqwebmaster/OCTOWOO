@@ -185,16 +185,33 @@ class AdminPage {
         // omitted from POST). Right-most values (posted) win.
         $merged = array_replace_recursive( $existing, $config );
 
-        // Force-delete the old option row first, then re-add it.  This avoids
-        // the WordPress optimisation that silently skips `update_option` when
-        // the new serialised value happens to match the old one byte-for-byte.
-        delete_option( self::SETTINGS_KEY );
-        $saved_ok = update_option( self::SETTINGS_KEY, $merged, true );
+        // The prefix "octowoo_oc_" is an internal local-import prefix
+        // (SqlImporter renames oc_ tables to octowoo_oc_ inside WP's DB).
+        // When the source is Remote, the user's real OC prefix should be used;
+        // strip the octowoo_ wrapper automatically so migrations query the
+        // correct remote table names.
+        if ( $merged['source'] === 'remote'
+             && strpos( $merged['db']['prefix'], \OctoWoo\Core\SqlImporter::IMPORT_PREFIX ) === 0 ) {
+            $merged['db']['prefix'] = substr(
+                $merged['db']['prefix'],
+                strlen( 'octowoo_' )
+            );
+        }
 
-        // Verify persistence – read back immediately.
+        // Flush WP's option cache so update_option never short-circuits due
+        // to stale alloptions / individual-option cache (common on hosts with
+        // persistent object cache like Redis / Memcached).
+        wp_cache_delete( 'alloptions', 'options' );
+        wp_cache_delete( self::SETTINGS_KEY, 'options' );
+        wp_cache_delete( 'notoptions', 'options' );
+
+        $saved_ok = update_option( self::SETTINGS_KEY, $merged, 'yes' );
+
+        // update_option returns false both on failure AND when old === new.
+        // Read back immediately to distinguish the two cases.
         if ( ! $saved_ok ) {
-            // Fallback: try add_option in case delete_option + update_option raced.
-            $saved_ok = add_option( self::SETTINGS_KEY, $merged, '', 'yes' );
+            $readback = get_option( self::SETTINGS_KEY, [] );
+            $saved_ok = ( maybe_serialize( $readback ) === maybe_serialize( $merged ) );
         }
 
         $redirect_params = [
@@ -205,7 +222,6 @@ class AdminPage {
         if ( $saved_ok ) {
             $redirect_params['updated'] = '1';
         } else {
-            // Surface the failure to the admin so they know something went wrong.
             global $wpdb;
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
             error_log( 'OctoWoo: settings save failed. DB error: ' . $wpdb->last_error );

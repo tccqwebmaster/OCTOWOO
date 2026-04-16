@@ -462,6 +462,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                         <input type="text" name="octowoo[db][prefix]"
                                value="<?php echo esc_attr( $config['db']['prefix'] ?? 'oc_' ); ?>"
                                placeholder="oc_">
+                        <span class="ow-form-hint">
+                            <?php esc_html_e( 'Your OpenCart table prefix, usually oc_ — check your OpenCart config.php file. Do NOT use octowoo_oc_ (that is an internal local-import prefix).', 'octowoo' ); ?>
+                        </span>
                     </div>
                     <div class="ow-form-group" style="grid-column:1/-1;">
                         <label><?php esc_html_e( 'Unix Socket Path (optional)', 'octowoo' ); ?></label>
