@@ -91,6 +91,30 @@ class AjaxHandler {
             wp_send_json_error( [ 'message' => __( 'Invalid security token.', 'octowoo' ) ], 403 );
         }
 
+        // Lightweight request logging to aid debugging (non-blocking).
+        try {
+            $log_run = \OctoWoo\Core\CheckpointManager::getActiveRunId() ?? get_option( 'octowoo_last_run_id', 'no-run' );
+            $logger = new \OctoWoo\Core\Logger( $log_run, AdminPage::getConfig()['logging'] ?? [] );
+            $safe_req = $_REQUEST;
+            // Mask common sensitive fields.
+            $mask_keys = [ 'db_pass', 'password', 'db_password' ];
+            $recursive_mask = function (&$arr) use (&$recursive_mask, $mask_keys) {
+                if ( ! is_array( $arr ) ) { return; }
+                foreach ( $arr as $k => &$v ) {
+                    if ( in_array( strtolower( $k ), $mask_keys, true ) ) {
+                        $v = '***';
+                        continue;
+                    }
+                    if ( is_array( $v ) ) { $recursive_mask( $v ); }
+                }
+            };
+            $recursive_mask( $safe_req );
+            $logger->debug( 'AJAX request received', [ 'action' => $action, 'user' => get_current_user_id(), 'request' => $safe_req ] );
+            $logger->flush();
+        } catch ( \Throwable $e ) {
+            // Ignore logging failures — do not block AJAX.
+        }
+
         switch ( $action ) {
             case 'octowoo_start_migration':
                 $this->actionStartMigration();

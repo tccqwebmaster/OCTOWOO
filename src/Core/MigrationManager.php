@@ -192,6 +192,14 @@ class MigrationManager {
     public function runNextChunk(): array {
         $this->bootstrap();
 
+        // Debug log: runNextChunk invoked.
+        try {
+            $this->logger->debug( 'runNextChunk invoked', [ 'user' => get_current_user_id(), 'migration_config' => $this->config['migration'] ?? [] ] );
+            $this->logger->flush();
+        } catch ( \Throwable $e ) {
+            // swallow logging errors
+        }
+
         // ── Concurrency guard ─────────────────────────────────────────────────
         // Prevents two simultaneous AJAX chunk requests from running the same
         // batch (race condition in fast-clicking browsers or server-side retries).
@@ -209,7 +217,14 @@ class MigrationManager {
         set_transient( $lock_key, '1', 90 ); // 90 s — well beyond any single chunk.
 
         try {
-            return $this->doRunNextChunk();
+            $res = $this->doRunNextChunk();
+            try {
+                $this->logger->debug( 'runNextChunk result', [ 'result' => $res ] );
+                $this->logger->flush();
+            } catch ( \Throwable $e ) {
+                // ignore
+            }
+            return $res;
         } finally {
             delete_transient( $lock_key );
         }
