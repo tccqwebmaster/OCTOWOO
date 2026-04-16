@@ -265,7 +265,19 @@ class Validator {
         }
 
         // Remote mode — attempt live connection.
-        $connector = new DatabaseConnector( $this->config );
+        $db = $this->config['db'] ?? [];
+        if ( empty( $db['host'] ) || empty( $db['database'] ) || empty( $db['username'] ) ) {
+            return $this->result(
+                self::STATUS_FAIL,
+                __( 'OpenCart database credentials are not configured.', 'octowoo' ),
+                null,
+                __( 'Go to Settings and enter the Host, Database, Username, and Password for your OpenCart database.', 'octowoo' )
+            );
+        }
+
+        $db_config           = $db;
+        $db_config['source'] = $this->config['source'] ?? 'remote';
+        $connector = new DatabaseConnector( $db_config );
         $error     = $connector->testConnection();
         $connector->close();
 

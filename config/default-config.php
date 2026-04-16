@@ -16,10 +16,10 @@ return [
 
     // ── OpenCart Database Connection ──────────────────────────────────────────
     'db' => [
-        'host'     => '127.0.0.1',
+        'host'     => '',
         'port'     => 3306,
-        'database' => 'opencart',
-        'username' => 'root',
+        'database' => '',
+        'username' => '',
         'password' => '',
         'prefix'   => 'oc_',    // Table prefix in OpenCart DB
         // Unix socket path (leave blank to use TCP host/port above).
