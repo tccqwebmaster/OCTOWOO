@@ -20,9 +20,10 @@ $last_run_at = get_option( 'octowoo_last_run_at', '' );
 
 // URL-based notices.
 // phpcs:disable WordPress.Security.NonceVerification
-$saved   = isset( $_GET['updated'] )  && '1' === $_GET['updated'];
-$db_ok   = isset( $_GET['oc_db_ok'] ) && '1' === $_GET['oc_db_ok'];
-$db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
+$saved      = isset( $_GET['updated'] )    && '1' === $_GET['updated'];
+$save_error = isset( $_GET['save_error'] ) && '1' === $_GET['save_error'];
+$db_ok      = isset( $_GET['oc_db_ok'] )   && '1' === $_GET['oc_db_ok'];
+$db_err     = ! empty( $_GET['oc_db_err'] );
 // phpcs:enable
 ?>
 <div class="wrap" id="octowoo-app">
@@ -36,6 +37,9 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
     <!-- Global notices -->
     <?php if ( $saved ): ?>
         <div class="ow-alert ow-alert-success"><?php esc_html_e( 'Settings saved successfully.', 'octowoo' ); ?></div>
+    <?php endif; ?>
+    <?php if ( $save_error ): ?>
+        <div class="ow-alert ow-alert-error"><?php esc_html_e( '⚠ Settings could not be saved — database write failed. Check your server\'s error log for details.', 'octowoo' ); ?></div>
     <?php endif; ?>
     <?php if ( $db_ok ): ?>
         <div class="ow-alert ow-alert-success"><?php esc_html_e( '✔ OpenCart database connection successful!', 'octowoo' ); ?></div>
@@ -310,7 +314,7 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
     ═════════════════════════════════════════════════════════════════════ -->
     <div id="ow-tab-settings" class="ow-tab-pane" style="display:none;">
 
-        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="octowoo-settings-form">
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" id="octowoo-settings-form" autocomplete="off">
             <?php wp_nonce_field( 'octowoo_save_settings' ); ?>
             <input type="hidden" name="action" value="octowoo_save_settings">
 
@@ -444,8 +448,14 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                     </div>
                     <div class="ow-form-group">
                         <label><?php esc_html_e( 'Password', 'octowoo' ); ?></label>
-                        <input type="password" name="octowoo[db][password]" placeholder="<?php esc_attr_e( 'Leave blank to keep current', 'octowoo' ); ?>">
-                        <span class="ow-form-hint"><?php esc_html_e( 'Leave blank to keep existing password.', 'octowoo' ); ?></span>
+                        <input type="password" name="octowoo[db][password]" autocomplete="new-password" placeholder="<?php echo esc_attr( ! empty( $config['db']['password'] ) ? '••••••••' : '' ); ?>">
+                        <span class="ow-form-hint">
+                            <?php if ( ! empty( $config['db']['password'] ) ): ?>
+                                ✔ <?php esc_html_e( 'Password is saved. Leave blank to keep it, or enter a new one to change.', 'octowoo' ); ?>
+                            <?php else: ?>
+                                ⚠ <?php esc_html_e( 'No password saved yet. Enter the OpenCart database password.', 'octowoo' ); ?>
+                            <?php endif; ?>
+                        </span>
                     </div>
                     <div class="ow-form-group">
                         <label><?php esc_html_e( 'Table Prefix', 'octowoo' ); ?></label>

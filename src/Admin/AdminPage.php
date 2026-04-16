@@ -137,7 +137,7 @@ class AdminPage {
                 'language_id_secondary' => (int)               ( $posted['opencart']['language_id_secondary'] ?? 0 ),
             ],
             'migration' => [
-                'batch_size'          => max( 10, min( 500, (int) ( $posted['migration']['batch_size'] ?? 50 ) ) ),
+                'batch_size'          => max( 5, min( 500, (int) ( $posted['migration']['batch_size'] ?? 20 ) ) ),
                 'dry_run'             => ! empty( $posted['migration']['dry_run'] ),
                 'on_duplicate'        => sanitize_key( $posted['migration']['on_duplicate'] ?? 'skip' ),
                 'run_categories'      => ! empty( $posted['migration']['run_categories'] ),
@@ -184,13 +184,35 @@ class AdminPage {
         // in the submitted form (prevents accidental blanks when fields are
         // omitted from POST). Right-most values (posted) win.
         $merged = array_replace_recursive( $existing, $config );
-        update_option( self::SETTINGS_KEY, $merged, false );
 
-        wp_safe_redirect( add_query_arg( [
+        // Force-delete the old option row first, then re-add it.  This avoids
+        // the WordPress optimisation that silently skips `update_option` when
+        // the new serialised value happens to match the old one byte-for-byte.
+        delete_option( self::SETTINGS_KEY );
+        $saved_ok = update_option( self::SETTINGS_KEY, $merged, true );
+
+        // Verify persistence – read back immediately.
+        if ( ! $saved_ok ) {
+            // Fallback: try add_option in case delete_option + update_option raced.
+            $saved_ok = add_option( self::SETTINGS_KEY, $merged, '', 'yes' );
+        }
+
+        $redirect_params = [
             'page'    => self::MENU_SLUG,
             'tab'     => 'settings',
-            'updated' => '1',
-        ], admin_url( 'admin.php' ) ) );
+        ];
+
+        if ( $saved_ok ) {
+            $redirect_params['updated'] = '1';
+        } else {
+            // Surface the failure to the admin so they know something went wrong.
+            global $wpdb;
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            error_log( 'OctoWoo: settings save failed. DB error: ' . $wpdb->last_error );
+            $redirect_params['save_error'] = '1';
+        }
+
+        wp_safe_redirect( add_query_arg( $redirect_params, admin_url( 'admin.php' ) ) );
         exit;
     }
 
