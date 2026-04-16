@@ -191,6 +191,34 @@ class MigrationManager {
      */
     public function runNextChunk(): array {
         $this->bootstrap();
+
+        // ── Concurrency guard ─────────────────────────────────────────────────
+        // Prevents two simultaneous AJAX chunk requests from running the same
+        // batch (race condition in fast-clicking browsers or server-side retries).
+        $lock_key = 'octowoo_chunk_lock_' . $this->run_id;
+        if ( get_transient( $lock_key ) ) {
+            return [
+                'done_all'    => false,
+                'busy'        => true,
+                'migrator'    => '',
+                'chunk'       => [],
+                'checkpoints' => [],
+                'report'      => null,
+            ];
+        }
+        set_transient( $lock_key, '1', 90 ); // 90 s — well beyond any single chunk.
+
+        try {
+            return $this->doRunNextChunk();
+        } finally {
+            delete_transient( $lock_key );
+        }
+    }
+
+    /**
+     * Internal implementation — called inside the lock acquired by runNextChunk().
+     */
+    private function doRunNextChunk(): array {
         $this->checkpoint->markRunActive();
 
         AddonManager::loadAddons( $this->config );
@@ -458,18 +486,20 @@ class MigrationManager {
     }
 
     private function buildReport(): array {
-        $total_processed = array_sum( array_column( $this->stats, 'processed' ) );
-        $total_failed    = array_sum( array_column( $this->stats, 'failed' ) );
+        $report = new MigrationReport(
+            $this->run_id,
+            $this->stats,
+            $this->checkpoint->getAll(),
+            (bool) ( $this->config['migration']['dry_run'] ?? false ),
+            current_time( 'mysql' )
+        );
 
-        return [
-            'run_id'      => $this->run_id,
-            'finished'    => current_time( 'mysql' ),
-            'dry_run'     => $this->config['migration']['dry_run'],
-            'migrators'   => array_keys( $this->stats ),
-            'results'     => $this->stats,
-            'error_count' => $total_failed,
-            'checkpoints' => $this->checkpoint->getAll(),
-        ];
+        // Persist report to wp_options so admin UI can show it after page reload.
+        $report->save();
+
+        $this->logger->info( "Migration report:\n" . $report->toText() );
+
+        return $report->toArray();
     }
 
     // ── Accessors ─────────────────────────────────────────────────────────────

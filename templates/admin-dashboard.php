@@ -690,6 +690,9 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                 <button type="submit" id="ow-btn-save-settings" class="ow-btn ow-btn-primary">
                     💾 <?php esc_html_e( 'Save Settings', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-autodetect" class="ow-btn ow-btn-secondary" style="margin-left:8px;">
+                    🔎 <?php esc_html_e( 'Auto-detect Image Path & Logs', 'octowoo' ); ?>
+                </button>
             </div>
         </form>
 

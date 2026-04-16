@@ -116,6 +116,14 @@ class OctoWoo_Activator {
         }
     }
 
+    /**
+     * Public helper to ensure the logs directory exists and is writable.
+     * Safe to call during runtime (idempotent).
+     */
+    public static function ensure_log_dir(): void {
+        self::create_log_dir();
+    }
+
     // ── Default options ───────────────────────────────────────────────────────
 
     private static function set_default_options(): void {

@@ -54,6 +54,38 @@
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
 
         $('#ow-btn-test-conn').on('click', testConnection);
+        $('#ow-btn-autodetect').on('click', function () {
+            const $btn = $(this);
+            $btn.prop('disabled', true).text('🔎 Detecting…');
+            $.post(octoWoo.ajaxUrl, {
+                action: 'octowoo_prescan',
+                nonce:  octoWoo.nonce,
+            })
+            .done(function (res) {
+                if (!res.success) {
+                    alert('Auto-detect failed: ' + (res.data && res.data.message ? res.data.message : 'Unknown'));
+                    return;
+                }
+                const data = res.data || {};
+                // If scanner found a local images dir, populate hidden input and visible field.
+                if (data.images && data.images.detected_path) {
+                    $('#ow-image-source-input').val('local');
+                    $('#ow-tab-settings').find('input[name="octowoo[opencart][image_path]"]').val(data.images.detected_path);
+                }
+                // If logger writable info returned, inform the admin.
+                let msg = 'Auto-detect complete.';
+                if (data.logs) {
+                    msg += ' Logs dir: ' + (data.logs.path || 'unknown') + ' (' + (data.logs.writable ? 'writable' : 'not writable') + ')';
+                }
+                alert(msg);
+            })
+            .fail(function (xhr) {
+                alert('Auto-detect request failed: ' + xhr.statusText);
+            })
+            .always(function () {
+                $btn.prop('disabled', false).text('🔎 Auto-detect Image Path & Logs');
+            });
+        });
 
         $('#ow-btn-scan').on('click', scanSourceCounts);
 

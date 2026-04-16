@@ -23,8 +23,11 @@ namespace OctoWoo\Admin;
 use OctoWoo\Core\BackgroundProcessor;
 use OctoWoo\Core\CheckpointManager;
 use OctoWoo\Core\DataPurger;
+use OctoWoo\Core\DatabaseConnector;
 use OctoWoo\Core\Logger;
 use OctoWoo\Core\MigrationManager;
+use OctoWoo\Core\MigrationReport;
+use OctoWoo\Core\PreMigrationScanner;
 use OctoWoo\Core\SqlImporter;
 use OctoWoo\Core\Validator;
 
@@ -58,6 +61,8 @@ class AjaxHandler {
             'octowoo_purge_imported',
             'octowoo_scan_counts',
             'octowoo_drop_sql',
+            'octowoo_prescan',
+            'octowoo_get_report',
             // Premium additions.
             'octowoo_validate',
             'octowoo_start_background',
@@ -74,7 +79,7 @@ class AjaxHandler {
 
     public function dispatch(): void {
         // Security: capability + nonce.
-        if ( ! current_user_can( self::CAP ) ) {
+        if ( ! ( current_user_can( self::CAP ) || current_user_can( 'manage_options' ) ) ) {
             wp_send_json_error( [ 'message' => __( 'Insufficient permissions.', 'octowoo' ) ], 403 );
         }
 
@@ -133,6 +138,14 @@ class AjaxHandler {
 
             case 'octowoo_drop_sql':
                 $this->actionDropSql();
+                break;
+
+            case 'octowoo_prescan':
+                $this->actionPrescan();
+                break;
+
+            case 'octowoo_get_report':
+                $this->actionGetReport();
                 break;
 
             case 'octowoo_validate':
@@ -393,6 +406,19 @@ class AjaxHandler {
             $manager = new MigrationManager( $overrides, $run_id ?: null );
             $result  = $manager->runNextChunk();
 
+            // Another request is already processing this run — tell JS to retry shortly.
+            if ( ! empty( $result['busy'] ) ) {
+                wp_send_json_success( [
+                    'run_id'      => $manager->getRunId(),
+                    'done_all'    => false,
+                    'busy'        => true,
+                    'migrator'    => '',
+                    'checkpoints' => [],
+                    'report'      => null,
+                ] );
+                return;
+            }
+
             wp_send_json_success( [
                 'run_id'      => $manager->getRunId(),
                 'done_all'    => $result['done_all'],
@@ -407,6 +433,56 @@ class AjaxHandler {
                 'exception' => get_class( $e ),
             ] );
         }
+    }
+
+    // ── Action: pre-migration scan ────────────────────────────────────────────
+
+    /**
+     * Run the pre-migration scanner and return potential issues + source counts.
+     * Safe to call multiple times — read-only against both databases.
+     */
+    private function actionPrescan(): void {
+        $config    = AdminPage::getConfig();
+        $db_config = $config['db'];
+        $db_config['source'] = $config['source'] ?? 'remote';
+
+        try {
+            $db      = new \OctoWoo\Core\DatabaseConnector( $db_config );
+            $db->connect();
+            $scanner = new \OctoWoo\Core\PreMigrationScanner( $db, $config );
+            $scan = $scanner->scan();
+
+            // Augment scan with detected images dir (if present) so the
+            // admin Auto-detect button can populate the Settings field.
+            try {
+                $img_dir = \OctoWoo\Core\SqlImporter::getImagesDir();
+                if ( is_dir( $img_dir ) && count( glob( $img_dir . '*' ) ) > 0 ) {
+                    $scan['images'] = $scan['images'] ?? [];
+                    $scan['images']['detected_path'] = $img_dir;
+                    $scan['images']['detected_count'] = count( glob( $img_dir . '*' ) );
+                }
+            } catch ( \Throwable $e ) {
+                // ignore
+            }
+
+            // Provide logs directory status.
+            $log_dir = rtrim( OCTOWOO_LOG_DIR, '/\\' ) . DIRECTORY_SEPARATOR;
+            $logs    = [ 'path' => $log_dir, 'writable' => is_writable( $log_dir ) ];
+            $scan['logs'] = $logs;
+
+            wp_send_json_success( $scan );
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => $e->getMessage() ] );
+        }
+    }
+
+    // ── Action: get last report ───────────────────────────────────────────────
+
+    /**
+     * Return the most recently saved migration report from wp_options.
+     */
+    private function actionGetReport(): void {
+        wp_send_json_success( \OctoWoo\Core\MigrationReport::load() );
     }
 
     // ── Action: import SQL dump ───────────────────────────────────────────────

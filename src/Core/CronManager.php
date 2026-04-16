@@ -15,6 +15,8 @@ namespace OctoWoo\Core;
 
 defined( 'ABSPATH' ) || exit;
 
+// Self-contained within the Core namespace; no additional use statements needed.
+
 class CronManager {
 
     /** WP-Cron hook name. */
@@ -94,6 +96,13 @@ class CronManager {
      * so only new/changed data from OpenCart is imported.
      */
     public static function runCronMigration(): void {
+        // Block if a manual or background migration is already active.
+        // Manual runs take priority; the cron will retry on the next scheduled interval.
+        $active = CheckpointManager::getActiveRunId();
+        if ( $active ) {
+            return;
+        }
+
         $config  = self::getConfig();
         $started = time();
         $last    = (int) get_option( self::LAST_RUN_OPTION, 0 );

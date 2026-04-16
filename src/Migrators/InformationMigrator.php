@@ -128,6 +128,8 @@ class InformationMigrator extends AbstractMigrator {
 
         // Core meta.
         update_post_meta( $post_id, '_octowoo_oc_information_id', $oc_id );
+        // Generic mapping key used across migrators.
+        update_post_meta( $post_id, '_octowoo_oc_id', $oc_id );
 
         // Yoast SEO meta.
         if ( ! empty( $desc['meta_title'] ) ) {

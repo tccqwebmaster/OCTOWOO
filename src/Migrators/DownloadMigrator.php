@@ -203,6 +203,8 @@ class DownloadMigrator extends AbstractMigrator {
 
         if ( $attachment_id ) {
             add_post_meta( $attachment_id, '_octowoo_download_url', $file_url, true );
+            // Generic mapping so downloads can be resolved via the unified key.
+            update_post_meta( $attachment_id, '_octowoo_oc_id', $download_id );
             $this->checkpoint->saveIdMap( 'download', $download_id, $attachment_id );
         }
 

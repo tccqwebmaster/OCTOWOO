@@ -90,7 +90,7 @@ class AdminPage {
     // ── Page render ───────────────────────────────────────────────────────────
 
     public function renderPage(): void {
-        if ( ! current_user_can( self::CAP ) ) {
+        if ( ! ( current_user_can( self::CAP ) || current_user_can( 'manage_options' ) ) ) {
             wp_die( esc_html__( 'You do not have permission to access this page.', 'octowoo' ) );
         }
 
@@ -102,7 +102,7 @@ class AdminPage {
     // ── Settings form handler ─────────────────────────────────────────────────
 
     public function handleSaveSettings(): void {
-        if ( ! current_user_can( self::CAP ) ) {
+        if ( ! ( current_user_can( self::CAP ) || current_user_can( 'manage_options' ) ) ) {
             wp_die( esc_html__( 'Unauthorized.', 'octowoo' ) );
         }
 
@@ -120,9 +120,10 @@ class AdminPage {
                 'port'     => (int)              ( $posted['db']['port']     ?? 3306 ),
                 'database' => sanitize_text_field( $posted['db']['database'] ?? '' ),
                 'username' => sanitize_text_field( $posted['db']['username'] ?? '' ),
-                // Password: only update if a value was entered (avoids overwriting with blank).
+                // Password: encrypt at rest; only update if a value was entered
+                // (avoids overwriting with blank on settings re-save).
                 'password' => isset( $posted['db']['password'] ) && $posted['db']['password'] !== ''
-                    ? $posted['db']['password']
+                    ? \OctoWoo\Core\Encryptor::encrypt( $posted['db']['password'] )
                     : ( $existing['db']['password'] ?? '' ),
                 'prefix'   => sanitize_text_field( $posted['db']['prefix']   ?? 'oc_' ),
                 'socket'   => sanitize_text_field( $posted['db']['socket']   ?? '' ),
@@ -179,7 +180,11 @@ class AdminPage {
             ],
         ];
 
-        update_option( self::SETTINGS_KEY, $config, false );
+        // Merge with existing to avoid overwriting keys that weren't present
+        // in the submitted form (prevents accidental blanks when fields are
+        // omitted from POST). Right-most values (posted) win.
+        $merged = array_replace_recursive( $existing, $config );
+        update_option( self::SETTINGS_KEY, $merged, false );
 
         wp_safe_redirect( add_query_arg( [
             'page'    => self::MENU_SLUG,
@@ -192,7 +197,7 @@ class AdminPage {
     // ── Test connection ───────────────────────────────────────────────────────
 
     public function handleTestConnection(): void {
-        if ( ! current_user_can( self::CAP ) ) {
+        if ( ! ( current_user_can( self::CAP ) || current_user_can( 'manage_options' ) ) ) {
             wp_die( esc_html__( 'Unauthorized.', 'octowoo' ) );
         }
 
@@ -234,6 +239,20 @@ class AdminPage {
 
         if ( ! is_array( $saved ) ) {
             $saved = [];
+        }
+
+        // If the user hasn't set an explicit OpenCart image path but an
+        // imported images directory exists (from SQL import or ZIP), use
+        // that as the default so the admin UI and system check are happy.
+        if ( empty( $saved['opencart']['image_path'] ) ) {
+            try {
+                $img_dir = \OctoWoo\Core\SqlImporter::getImagesDir();
+                if ( is_dir( $img_dir ) && count( glob( $img_dir . '*' ) ) > 0 ) {
+                    $saved['opencart']['image_path'] = $img_dir;
+                }
+            } catch ( \Throwable $e ) {
+                // Ignore — SqlImporter may not be available in some contexts.
+            }
         }
 
         // Shallow merge for display purposes; deep merge handled by MigrationManager.

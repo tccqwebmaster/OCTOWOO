@@ -44,6 +44,20 @@ class CheckpointManager {
      * a migration is in progress.
      */
     public function markRunActive(): void {
+        global $wpdb;
+
+        // Try to acquire a DB-level lock to prevent concurrent runners.
+        // Wait up to 10 seconds for the lock; if unavailable we still mark the run
+        // active but the existence of this lock helps prevent races between cron/ajax.
+        $got = $wpdb->get_var( "SELECT GET_LOCK('octowoo_migration', 10)" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+        if ( $got ) {
+            update_option( 'octowoo_db_lock', '1', false );
+        }
+
+        // Short-lived transient visible to JS/UI to detect an active run quickly.
+        set_transient( 'octowoo_lock_' . $this->run_id, '1', HOUR_IN_SECONDS );
+
         update_option( 'octowoo_active_run_id', $this->run_id, false );
         update_option( 'octowoo_run_started_at', current_time( 'mysql' ), false );
     }
@@ -52,6 +66,14 @@ class CheckpointManager {
      * Clear the active-run flag when migration completes or is aborted.
      */
     public function markRunFinished(): void {
+        global $wpdb;
+
+        // Release DB lock if held.
+        $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        delete_option( 'octowoo_db_lock' );
+
+        // Clear transient + active-run flag.
+        delete_transient( 'octowoo_lock_' . $this->run_id );
         delete_option( 'octowoo_active_run_id' );
         update_option( 'octowoo_last_run_id', $this->run_id, false );
         update_option( 'octowoo_last_run_at', current_time( 'mysql' ), false );
@@ -349,6 +371,65 @@ class CheckpointManager {
                         (string) $oc_id
                     )
                 );
+                break;
+            case 'order':
+                $found = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT pm.post_id
+                         FROM {$wpdb->postmeta} pm
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         WHERE pm.meta_key = '_octowoo_oc_order_id'
+                           AND pm.meta_value = %s
+                           AND p.post_type = 'shop_order'
+                         LIMIT 1",
+                        (string) $oc_id
+                    )
+                );
+                break;
+
+            case 'coupon':
+                $found = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT pm.post_id
+                         FROM {$wpdb->postmeta} pm
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         WHERE pm.meta_key = '_octowoo_oc_id'
+                           AND pm.meta_value = %s
+                           AND p.post_type = 'shop_coupon'
+                         LIMIT 1",
+                        (string) $oc_id
+                    )
+                );
+                break;
+
+            case 'order':
+                // Legacy post-table orders.
+                $found = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT pm.post_id
+                         FROM {$wpdb->postmeta} pm
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         WHERE pm.meta_key = '_octowoo_oc_order_id'
+                           AND pm.meta_value = %s
+                           AND p.post_type = 'shop_order'
+                         LIMIT 1",
+                        (string) $oc_id
+                    )
+                );
+                // HPOS table fallback (WooCommerce 7.1+).
+                if ( ! $found ) {
+                    $ot = $wpdb->prefix . 'wc_orders_meta';
+                    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+                    $found = $wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT order_id FROM `{$ot}`
+                             WHERE meta_key = '_octowoo_oc_order_id'
+                               AND meta_value = %s
+                             LIMIT 1",
+                            (string) $oc_id
+                        )
+                    );
+                }
                 break;
         }
 

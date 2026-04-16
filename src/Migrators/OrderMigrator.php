@@ -112,6 +112,8 @@ class OrderMigrator extends AbstractMigrator {
         array $totals,
         array $currencies
     ): bool {
+        global $wpdb;
+
         $oc_id = (int) $row['order_id'];
 
         // Resolve WP customer ID.
@@ -122,6 +124,35 @@ class OrderMigrator extends AbstractMigrator {
             $wc_user_id = (int) ( $this->checkpoint->getWcId( 'customer', $oc_customer_id ) ?? 0 );
         }
 
+        // ── Begin per-record transaction ──────────────────────────────────────
+        // Ensures a partially-written order (missing items / totals) is never
+        // committed to the database. If any step throws, the entire order is rolled back.
+        $wpdb->query( 'START TRANSACTION' );
+
+        try {
+            return $this->doCreateOrder( $wpdb, $oc_id, $oc_customer_id, $wc_user_id, $row, $products, $totals, $currencies );
+        } catch ( \Throwable $e ) {
+            $wpdb->query( 'ROLLBACK' );
+            $this->logger->error(
+                "[orders] Transaction rolled back for OC #{$oc_id}: " . $e->getMessage()
+            );
+            return false;
+        }
+    }
+
+    /**
+     * Internal helper — runs inside the transaction opened by createOrder().
+     */
+    private function doCreateOrder(
+        \wpdb $wpdb,
+        int   $oc_id,
+        int   $oc_customer_id,
+        int   $wc_user_id,
+        array $row,
+        array $products,
+        array $totals,
+        array $currencies
+    ): bool {
         // Create the WC order.
         $order = wc_create_order( [
             'customer_id' => $wc_user_id,
@@ -129,6 +160,7 @@ class OrderMigrator extends AbstractMigrator {
         ] );
 
         if ( is_wp_error( $order ) ) {
+            $wpdb->query( 'ROLLBACK' );
             $this->logger->error(
                 "[orders] wc_create_order failed for OC #{$oc_id}: " . $order->get_error_message()
             );
@@ -192,6 +224,8 @@ class OrderMigrator extends AbstractMigrator {
         $order->set_customer_note( $this->sanitizeText( $row['comment'] ?? '' ) );
         $order->add_meta_data( '_octowoo_oc_order_id', $oc_id );
         $order->add_meta_data( '_octowoo_oc_customer_id', $oc_customer_id );
+        // Generic mapping so orders can be resolved via a unified meta key.
+        $order->add_meta_data( '_octowoo_oc_id', $oc_id );
 
         $order->calculate_totals();
         $order->save();
@@ -222,6 +256,9 @@ class OrderMigrator extends AbstractMigrator {
         );
 
         $this->checkpoint->saveIdMap( self::KEY, $oc_id, $wc_order_id );
+
+        $wpdb->query( 'COMMIT' );
+
         $this->logger->info( "[orders] Created WC order #{$wc_order_id} (OC #{$oc_id}), status: {$wc_status}." );
 
         return true;

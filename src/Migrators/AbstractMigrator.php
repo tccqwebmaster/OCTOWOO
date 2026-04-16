@@ -205,8 +205,18 @@ abstract class AbstractMigrator {
     /**
      * Ensure a WC product attribute exists (global PA_ taxonomy).
      * Returns the attribute (term group) ID.
+     *
+     * Results are cached in a static array for the lifetime of the PHP request
+     * so repeated calls for the same attribute (common during bulk product import)
+     * don't hit the database each time.
      */
     protected function ensureProductAttribute( string $name, string $slug ): int {
+        static $cache = [];
+
+        if ( isset( $cache[ $slug ] ) ) {
+            return $cache[ $slug ];
+        }
+
         // Check if the attribute taxonomy exists first.
         $attribute_id = wc_attribute_taxonomy_id_by_name( 'pa_' . $slug );
 
@@ -222,6 +232,7 @@ abstract class AbstractMigrator {
 
             if ( is_wp_error( $attribute_id ) ) {
                 $this->logger->error( "Could not create attribute [{$name}]: " . $attribute_id->get_error_message() );
+                $cache[ $slug ] = 0;
                 return 0;
             }
 
@@ -232,6 +243,7 @@ abstract class AbstractMigrator {
             }
         }
 
+        $cache[ $slug ] = $attribute_id;
         return $attribute_id;
     }
 }

@@ -76,10 +76,16 @@ class DatabaseConnector {
         ];
 
         try {
+            // Decrypt stored password if it was saved encrypted by the admin UI.
+            $password = $this->config['password'] ?? '';
+            if ( is_string( $password ) && class_exists( Encryptor::class ) ) {
+                $password = Encryptor::decrypt( $password );
+            }
+
             $this->pdo = new \PDO(
                 $dsn,
                 $this->config['username'] ?? 'root',
-                $this->config['password'] ?? '',
+                $password,
                 $options
             );
         } catch ( \PDOException $e ) {

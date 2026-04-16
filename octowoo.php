@@ -81,6 +81,13 @@ add_action( 'plugins_loaded', function (): void {
     load_plugin_textdomain( 'octowoo', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
 
     if ( is_admin() ) {
+        // Ensure runtime safety for environments where activate() was not run
+        // (some hosts only copy files and don't trigger activation). Create
+        // DB tables if needed and ensure the logs directory exists so the
+        // admin UI doesn't warn unnecessarily.
+        \OctoWoo_Activator::maybeCreateTables();
+        \OctoWoo_Activator::ensure_log_dir();
+
         ( new \OctoWoo\Admin\AdminPage() )->init();
         ( new \OctoWoo\Admin\AjaxHandler() )->init();
     }

@@ -166,8 +166,9 @@ class ManufacturerMigrator extends AbstractMigrator {
         $term_id      = (int) $result['term_id'];
         $term_tax_id  = (int) $result['term_taxonomy_id'];
 
-        // Store OC ID for reference.
+        // Store OC ID for reference (specific and generic keys).
         add_term_meta( $term_id, '_octowoo_oc_manufacturer_id', $oc_id, true );
+        update_term_meta( $term_id, '_octowoo_oc_id', $oc_id );
 
         // Import brand logo.
         if ( ! empty( $row['image'] ) ) {

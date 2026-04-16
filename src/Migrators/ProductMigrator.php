@@ -69,7 +69,12 @@ class ProductMigrator extends AbstractMigrator {
             return $this->processProduct( $row, $descriptions, $categories, $extra_images, $options, $specials );
         };
 
-        return $this->batch->run(
+        // Performance: defer term counting and object-cache invalidation so WP
+        // doesn't hammer the DB flushing counts and caches after every single insert.
+        wp_defer_term_counting( true );
+        wp_suspend_cache_invalidation( true );
+
+        $result = $this->batch->run(
             total_callback:  $total_callback,
             batch_callback:  $batch_callback,
             item_callback:   $item_callback,
@@ -78,6 +83,14 @@ class ProductMigrator extends AbstractMigrator {
             resume_after_id: $resume_id,
             id_field:        'product_id'
         );
+
+        // Re-enable term counting (this triggers a single deferred recount) and
+        // flush the object cache once for the entire batch.
+        wp_defer_term_counting( false );
+        wp_suspend_cache_invalidation( false );
+        wp_cache_flush();
+
+        return $result;
     }
 
     // ── Per-product processing ────────────────────────────────────────────────
@@ -176,11 +189,57 @@ class ProductMigrator extends AbstractMigrator {
         string $metatitle_ar = '',
         string $metadesc_ar  = ''
     ): bool {
+        global $wpdb;
+
         $oc_id     = (int) $row['product_id'];
         $has_vars  = $this->hasVariableOptions( $oc_options );
 
         // Create the WP post first so we have an ID for meta, images, etc.
         $product_type = $has_vars ? 'variable' : 'simple';
+
+        // ── Per-record transaction ────────────────────────────────────────────
+        // If any insert / meta write fails, the whole product (post + meta +
+        // terms + variations) is rolled back so we never have partial data.
+        $wpdb->query( 'START TRANSACTION' );
+
+        try {
+            $result = $this->doCreateProduct(
+                $wpdb, $oc_id, $product_type, $has_vars,
+                $row, $desc, $name, $description, $short_desc,
+                $oc_categories, $oc_images, $oc_options, $oc_specials,
+                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar
+            );
+        } catch ( \Throwable $e ) {
+            $wpdb->query( 'ROLLBACK' );
+            $this->logger->error( "[products] Transaction rolled back for OC #{$oc_id}: " . $e->getMessage() );
+            return false;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Internal helper — runs inside the transaction opened by createProduct().
+     */
+    private function doCreateProduct(
+        \wpdb  $wpdb,
+        int    $oc_id,
+        string $product_type,
+        bool   $has_vars,
+        array  $row,
+        array  $desc,
+        string $name,
+        string $description,
+        string $short_desc,
+        array  $oc_categories,
+        array  $oc_images,
+        array  $oc_options,
+        array  $oc_specials,
+        string $name_ar      = '',
+        string $desc_ar      = '',
+        string $metatitle_ar = '',
+        string $metadesc_ar  = ''
+    ): bool {
 
         $post_id = wp_insert_post( [
             'post_title'   => $name,
@@ -263,17 +322,32 @@ class ProductMigrator extends AbstractMigrator {
         // Featured image + gallery.
         $this->assignImages( $post_id, $row['image'] ?? '', $oc_images );
 
-        // Attributes + variations.
+        // Attributes + variations — guard against combination explosion.
         if ( $has_vars ) {
-            $this->createVariations( $post_id, $oc_id, $oc_options, $price );
+            $combination_count = $this->countVariationCombinations( $oc_options );
+            if ( $combination_count > 50 ) {
+                $this->logger->warning(
+                    "[products] OC #{$oc_id} would create {$combination_count} variations (WC limit=50). " .
+                    "Converting to simple product with informational attributes."
+                );
+                update_post_meta( $post_id, '_octowoo_skipped_variations', $combination_count );
+                // Switch the post type to simple so WC doesn't expect variation children.
+                wp_set_object_terms( $post_id, 'simple', 'product_type' );
+                $this->createSimpleAttributes( $post_id, $oc_options );
+            } else {
+                $this->createVariations( $post_id, $oc_id, $oc_options, $price );
+            }
         } else {
             $this->createSimpleAttributes( $post_id, $oc_options );
         }
 
-        // Update stock-status term (WC stores a shadow term).
-        wc_delete_product_transients( $post_id );
+        // Transient cleanup is deferred to end of batch (migrate() calls wp_cache_flush()).
+        // wc_delete_product_transients( $post_id ) intentionally omitted here for performance.
 
         $this->checkpoint->saveIdMap( self::KEY, $oc_id, $post_id );
+
+        $wpdb->query( 'COMMIT' );
+
         $this->logger->info( "[products] Created WC product #{$post_id} ({$product_type}) from OC #{$oc_id}: \"{$name}\"" );
 
         return true;
@@ -347,6 +421,20 @@ class ProductMigrator extends AbstractMigrator {
             }
         }
         return false;
+    }
+
+    /**
+     * Count the total number of variation combinations for a product's options.
+     * Returns the Cartesian product of all selectable option value counts.
+     */
+    private function countVariationCombinations( array $options ): int {
+        $total = 1;
+        foreach ( $options as $opt ) {
+            if ( in_array( $opt['type'], [ 'select', 'radio' ], true ) && ! empty( $opt['values'] ) ) {
+                $total *= count( $opt['values'] );
+            }
+        }
+        return $total;
     }
 
     /**

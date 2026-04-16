@@ -99,33 +99,82 @@ class ImageMigrator extends AbstractMigrator {
             return null;
         }
 
-        // Check cache first.
+            // Check cache first.
         $cached = $this->findAttachmentByOcPath( $oc_path );
         if ( $cached ) {
             return $cached;
         }
 
         $abs_source = $this->resolveSourcePath( $oc_path );
-        if ( ! $abs_source || ! file_exists( $abs_source ) ) {
-            $this->logger->warning( "[images] Source file not found: {$abs_source}" );
+
+            // Strategy 1: local filesystem.
+            if ( $abs_source && file_exists( $abs_source ) ) {
+                // Dedup by MD5 hash.
+                $hash    = md5_file( $abs_source );
+                $by_hash = $this->findAttachmentByHash( $hash );
+                if ( $by_hash ) {
+                    update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
+                    return $by_hash;
+                }
+
+                if ( $this->isDry() ) {
+                    $this->logger->debug( "[DRY-RUN] Would import image (local): {$oc_path}" );
+                    return -1;
+                }
+
+                return $this->sideloadFile( $abs_source, $oc_path, $hash );
+            }
+
+            // Local file not present — attempt remote fetch strategies.
+            $this->logger->warning( "[images] Source file not found locally: {$abs_source}. Trying HTTP fallback for {$oc_path}." );
+
+            if ( $this->isDry() ) {
+                $this->logger->debug( "[DRY-RUN] Would attempt remote fetch for: {$oc_path}" );
+                return -1;
+            }
+
+            // Strategy 1: if oc_path is already a URL, try it directly.
+            if ( preg_match( '#^https?://#i', $oc_path ) ) {
+                $aid = $this->tryRemoteSideload( $oc_path, $oc_path );
+                if ( $aid ) {
+                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                    return $aid;
+                }
+            }
+
+            // Strategy 2: construct from configured shop_url + '/image/' + oc_path.
+            $shop = rtrim( $this->config['opencart']['shop_url'] ?? '', '/ ' );
+            if ( $shop !== '' ) {
+                $url = $shop . '/image/' . ltrim( $oc_path, '/\\' );
+                $aid = $this->tryRemoteSideload( $url, $oc_path );
+                if ( $aid ) {
+                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                    return $aid;
+                }
+            }
+
+            // Strategy 3: try shop base + relative path (some OC setups omit /image/ prefix).
+            if ( $shop !== '' ) {
+                $url2 = $shop . '/' . ltrim( $oc_path, '/\\' );
+                $aid  = $this->tryRemoteSideload( $url2, $oc_path );
+                if ( $aid ) {
+                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                    return $aid;
+                }
+            }
+
+            $this->logger->warning( "[images] Remote fetch failed for: {$oc_path}" );
             return null;
         }
 
-        // Dedup by MD5 hash.
-        $hash   = md5_file( $abs_source );
-        $by_hash = $this->findAttachmentByHash( $hash );
-        if ( $by_hash ) {
-            // Already imported – store the OC path mapping and return.
-            update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
-            return $by_hash;
+        // Strategy 2: HTTP fetch from the OpenCart shop URL.
+        $remote_id = $this->tryRemoteStrategy( $oc_path );
+        if ( $remote_id !== null ) {
+            return $remote_id;
         }
 
-        if ( $this->isDry() ) {
-            $this->logger->debug( "[DRY-RUN] Would import image: {$oc_path}" );
-            return -1; // Placeholder ID in dry-run mode.
-        }
-
-        return $this->sideloadFile( $abs_source, $oc_path, $hash );
+        $this->logger->warning( "[images] Not found via any strategy: {$oc_path}" );
+        return null;
     }
 
     // ── Sideloading ───────────────────────────────────────────────────────────
@@ -271,5 +320,183 @@ class ImageMigrator extends AbstractMigrator {
         }
 
         return $tmp;
+    }
+
+    /**
+     * Try to download a remote URL to a temp file and sideload it.
+     * Returns the attachment ID on success or null on failure.
+     */
+    private function tryRemoteSideload( string $url, string $oc_path ): ?int {
+        $tmp = $this->downloadToTemp( $url );
+        if ( ! $tmp ) {
+            $this->logger->warning( "[images] Remote download failed: {$url}" );
+            return null;
+        }
+
+        // Dedup by MD5 hash.
+        $hash = md5_file( $tmp );
+        if ( $hash ) {
+            $by_hash = $this->findAttachmentByHash( $hash );
+            if ( $by_hash ) {
+                update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
+                if ( file_exists( $tmp ) ) {
+                    @unlink( $tmp );
+                }
+                return $by_hash;
+            }
+        }
+
+        $attachment_id = $this->sideloadFile( $tmp, $oc_path, $hash );
+
+        if ( file_exists( $tmp ) ) {
+            @unlink( $tmp );
+        }
+
+        return $attachment_id;
+    }
+
+    /**
+     * Download remote URL to a temporary file and return the path, or null.
+     */
+    private function downloadToTemp( string $url ): ?string {
+        if ( ! function_exists( 'wp_remote_get' ) ) {
+            require_once ABSPATH . 'wp-includes/http.php';
+        }
+
+        $resp = wp_remote_get( $url, [ 'timeout' => 20, 'redirection' => 5, 'sslverify' => false ] );
+        if ( is_wp_error( $resp ) ) {
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code( $resp );
+        if ( (int) $code !== 200 ) {
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body( $resp );
+        if ( $body === '' ) {
+            return null;
+        }
+
+        $path = parse_url( $url, PHP_URL_PATH );
+        $ext  = $path ? pathinfo( $path, PATHINFO_EXTENSION ) : '';
+        $tmp  = tempnam( sys_get_temp_dir(), 'octowoo_dl_' ) . ( $ext ? '.' . $ext : '' );
+
+        if ( file_put_contents( $tmp, $body ) === false ) {
+            if ( file_exists( $tmp ) ) {
+                @unlink( $tmp );
+            }
+            return null;
+        }
+
+        return $tmp;
+    }
+
+    // ── Strategy 2: HTTP remote fetch ─────────────────────────────────────────
+
+    /**
+     * Attempt to fetch an image from the configured OpenCart shop URL.
+     *
+     * URL constructed as:  {shop_url}/image/{oc_path}
+     *
+     * @param string $oc_path  OC-relative path, e.g. "catalog/product/foo.jpg".
+     * @return int|null  WP attachment ID, or null on failure.
+     */
+    private function tryRemoteStrategy( string $oc_path ): ?int {
+        $shop_url = rtrim( $this->config['opencart']['shop_url'] ?? '', '/' );
+
+        if ( $shop_url === '' ) {
+            $this->logger->debug( "[images] No shop_url configured; remote fetch unavailable for: {$oc_path}" );
+            return null;
+        }
+
+        $safe = ltrim( str_replace( '\\', '/', $oc_path ), '/' );
+        if ( strpos( $safe, '..' ) !== false ) {
+            $this->logger->warning( "[images] Rejected suspicious path (remote): {$oc_path}" );
+            return null;
+        }
+
+        // Only allow http/https shop URLs (block SSRF to internal networks).
+        if ( ! preg_match( '/^https?:\/\//i', $shop_url ) ) {
+            $this->logger->warning( "[images] shop_url must use http/https; skipping remote fetch: {$oc_path}" );
+            return null;
+        }
+
+        $remote_url = $shop_url . '/image/' . $safe;
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        $tmp = download_url( $remote_url, 30 );
+
+        if ( is_wp_error( $tmp ) ) {
+            $this->logger->debug(
+                "[images] Remote fetch failed [{$remote_url}]: " . $tmp->get_error_message()
+            );
+            return null;
+        }
+
+        // Dedup by hash.
+        $hash    = md5_file( $tmp );
+        $by_hash = $this->findAttachmentByHash( $hash );
+        if ( $by_hash ) {
+            @unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+            update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
+            return $by_hash;
+        }
+
+        if ( $this->isDry() ) {
+            @unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+            $this->logger->debug( "[DRY-RUN] Would import remote image: {$oc_path}" );
+            return -1;
+        }
+
+        $attachment_id = $this->sideloadFromTemp( $tmp, $oc_path, $hash );
+
+        // sideloadFromTemp / media_handle_sideload deletes $tmp on success.
+        // Clean up ourselves only if it still exists (failure path).
+        if ( null === $attachment_id && file_exists( $tmp ) ) {
+            @unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+        }
+
+        if ( $attachment_id ) {
+            $this->logger->debug( "[images] Remote fetch succeeded #{$attachment_id}: {$oc_path}" );
+        }
+
+        return $attachment_id;
+    }
+
+    /**
+     * Sideload a file that is already in a temp location (e.g. from download_url()).
+     * Skips the copy-to-temp step used by sideloadFile().
+     *
+     * @param string $tmp       Absolute path to the existing temp file.
+     * @param string $oc_path   OC-relative path (used for meta and filename).
+     * @param string $hash      MD5 hash of the file (already computed by caller).
+     * @return int|null  WP attachment ID, or null on failure.
+     */
+    private function sideloadFromTemp( string $tmp, string $oc_path, string $hash ): ?int {
+        $file_array = [
+            'name'     => basename( $oc_path ),
+            'tmp_name' => $tmp,
+        ];
+
+        add_filter( 'upload_dir', [ $this, 'filterUploadDir' ] );
+        $attachment_id = media_handle_sideload( $file_array, 0, null );
+        remove_filter( 'upload_dir', [ $this, 'filterUploadDir' ] );
+
+        if ( is_wp_error( $attachment_id ) ) {
+            $this->logger->error(
+                "[images] media_handle_sideload (remote) failed for [{$oc_path}]: "
+                . $attachment_id->get_error_message()
+            );
+            return null;
+        }
+
+        update_post_meta( $attachment_id, self::META_KEY_OC_PATH, $oc_path );
+        update_post_meta( $attachment_id, self::META_KEY_MD5, $hash );
+
+        return (int) $attachment_id;
     }
 }

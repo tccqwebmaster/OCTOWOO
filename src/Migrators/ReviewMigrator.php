@@ -129,6 +129,8 @@ class ReviewMigrator extends AbstractMigrator {
 
         add_comment_meta( $comment_id, 'rating',                   min( 5, max( 1, (int) $row['rating'] ) ), true );
         add_comment_meta( $comment_id, '_octowoo_oc_review_id',    $oc_id,         true );
+        // Generic mapping key for consistent lookups.
+        add_comment_meta( $comment_id, '_octowoo_oc_id',           $oc_id,         true );
         add_comment_meta( $comment_id, 'verified',                 0,              true );
 
         $this->checkpoint->saveIdMap( self::KEY, $oc_id, $comment_id );
