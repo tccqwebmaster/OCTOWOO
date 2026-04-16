@@ -1,0 +1,407 @@
+# Arabic translation for OctoWoo.
+# Copyright (C) 2024 OctoWoo
+# This file is distributed under the same license as the OctoWoo plugin.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: OctoWoo 2.3.2\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/octowoo\n"
+"POT-Creation-Date: 2024-01-01T00:00:00+00:00\n"
+"PO-Revision-Date: 2024-01-01 00:00+0000\n"
+"Last-Translator: OctoWoo Arabic Team\n"
+"Language-Team: Arabic <ar@li.org>\n"
+"Language: ar\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);\n"
+"X-Generator: OctoWoo\n"
+"X-Domain: octowoo\n"
+
+#. Plugin Name
+msgid "OctoWoo – OpenCart to WooCommerce Migrator"
+msgstr "أوكتووو – أداة نقل OpenCart إلى WooCommerce"
+
+#. Description
+msgid "Migrate OpenCart 1/2/3/4 stores completely into WooCommerce — products, categories, customers, orders, coupons, reviews, SEO and multilingual data."
+msgstr "انقل متاجر OpenCart 1/2/3/4 بالكامل إلى WooCommerce — المنتجات والتصنيفات والعملاء والطلبات والكوبونات والمراجعات وبيانات SEO والمحتوى متعدد اللغات."
+
+#: octowoo.php
+msgid "OctoWoo requires WooCommerce to be installed and active."
+msgstr "يتطلب أوكتووو تثبيت WooCommerce وتفعيله."
+
+#: src/Admin/AdminPage.php
+msgid "OctoWoo Migration"
+msgstr "نقل البيانات – أوكتووو"
+
+#: src/Admin/AdminPage.php
+msgid "OctoWoo"
+msgstr "أوكتووو"
+
+#: src/Admin/AdminPage.php
+msgid "Settings saved."
+msgstr "تم حفظ الإعدادات."
+
+#: src/Admin/AdminPage.php
+msgid "Invalid nonce."
+msgstr "طلب غير صالح."
+
+#: src/Admin/AdminPage.php
+msgid "Connection successful."
+msgstr "تم الاتصال بنجاح."
+
+#: src/Admin/AdminPage.php
+msgid "Connection failed: %s"
+msgstr "فشل الاتصال: %s"
+
+#: src/Admin/AjaxHandler.php
+msgid "Not allowed."
+msgstr "غير مسموح."
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration started."
+msgstr "بدأت عملية النقل."
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration aborted."
+msgstr "تم إيقاف النقل."
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration resumed."
+msgstr "تم استئناف النقل."
+
+#: src/Admin/AjaxHandler.php
+msgid "No active migration to abort."
+msgstr "لا توجد عملية نقل نشطة لإيقافها."
+
+#: src/Admin/AjaxHandler.php
+msgid "Chunk completed."
+msgstr "اكتملت الدفعة."
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration complete."
+msgstr "اكتمل النقل."
+
+#: src/Admin/AjaxHandler.php
+msgid "Source counts refreshed."
+msgstr "تم تحديث الأعداد من المصدر."
+
+#: src/Admin/AjaxHandler.php
+msgid "System validation passed."
+msgstr "اجتاز النظام التحقق بنجاح."
+
+#: src/Admin/AjaxHandler.php
+msgid "System validation failed."
+msgstr "فشل التحقق من النظام."
+
+#: src/Admin/AjaxHandler.php
+msgid "Purge completed."
+msgstr "اكتمل حذف البيانات."
+
+#: src/Admin/AjaxHandler.php
+msgid "SQL import completed."
+msgstr "اكتمل استيراد SQL."
+
+#: src/Admin/AjaxHandler.php
+msgid "SQL import failed: %s"
+msgstr "فشل استيراد SQL: %s"
+
+#: src/Core/MigrationManager.php
+msgid "Migration aborted by user."
+msgstr "تم إيقاف النقل من قِبَل المستخدم."
+
+#: src/Core/MigrationManager.php
+msgid "Dry Run — no data was written."
+msgstr "تشغيل تجريبي — لم يتم كتابة أي بيانات."
+
+#: src/Core/Validator.php
+msgid "WooCommerce is not active."
+msgstr "WooCommerce غير مفعّل."
+
+#: src/Core/Validator.php
+msgid "PHP version %s is below the required %s."
+msgstr "إصدار PHP %s أقل من المطلوب %s."
+
+#: src/Core/Validator.php
+msgid "Missing required PHP extension: %s"
+msgstr "امتداد PHP مطلوب غير موجود: %s"
+
+#: src/Core/Validator.php
+msgid "Memory limit %s may be too low. Recommended: 256M or higher."
+msgstr "حد الذاكرة %s منخفض قد يتسبب في مشاكل. الموصى به: 256M أو أعلى."
+
+#: src/Core/Validator.php
+msgid "Cannot connect to OpenCart database: %s"
+msgstr "تعذّر الاتصال بقاعدة بيانات OpenCart: %s"
+
+#: src/Core/Validator.php
+msgid "Low disk space: %s free."
+msgstr "مساحة القرص منخفضة: %s متاحة."
+
+#: src/Core/Validator.php
+msgid "Validation passed."
+msgstr "اجتاز التحقق."
+
+#: templates/admin-dashboard.php
+msgid "OctoWoo — OpenCart Migration"
+msgstr "أوكتووو — نقل OpenCart"
+
+#: templates/admin-dashboard.php
+msgid "Database Connection"
+msgstr "اتصال قاعدة البيانات"
+
+#: templates/admin-dashboard.php
+msgid "Host"
+msgstr "المضيف"
+
+#: templates/admin-dashboard.php
+msgid "Port"
+msgstr "المنفذ"
+
+#: templates/admin-dashboard.php
+msgid "Database Name"
+msgstr "اسم قاعدة البيانات"
+
+#: templates/admin-dashboard.php
+msgid "Username"
+msgstr "اسم المستخدم"
+
+#: templates/admin-dashboard.php
+msgid "Password"
+msgstr "كلمة المرور"
+
+#: templates/admin-dashboard.php
+msgid "Table Prefix"
+msgstr "بادئة الجداول"
+
+#: templates/admin-dashboard.php
+msgid "Test Connection"
+msgstr "اختبار الاتصال"
+
+#: templates/admin-dashboard.php
+msgid "Migration Settings"
+msgstr "إعدادات النقل"
+
+#: templates/admin-dashboard.php
+msgid "Batch Size"
+msgstr "حجم الدفعة"
+
+#: templates/admin-dashboard.php
+msgid "Dry Run"
+msgstr "تشغيل تجريبي"
+
+#: templates/admin-dashboard.php
+msgid "On Duplicate"
+msgstr "عند التكرار"
+
+#: templates/admin-dashboard.php
+msgid "Skip"
+msgstr "تخطي"
+
+#: templates/admin-dashboard.php
+msgid "Update"
+msgstr "تحديث"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Categories"
+msgstr "نقل التصنيفات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Products"
+msgstr "نقل المنتجات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Images"
+msgstr "نقل الصور"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Customers"
+msgstr "نقل العملاء"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Orders"
+msgstr "نقل الطلبات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Coupons"
+msgstr "نقل الكوبونات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate SEO"
+msgstr "نقل بيانات SEO"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Information Pages"
+msgstr "نقل صفحات المعلومات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Tags"
+msgstr "نقل الوسوم"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Filters"
+msgstr "نقل الفلاتر"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Downloads"
+msgstr "نقل الملفات القابلة للتنزيل"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Manufacturers"
+msgstr "نقل الماركات/المصنّعين"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Reviews"
+msgstr "نقل المراجعات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Tax Classes"
+msgstr "نقل فئات الضريبة"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Order Statuses"
+msgstr "نقل حالات الطلبات"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Related Products"
+msgstr "نقل المنتجات ذات الصلة"
+
+#: templates/admin-dashboard.php
+msgid "Migrate Bundles"
+msgstr "نقل الباقات"
+
+#: templates/admin-dashboard.php
+msgid "Multilingual / Arabic"
+msgstr "متعدد اللغات / العربية"
+
+#: templates/admin-dashboard.php
+msgid "Enable Multilingual Migration"
+msgstr "تفعيل نقل المحتوى متعدد اللغات"
+
+#: templates/admin-dashboard.php
+msgid "Use WPML"
+msgstr "استخدام WPML"
+
+#: templates/admin-dashboard.php
+msgid "Use Polylang"
+msgstr "استخدام Polylang"
+
+#: templates/admin-dashboard.php
+msgid "Primary Locale"
+msgstr "اللغة الأساسية"
+
+#: templates/admin-dashboard.php
+msgid "Secondary Locale (Arabic)"
+msgstr "اللغة الثانوية (العربية)"
+
+#: templates/admin-dashboard.php
+msgid "Secondary Language ID (OpenCart)"
+msgstr "معرّف اللغة الثانوية في OpenCart"
+
+#: templates/admin-dashboard.php
+msgid "Save Settings"
+msgstr "حفظ الإعدادات"
+
+#: templates/admin-dashboard.php
+msgid "Start Migration"
+msgstr "بدء النقل"
+
+#: templates/admin-dashboard.php
+msgid "Abort Migration"
+msgstr "إيقاف النقل"
+
+#: templates/admin-dashboard.php
+msgid "Resume Migration"
+msgstr "استئناف النقل"
+
+#: templates/admin-dashboard.php
+msgid "Purge Migrated Data"
+msgstr "حذف البيانات المنقولة"
+
+#: templates/admin-dashboard.php
+msgid "Import SQL Dump"
+msgstr "استيراد ملف SQL"
+
+#: templates/admin-dashboard.php
+msgid "Validate System"
+msgstr "التحقق من النظام"
+
+#: templates/admin-dashboard.php
+msgid "Migration Log"
+msgstr "سجل النقل"
+
+#: templates/admin-dashboard.php
+msgid "Progress"
+msgstr "التقدم"
+
+#: templates/admin-dashboard.php
+msgid "Status"
+msgstr "الحالة"
+
+#: templates/admin-dashboard.php
+msgid "Idle"
+msgstr "خامل"
+
+#: templates/admin-dashboard.php
+msgid "Running"
+msgstr "جارٍ التشغيل"
+
+#: templates/admin-dashboard.php
+msgid "Completed"
+msgstr "اكتمل"
+
+#: templates/admin-dashboard.php
+msgid "Aborted"
+msgstr "موقوف"
+
+#: templates/admin-dashboard.php
+msgid "Error"
+msgstr "خطأ"
+
+#: templates/admin-dashboard.php
+msgid "Source Counts"
+msgstr "أعداد المصدر"
+
+#: templates/admin-dashboard.php
+msgid "Refresh Counts"
+msgstr "تحديث الأعداد"
+
+#: templates/admin-dashboard.php
+msgid "Background Processing"
+msgstr "المعالجة في الخلفية"
+
+#: templates/admin-dashboard.php
+msgid "Run in Background"
+msgstr "تشغيل في الخلفية"
+
+#: templates/admin-dashboard.php
+msgid "Scheduled / Cron"
+msgstr "مجدول / Cron"
+
+#: templates/admin-dashboard.php
+msgid "Enable Scheduled Migration"
+msgstr "تفعيل النقل المجدول"
+
+#: templates/admin-dashboard.php
+msgid "Interval"
+msgstr "الفترة الزمنية"
+
+#: templates/admin-dashboard.php
+msgid "Hourly"
+msgstr "كل ساعة"
+
+#: templates/admin-dashboard.php
+msgid "Twice Daily"
+msgstr "مرتين يومياً"
+
+#: templates/admin-dashboard.php
+msgid "Daily"
+msgstr "يومياً"
+
+#: templates/admin-dashboard.php
+msgid "Weekly"
+msgstr "أسبوعياً"
+
+#: templates/admin-dashboard.php
+msgid "Migrators to Schedule"
+msgstr "المهاجرون المجدولون"

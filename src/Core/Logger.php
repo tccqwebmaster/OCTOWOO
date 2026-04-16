@@ -84,7 +84,7 @@ class Logger {
         $this->log( self::INFO, $message, $context );
     }
 
-    public function warning( string $message, array $context =[] ): void {
+    public function warning( string $message, array $context = [] ): void {
         $this->log( self::WARNING, $message, $context );
     }
 

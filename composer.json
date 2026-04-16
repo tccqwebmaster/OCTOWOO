@@ -1,0 +1,73 @@
+{
+    "name": "octowoo/octowoo",
+    "description": "Production-ready OpenCart to WooCommerce migration plugin",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "keywords": [
+        "wordpress",
+        "woocommerce",
+        "opencart",
+        "migration",
+        "import"
+    ],
+    "authors": [
+        {
+            "name": "OctoWoo Team",
+            "homepage": "https://octowoo.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.8",
+        "wp-coding-standards/wpcs": "^3.0",
+        "phpcompatibility/phpcompatibility-wp": "*",
+        "phpunit/phpunit": "^9.6 || ^10.5",
+        "yoast/phpunit-polyfills": "^2.0",
+        "brain/monkey": "^2.6",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "OctoWoo\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "OctoWoo\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "lint": "phpcs --standard=phpcs.xml",
+        "lint-fix": "phpcbf --standard=phpcs.xml",
+        "test": "phpunit --configuration=phpunit.xml",
+        "test-coverage": "phpunit --configuration=phpunit.xml --coverage-html=coverage",
+        "check-all": [
+            "@lint",
+            "@test"
+        ]
+    },
+    "scripts-descriptions": {
+        "lint": "Run PHP CodeSniffer against all plugin source files.",
+        "lint-fix": "Auto-fix coding standards violations.",
+        "test": "Run PHPUnit test suite.",
+        "test-coverage": "Run PHPUnit with HTML coverage report.",
+        "check-all": "Run linting and tests together."
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        },
+        "platform": {
+            "php": "7.4"
+        }
+    },
+    "extra": {
+        "installer-paths": {
+            "vendor/{$vendor}/{$name}/": ["type:wordpress-plugin"]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

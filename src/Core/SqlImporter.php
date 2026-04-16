@@ -41,7 +41,6 @@ class SqlImporter {
      * Drop all previously-imported OC tables (clean slate before re-import).
      */
     public function dropImportedTables(): void {
-    public function dropImportedTables(): void {
         global $wpdb;
 
         $tables = $wpdb->get_col(

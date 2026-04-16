@@ -75,6 +75,22 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
             </div>
         <?php endif; ?>
 
+        <!-- ── System Check ────────────────────────────────────────────── -->
+        <div class="ow-card" style="border-left:4px solid #2271b1;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+                <div>
+                    <h2 style="margin:0 0 4px;">⚙ <?php esc_html_e( 'Server &amp; Configuration Check', 'octowoo' ); ?></h2>
+                    <p class="ow-form-hint" style="margin:0;">
+                        <?php esc_html_e( 'Run this before starting a migration to verify your server meets all requirements.', 'octowoo' ); ?>
+                    </p>
+                </div>
+                <button type="button" id="ow-btn-validate" class="ow-btn ow-btn-secondary">
+                    🔎 <?php esc_html_e( 'Run System Check', 'octowoo' ); ?>
+                </button>
+            </div>
+            <div id="ow-validate-results" style="display:none;"></div>
+        </div>
+
         <!-- ── STEP 1: Select Entities ──────────────────────────────────── -->
         <div class="ow-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
@@ -206,6 +222,7 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
             <p class="ow-form-hint" style="margin:0 0 14px;">
                 <?php esc_html_e( 'Run a Demo first (migrates ~20 items per entity) to verify the result, then run a Full Migration.', 'octowoo' ); ?>
             </p>
+            <!-- Standard (AJAX chunk) mode -->
             <div class="ow-actions">
                 <button type="button" id="ow-btn-demo" class="ow-btn ow-btn-warning">
                     ▷ <?php esc_html_e( 'Start Demo Migration', 'octowoo' ); ?>
@@ -223,7 +240,41 @@ $db_err  = isset( $_GET['oc_db_err'] ) && '1' === $_GET['oc_db_err'];
                     ↺ <?php esc_html_e( 'Reset Progress', 'octowoo' ); ?>
                 </button>
             </div>
-            <p class="ow-form-hint" style="margin-top:10px;">
+
+            <!-- Background mode (Action Scheduler) -->
+            <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #dcdcde;">
+                <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#3c434a;">
+                    ⚡ <?php esc_html_e( 'Background Mode', 'octowoo' ); ?>
+                    <span style="font-weight:normal;color:#666;">
+                        — <?php esc_html_e( 'Uses WooCommerce Action Scheduler. Browser tab can be closed.', 'octowoo' ); ?>
+                    </span>
+                </p>
+
+                <?php
+                $as_available = function_exists( 'as_schedule_single_action' );
+                ?>
+
+                <?php if ( $as_available ) : ?>
+                    <div class="ow-bg-controls ow-actions" style="gap:8px;">
+                        <button type="button" id="ow-btn-start-bg" class="ow-btn ow-btn-secondary">
+                            ⚙ <?php esc_html_e( 'Start in Background', 'octowoo' ); ?>
+                        </button>
+                        <button type="button" id="ow-btn-resume-bg" class="ow-btn ow-btn-secondary" <?php echo ! $active_run ? 'disabled' : ''; ?>>
+                            ⚙ <?php esc_html_e( 'Resume in Background', 'octowoo' ); ?>
+                        </button>
+                        <button type="button" id="ow-btn-cancel-bg" class="ow-btn ow-btn-danger" disabled>
+                            ✖ <?php esc_html_e( 'Cancel Background', 'octowoo' ); ?>
+                        </button>
+                        <span id="ow-bg-status" style="font-size:13px;margin-left:4px;"></span>
+                    </div>
+                <?php else : ?>
+                    <p id="ow-bg-as-notice" class="ow-form-hint" style="color:#b45309;margin:0;">
+                        ⚠ <?php esc_html_e( 'Background mode requires WooCommerce 4.0+ (Action Scheduler not detected).', 'octowoo' ); ?>
+                    </p>
+                <?php endif; ?>
+            </div>
+
+            <p class="ow-form-hint" style="margin-top:12px;">
                 WP-CLI: <code>wp octowoo migrate</code> &nbsp;|&nbsp;
                 <code>wp octowoo migrate --resume</code> &nbsp;|&nbsp;
                 <code>wp octowoo migrate --dry-run</code>

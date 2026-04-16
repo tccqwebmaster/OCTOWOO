@@ -150,7 +150,11 @@ class AdminPage {
                 'run_tags'            => ! empty( $posted['migration']['run_tags'] ),
                 'run_filters'         => ! empty( $posted['migration']['run_filters'] ),
                 'run_downloads'       => ! empty( $posted['migration']['run_downloads'] ),
+                'run_tax'             => ! empty( $posted['migration']['run_tax'] ),
+                'run_order_statuses'  => ! empty( $posted['migration']['run_order_statuses'] ),
                 'run_manufacturers'   => ! empty( $posted['migration']['run_manufacturers'] ),
+                'run_related'         => ! empty( $posted['migration']['run_related'] ),
+                'run_bundles'         => ! empty( $posted['migration']['run_bundles'] ),
                 'run_reviews'         => ! empty( $posted['migration']['run_reviews'] ),
             ],
             'seo' => [

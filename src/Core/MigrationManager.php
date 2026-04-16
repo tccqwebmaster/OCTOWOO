@@ -447,7 +447,14 @@ class MigrationManager {
     }
 
     private function isAborted(): bool {
-        return (bool) get_transient( 'octowoo_abort_' . $this->run_id );
+        return self::checkAborted( $this->run_id );
+    }
+
+    /**
+     * Static check used by BackgroundProcessor (no instance available there).
+     */
+    public static function checkAborted( string $run_id ): bool {
+        return (bool) get_transient( 'octowoo_abort_' . $run_id );
     }
 
     private function buildReport(): array {

@@ -57,6 +57,14 @@
 
         $('#ow-btn-scan').on('click', scanSourceCounts);
 
+        // System (pre-migration) check.
+        $('#ow-btn-validate').on('click', runSystemCheck);
+
+        // Background mode (Action Scheduler).
+        $('#ow-btn-start-bg').on('click', function () { startBackgroundMigration(false); });
+        $('#ow-btn-resume-bg').on('click', function () { startBackgroundMigration(true); });
+        $('#ow-btn-cancel-bg').on('click', cancelBackgroundMigration);
+
         // Log controls.
         $('#ow-log-level-filter').on('change', function () { refreshLogs(); });
         $('#ow-btn-refresh-logs').on('click', function () { refreshLogs(); });
@@ -262,6 +270,165 @@
             .always(function () {
                 $btn.prop('disabled', false).text('🗑 Purge Selected');
             });
+        });
+    }
+
+    /* ── Pre-migration system check ──────────────────────────────────── */
+    function runSystemCheck() {
+        const $btn    = $('#ow-btn-validate');
+        const $panel  = $('#ow-validate-results');
+
+        $btn.prop('disabled', true).html('<span class="ow-spinner"></span>&nbsp; Checking…');
+        $panel.html('<em style="color:#888;">Running checks…</em>').show();
+
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_validate',
+            nonce:  octoWoo.nonce,
+        })
+        .done(function (res) {
+            if (!res.success) {
+                $panel.html('<span style="color:#c62828;">✘ Validation request failed.</span>');
+                return;
+            }
+            const data    = res.data;
+            const results = data.results || {};
+            const asAvail = data.as_available;
+
+            // Show/hide Background button based on AS availability.
+            if (asAvail) {
+                $('.ow-bg-controls').show();
+                $('#ow-bg-as-notice').hide();
+            } else {
+                $('.ow-bg-controls').hide();
+                $('#ow-bg-as-notice').show();
+            }
+
+            const labelMap = {
+                woocommerce:    'WooCommerce',
+                php_version:    'PHP Version',
+                php_extensions: 'PHP Extensions',
+                memory_limit:   'Memory Limit',
+                upload_limit:   'Upload Limit',
+                max_execution:  'Execution Time',
+                db_connection:  'DB Connection',
+                image_path:     'Image Path',
+                log_directory:  'Log Directory',
+                disk_space:     'Disk Space',
+                hpos_compat:    'WC HPOS',
+            };
+
+            const iconMap = { pass: '✔', warning: '⚠', fail: '✘' };
+            const colorMap = { pass: '#2e7d32', warning: '#b45309', fail: '#c62828' };
+            const bgMap    = { pass: '#edf7ed', warning: '#fffbeb', fail: '#fef2f2' };
+
+            let html = '<table class="ow-validate-table" style="width:100%;border-collapse:collapse;font-size:13px;">';
+            html += '<thead><tr>';
+            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Check</th>';
+            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Status</th>';
+            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Details</th>';
+            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">How to fix</th>';
+            html += '</tr></thead><tbody>';
+
+            Object.entries(results).forEach(function ([key, check]) {
+                const status = check.status || 'pass';
+                const icon   = iconMap[status]  || '?';
+                const color  = colorMap[status] || '#333';
+                const bg     = bgMap[status]    || '#fff';
+                const label  = labelMap[key]    || key;
+
+                html += '<tr style="background:' + bg + ';border-bottom:1px solid #e5e5e5;">';
+                html += '<td style="padding:5px 10px;font-weight:600;">' + $('<span>').text(label).html() + '</td>';
+                html += '<td style="padding:5px 10px;color:' + color + ';font-weight:700;white-space:nowrap;">'  + icon + ' ' + $('<span>').text(status.toUpperCase()).html() + '</td>';
+                html += '<td style="padding:5px 10px;color:' + color + ';">' + $('<span>').text(check.message || '').html();
+                if (check.value) { html += ' <code style="font-size:11px;background:#f5f5f5;padding:1px 4px;border-radius:2px;">' + $('<span>').text(check.value).html() + '</code>'; }
+                html += '</td>';
+                html += '<td style="padding:5px 10px;font-size:11px;color:#666;">' + (check.fix ? $('<span>').text(check.fix).html() : '') + '</td>';
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+
+            // Summary banner.
+            let summaryHtml;
+            if (data.all_passed) {
+                summaryHtml = '<div style="padding:8px 12px;background:#edf7ed;border:1px solid #4caf50;color:#1b5e20;border-radius:4px;margin-bottom:8px;font-weight:600;">✔ All checks passed — your server is ready to migrate.</div>';
+            } else if (data.has_warnings) {
+                summaryHtml = '<div style="padding:8px 12px;background:#fffbeb;border:1px solid #f59e0b;color:#78350f;border-radius:4px;margin-bottom:8px;font-weight:600;">⚠ Some warnings detected — migration can proceed but review the notes below.</div>';
+            } else {
+                summaryHtml = '<div style="padding:8px 12px;background:#fef2f2;border:1px solid #ef4444;color:#7f1d1d;border-radius:4px;margin-bottom:8px;font-weight:600;">✘ One or more checks failed — fix these issues before migrating.</div>';
+            }
+
+            $panel.html(summaryHtml + html);
+        })
+        .fail(function (xhr) {
+            $panel.html('<span style="color:#c62828;">✘ System check request failed: ' + xhr.statusText + '</span>');
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('🔎 Run System Check');
+        });
+    }
+
+    /* ── Background mode migration ───────────────────────────────────── */
+    function startBackgroundMigration(resume) {
+        if (isRunning) { return; }
+
+        if (!resume) {
+            if (!confirm('Start migration in Background mode?\n\nWooCommerce Action Scheduler will process batches in the background.\nYou can close this tab — check back for progress.')) {
+                return;
+            }
+        }
+
+        const migrators  = buildMigrators();
+        const $btnBg     = $('#ow-btn-start-bg');
+        const $bgStatus  = $('#ow-bg-status');
+
+        $btnBg.prop('disabled', true).html('<span class="ow-spinner"></span>&nbsp; Queuing…');
+        $bgStatus.text('');
+
+        $.post(octoWoo.ajaxUrl, {
+            action:    'octowoo_start_background',
+            nonce:     octoWoo.nonce,
+            resume:    resume ? 1 : 0,
+            migrators: migrators,
+        })
+        .done(function (res) {
+            if (res.success) {
+                currentRunId = res.data.run_id || currentRunId;
+                $bgStatus.css('color', '#2e7d32').text('✔ ' + res.data.message);
+                setBannerInfo('Background migration queued. Progress updates every few seconds.');
+                startPolling();
+                // Enable the Cancel BG button.
+                $('#ow-btn-cancel-bg').prop('disabled', false);
+            } else {
+                $bgStatus.css('color', '#c62828').text('✘ ' + (res.data.message || 'Failed to queue.'));
+            }
+        })
+        .fail(function (xhr) {
+            $bgStatus.css('color', '#c62828').text('✘ Request failed: ' + xhr.statusText);
+        })
+        .always(function () {
+            $btnBg.prop('disabled', false).text('⚙ Start in Background');
+        });
+    }
+
+    function cancelBackgroundMigration() {
+        const runId = currentRunId || octoWoo.activeRunId;
+        if (!confirm('Cancel the background migration?')) { return; }
+
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_cancel_background',
+            nonce:  octoWoo.nonce,
+            run_id: runId,
+        })
+        .done(function (res) {
+            if (res.success) {
+                stopPolling();
+                setButtonState('idle');
+                setBannerInfo(res.data.message);
+                $('#ow-btn-cancel-bg').prop('disabled', true);
+            } else {
+                setBannerError(res.data.message || 'Cancel failed.');
+            }
         });
     }
 

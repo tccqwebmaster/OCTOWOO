@@ -20,11 +20,13 @@
 
 namespace OctoWoo\Admin;
 
+use OctoWoo\Core\BackgroundProcessor;
 use OctoWoo\Core\CheckpointManager;
-use OctoWoo\Core\MigrationManager;
-use OctoWoo\Core\Logger;
-use OctoWoo\Core\SqlImporter;
 use OctoWoo\Core\DataPurger;
+use OctoWoo\Core\Logger;
+use OctoWoo\Core\MigrationManager;
+use OctoWoo\Core\SqlImporter;
+use OctoWoo\Core\Validator;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -32,6 +34,13 @@ class AjaxHandler {
 
     private const CAP   = 'manage_woocommerce';
     private const NONCE = 'octowoo_ajax';
+
+    /**
+     * Stale lock threshold in seconds (2 hours).
+     * An active run whose last checkpoint update is older than this is
+     * considered orphaned and auto-cleared on the next Start or chunk.
+     */
+    private const STALE_LOCK_SECONDS = 7200;
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
@@ -49,6 +58,10 @@ class AjaxHandler {
             'octowoo_purge_imported',
             'octowoo_scan_counts',
             'octowoo_drop_sql',
+            // Premium additions.
+            'octowoo_validate',
+            'octowoo_start_background',
+            'octowoo_cancel_background',
         ];
 
         foreach ( $actions as $action ) {
@@ -122,6 +135,18 @@ class AjaxHandler {
                 $this->actionDropSql();
                 break;
 
+            case 'octowoo_validate':
+                $this->actionValidate();
+                break;
+
+            case 'octowoo_start_background':
+                $this->actionStartBackground();
+                break;
+
+            case 'octowoo_cancel_background':
+                $this->actionCancelBackground();
+                break;
+
             default:
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -133,8 +158,10 @@ class AjaxHandler {
         // Prevent parallel runs.
         $active_run = CheckpointManager::getActiveRunId();
 
-        // Auto-clear stale lock: if the active run ID has no checkpoint rows,
-        // it was never actually started (e.g. a previous failed boot) and is safe to drop.
+        // Auto-clear stale lock:
+        //  (a) Run ID exists but has no checkpoint rows (never actually started).
+        //  (b) Run ID exists and checkpoints exist but the last update is older
+        //      than STALE_LOCK_SECONDS (orphaned PHP process / crashed server).
         if ( $active_run ) {
             global $wpdb;
             $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
@@ -144,6 +171,12 @@ class AjaxHandler {
             if ( $has_data === 0 ) {
                 delete_option( 'octowoo_active_run_id' );
                 $active_run = null;
+            } else {
+                $started_at = get_option( 'octowoo_run_started_at', '' );
+                if ( $started_at && ( time() - strtotime( $started_at ) ) > self::STALE_LOCK_SECONDS ) {
+                    delete_option( 'octowoo_active_run_id' );
+                    $active_run = null;
+                }
             }
         }
 
@@ -316,6 +349,12 @@ class AjaxHandler {
             if ( $has_data === 0 ) {
                 delete_option( 'octowoo_active_run_id' );
                 $active_run = null;
+            } else {
+                $started_at = get_option( 'octowoo_run_started_at', '' );
+                if ( $started_at && ( time() - strtotime( $started_at ) ) > self::STALE_LOCK_SECONDS ) {
+                    delete_option( 'octowoo_active_run_id' );
+                    $active_run = null;
+                }
             }
         }
 
@@ -597,6 +636,112 @@ class AjaxHandler {
 
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
+        ] );
+    }
+
+    // ── Action: pre-migration system validator ─────────────────────────────────
+
+    private function actionValidate(): void {
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        $validator = new Validator( $config );
+        $results   = $validator->run();
+
+        wp_send_json_success( [
+            'results'     => $results,
+            'all_passed'  => $validator->allPassed( $results ),
+            'has_warnings'=> $validator->hasWarningsOnly( $results ),
+            'as_available'=> BackgroundProcessor::isAvailable(),
+        ] );
+    }
+
+    // ── Action: start background migration (Action Scheduler) ─────────────────
+
+    private function actionStartBackground(): void {
+        if ( ! BackgroundProcessor::isAvailable() ) {
+            wp_send_json_error( [
+                'message' => __( 'Background mode requires WooCommerce 4.0+ (Action Scheduler).', 'octowoo' ),
+            ] );
+        }
+
+        $active_run = CheckpointManager::getActiveRunId();
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $resume     = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
+
+        if ( $active_run && ! $resume ) {
+            wp_send_json_error( [
+                'message' => __( 'A migration is already active. Abort it first or use Resume.', 'octowoo' ),
+                'run_id'  => $active_run,
+            ] );
+        }
+
+        $run_id = $resume && $active_run ? $active_run : null;
+
+        $overrides = [];
+        // phpcs:ignore WordPress.Security.NonceVerification
+        if ( filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN ) ) {
+            $overrides['migration']['dry_run'] = true;
+        }
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $demo_limit = (int) filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
+        if ( $demo_limit > 0 ) {
+            $overrides['migration']['demo_limit'] = $demo_limit;
+        }
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        if ( $migrators_raw !== '' ) {
+            $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
+            $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            foreach ( $allowed as $key ) {
+                $overrides['migration'][ 'run_' . $key ] = in_array( $key, $selected, true );
+            }
+        }
+
+        try {
+            $enqueued_run_id = BackgroundProcessor::enqueue( $overrides, $run_id );
+            wp_send_json_success( [
+                'message' => __( 'Background migration queued. Progress will update automatically.', 'octowoo' ),
+                'run_id'  => $enqueued_run_id,
+                'mode'    => 'background',
+            ] );
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => $e->getMessage() ] );
+        }
+    }
+
+    // ── Action: cancel background migration ──────────────────────────────────
+
+    private function actionCancelBackground(): void {
+        $run_id = sanitize_text_field(
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+                ?? CheckpointManager::getActiveRunId()
+                ?? ''
+        );
+
+        if ( ! $run_id ) {
+            wp_send_json_error( [ 'message' => __( 'No active migration run found.', 'octowoo' ) ] );
+        }
+
+        BackgroundProcessor::abort( $run_id );
+
+        // Also update DB checkpoints so the UI reflects the aborted state.
+        global $wpdb;
+        $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
+        $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE `{$cp_table}` SET status = 'aborted' WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                $run_id
+            )
+        );
+
+        $cp = new CheckpointManager( $run_id );
+        $cp->markRunFinished();
+
+        wp_send_json_success( [
+            'message' => __( 'Background migration cancelled.', 'octowoo' ),
+            'run_id'  => $run_id,
         ] );
     }
 

@@ -1,0 +1,828 @@
+# Copyright (C) 2024 OctoWoo
+# This file is distributed under the same license as the OctoWoo plugin.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2024.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: OctoWoo 2.3.2\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/octowoo\n"
+"POT-Creation-Date: 2024-01-01T00:00:00+00:00\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+"X-Generator: OctoWoo POT Generator\n"
+"X-Domain: octowoo\n"
+
+#. Plugin Name of the plugin
+msgid "OctoWoo – OpenCart to WooCommerce Migrator"
+msgstr ""
+
+#. Plugin URI of the plugin
+msgid "https://octowoo.com"
+msgstr ""
+
+#. Description of the plugin
+msgid "Migrate OpenCart 1/2/3/4 stores completely into WooCommerce — products, categories, customers, orders, coupons, reviews, SEO and multilingual data."
+msgstr ""
+
+#. Author of the plugin
+msgid "OctoWoo"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# octowoo.php
+# -----------------------------------------------------------------------
+
+#: octowoo.php
+msgid "OctoWoo requires WooCommerce to be installed and active."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Admin/AdminPage.php
+# -----------------------------------------------------------------------
+
+#: src/Admin/AdminPage.php
+msgid "OctoWoo Migration"
+msgstr ""
+
+#: src/Admin/AdminPage.php
+msgid "OctoWoo"
+msgstr ""
+
+#: src/Admin/AdminPage.php
+msgid "Settings saved."
+msgstr ""
+
+#: src/Admin/AdminPage.php
+msgid "Invalid nonce."
+msgstr ""
+
+#: src/Admin/AdminPage.php
+msgid "Connection successful."
+msgstr ""
+
+#: src/Admin/AdminPage.php
+msgid "Connection failed: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Admin/AjaxHandler.php
+# -----------------------------------------------------------------------
+
+#: src/Admin/AjaxHandler.php
+msgid "Not allowed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration started."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration aborted."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration resumed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "No active migration to abort."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Chunk completed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Migration complete."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Source counts refreshed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "System validation passed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "System validation failed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "Purge completed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "SQL import completed."
+msgstr ""
+
+#: src/Admin/AjaxHandler.php
+msgid "SQL import failed: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/MigrationManager.php
+# -----------------------------------------------------------------------
+
+#: src/Core/MigrationManager.php
+msgid "Migration aborted by user."
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Starting migration run %s"
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Migration completed successfully."
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Migration finished with errors."
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Running migrator: %s"
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Completed migrator: %s (%d records)"
+msgstr ""
+
+#: src/Core/MigrationManager.php
+msgid "Dry Run — no data was written."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/Validator.php
+# -----------------------------------------------------------------------
+
+#: src/Core/Validator.php
+msgid "WooCommerce is not active."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "PHP version %s is below the required %s."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Missing required PHP extension: %s"
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Memory limit %s may be too low. Recommended: 256M or higher."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Max upload size %s may be too low for large SQL files."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "max_execution_time is set to %d seconds. Consider increasing it."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Cannot connect to OpenCart database: %s"
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "OpenCart image path does not exist: %s"
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Cannot create log directory: %s"
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Low disk space: %s free."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "HPOS is enabled but the plugin has not declared compatibility. Orders may not display correctly."
+msgstr ""
+
+#: src/Core/Validator.php
+msgid "Validation passed."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/SqlImporter.php
+# -----------------------------------------------------------------------
+
+#: src/Core/SqlImporter.php
+msgid "SQL file not found: %s"
+msgstr ""
+
+#: src/Core/SqlImporter.php
+msgid "SQL file is empty: %s"
+msgstr ""
+
+#: src/Core/SqlImporter.php
+msgid "Imported %d SQL statements."
+msgstr ""
+
+#: src/Core/SqlImporter.php
+msgid "SQL import error on statement %d: %s"
+msgstr ""
+
+#: src/Core/SqlImporter.php
+msgid "Dropped imported table: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/BackgroundProcessor.php
+# -----------------------------------------------------------------------
+
+#: src/Core/BackgroundProcessor.php
+msgid "Background migration started (run: %s)."
+msgstr ""
+
+#: src/Core/BackgroundProcessor.php
+msgid "Background chunk dispatched."
+msgstr ""
+
+#: src/Core/BackgroundProcessor.php
+msgid "Background migration finished."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/DataPurger.php
+# -----------------------------------------------------------------------
+
+#: src/Core/DataPurger.php
+msgid "Starting data purge…"
+msgstr ""
+
+#: src/Core/DataPurger.php
+msgid "Purge completed. Deleted %d items."
+msgstr ""
+
+#: src/Core/DataPurger.php
+msgid "Purge error: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Core/CronManager.php
+# -----------------------------------------------------------------------
+
+#: src/Core/CronManager.php
+msgid "Scheduled migration started."
+msgstr ""
+
+#: src/Core/CronManager.php
+msgid "Scheduled migration completed."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators — shared strings
+# -----------------------------------------------------------------------
+
+#: src/Migrators/AbstractMigrator.php
+msgid "Batch %d: processing %d items…"
+msgstr ""
+
+#: src/Migrators/AbstractMigrator.php
+msgid "Skipping duplicate (on_duplicate=skip): OC ID %d"
+msgstr ""
+
+#: src/Migrators/AbstractMigrator.php
+msgid "Updating duplicate (on_duplicate=update): OC ID %d"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/CategoryMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/CategoryMigrator.php
+msgid "Migrating categories…"
+msgstr ""
+
+#: src/Migrators/CategoryMigrator.php
+msgid "Category migrated: %s (WC term %d)"
+msgstr ""
+
+#: src/Migrators/CategoryMigrator.php
+msgid "Category skipped (duplicate): %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/ProductMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/ProductMigrator.php
+msgid "Migrating products…"
+msgstr ""
+
+#: src/Migrators/ProductMigrator.php
+msgid "Product migrated: %s (WC ID %d)"
+msgstr ""
+
+#: src/Migrators/ProductMigrator.php
+msgid "Variable product migrated: %s with %d variations (WC ID %d)"
+msgstr ""
+
+#: src/Migrators/ProductMigrator.php
+msgid "Product skipped (duplicate): OC ID %d"
+msgstr ""
+
+#: src/Migrators/ProductMigrator.php
+msgid "Product error (OC ID %d): %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/CustomerMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/CustomerMigrator.php
+msgid "Migrating customers…"
+msgstr ""
+
+#: src/Migrators/CustomerMigrator.php
+msgid "Customer migrated: %s (WP user %d)"
+msgstr ""
+
+#: src/Migrators/CustomerMigrator.php
+msgid "Customer skipped (duplicate email): %s"
+msgstr ""
+
+#: src/Migrators/CustomerMigrator.php
+msgid "Customer error (OC ID %d): %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/OrderMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/OrderMigrator.php
+msgid "Migrating orders…"
+msgstr ""
+
+#: src/Migrators/OrderMigrator.php
+msgid "Order migrated: OC #%s → WC #%d"
+msgstr ""
+
+#: src/Migrators/OrderMigrator.php
+msgid "Order skipped (duplicate): OC ID %d"
+msgstr ""
+
+#: src/Migrators/OrderMigrator.php
+msgid "Order error (OC ID %d): %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/CouponMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/CouponMigrator.php
+msgid "Migrating coupons…"
+msgstr ""
+
+#: src/Migrators/CouponMigrator.php
+msgid "Coupon migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/ReviewMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/ReviewMigrator.php
+msgid "Migrating reviews…"
+msgstr ""
+
+#: src/Migrators/ReviewMigrator.php
+msgid "Review migrated (WC product %d)"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/TaxMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/TaxMigrator.php
+msgid "Migrating tax classes…"
+msgstr ""
+
+#: src/Migrators/TaxMigrator.php
+msgid "Tax class migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/OrderStatusMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/OrderStatusMigrator.php
+msgid "Migrating order statuses…"
+msgstr ""
+
+#: src/Migrators/OrderStatusMigrator.php
+msgid "Order status migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/ManufacturerMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/ManufacturerMigrator.php
+msgid "Migrating manufacturers (brands)…"
+msgstr ""
+
+#: src/Migrators/ManufacturerMigrator.php
+msgid "Manufacturer migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/SeoMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/SeoMigrator.php
+msgid "Migrating SEO redirects…"
+msgstr ""
+
+#: src/Migrators/SeoMigrator.php
+msgid "SEO redirect created: %s → %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/InformationMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/InformationMigrator.php
+msgid "Migrating information pages…"
+msgstr ""
+
+#: src/Migrators/InformationMigrator.php
+msgid "Page migrated: %s (WP post %d)"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/TagMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/TagMigrator.php
+msgid "Migrating tags…"
+msgstr ""
+
+#: src/Migrators/TagMigrator.php
+msgid "Tag migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/FilterMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/FilterMigrator.php
+msgid "Migrating filters (attributes)…"
+msgstr ""
+
+#: src/Migrators/FilterMigrator.php
+msgid "Filter migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/DownloadMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/DownloadMigrator.php
+msgid "Migrating downloadable files…"
+msgstr ""
+
+#: src/Migrators/DownloadMigrator.php
+msgid "Download migrated: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/ImageMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/ImageMigrator.php
+msgid "Migrating images…"
+msgstr ""
+
+#: src/Migrators/ImageMigrator.php
+msgid "Image migrated: %s (WP attachment %d)"
+msgstr ""
+
+#: src/Migrators/ImageMigrator.php
+msgid "Image not found, skipping: %s"
+msgstr ""
+
+#: src/Migrators/ImageMigrator.php
+msgid "Image error: %s"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/BundleMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/BundleMigrator.php
+msgid "Migrating product bundles…"
+msgstr ""
+
+#: src/Migrators/BundleMigrator.php
+msgid "Bundle migrated: OC ID %d → WC ID %d"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Migrators/RelatedProductsMigrator.php
+# -----------------------------------------------------------------------
+
+#: src/Migrators/RelatedProductsMigrator.php
+msgid "Migrating related products…"
+msgstr ""
+
+#: src/Migrators/RelatedProductsMigrator.php
+msgid "Related products linked for WC product %d"
+msgstr ""
+
+# -----------------------------------------------------------------------
+# src/Integration/WpmlIntegration.php
+# -----------------------------------------------------------------------
+
+#: src/Integration/WpmlIntegration.php
+msgid "Migrating multilingual translations…"
+msgstr ""
+
+#: src/Integration/WpmlIntegration.php
+msgid "Translation created for post %d in locale %s"
+msgstr ""
+
+#: src/Integration/WpmlIntegration.php
+msgid "Translation created for term %d in locale %s"
+msgstr ""
+
+#: src/Integration/WpmlIntegration.php
+msgid "No WPML or Polylang adapter detected. Skipping multilingual migration."
+msgstr ""
+
+# -----------------------------------------------------------------------
+# templates/admin-dashboard.php
+# -----------------------------------------------------------------------
+
+#: templates/admin-dashboard.php
+msgid "OctoWoo — OpenCart Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Database Connection"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Host"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Port"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Database Name"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Username"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Password"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Table Prefix"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Test Connection"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migration Settings"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Batch Size"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Dry Run"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "On Duplicate"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Skip"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Update"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Categories"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Products"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Images"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Customers"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Orders"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Coupons"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate SEO"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Information Pages"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Tags"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Filters"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Downloads"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Manufacturers"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Reviews"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Tax Classes"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Order Statuses"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Related Products"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrate Bundles"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Multilingual / Arabic"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Enable Multilingual Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Use WPML"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Use Polylang"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Primary Locale"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Secondary Locale (Arabic)"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Secondary Language ID (OpenCart)"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Save Settings"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Start Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Abort Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Resume Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Purge Migrated Data"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Import SQL Dump"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Validate System"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migration Log"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Progress"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Status"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Idle"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Running"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Completed"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Aborted"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Error"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Source Counts"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Refresh Counts"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Background Processing"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Run in Background"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Scheduled / Cron"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Enable Scheduled Migration"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Interval"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Hourly"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Twice Daily"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Daily"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Weekly"
+msgstr ""
+
+#: templates/admin-dashboard.php
+msgid "Migrators to Schedule"
+msgstr ""

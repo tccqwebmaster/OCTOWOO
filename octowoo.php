@@ -56,6 +56,13 @@ require_once OCTOWOO_PLUGIN_DIR . 'includes/class-octowoo-deactivator.php';
 register_activation_hook( __FILE__,   [ 'OctoWoo_Activator',   'activate'   ] );
 register_deactivation_hook( __FILE__, [ 'OctoWoo_Deactivator', 'deactivate' ] );
 
+// Declare WooCommerce HPOS (High-Performance Order Storage) compatibility.
+add_action( 'before_woocommerce_init', function (): void {
+    if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+    }
+} );
+
 /**
  * Bootstrap: fires after all plugins are loaded so WooCommerce is definitely available.
  */
@@ -80,6 +87,11 @@ add_action( 'plugins_loaded', function (): void {
 
     // Register CronManager schedules + event (handles enable/disable automatically).
     \OctoWoo\Core\CronManager::register();
+
+    // Register the Action Scheduler background processor callback.
+    // BackgroundProcessor::isAvailable() is false before WC loads its AS copy,
+    // but the add_action() call is cheap and safe to make unconditionally.
+    \OctoWoo\Core\BackgroundProcessor::register();
 
     // Register the OC-password compatibility filter when enabled.
     $saved_config = get_option( 'octowoo_config', [] );
