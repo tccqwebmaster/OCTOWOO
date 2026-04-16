@@ -99,7 +99,7 @@ class ImageMigrator extends AbstractMigrator {
             return null;
         }
 
-            // Check cache first.
+        // Check cache first.
         $cached = $this->findAttachmentByOcPath( $oc_path );
         if ( $cached ) {
             return $cached;
@@ -107,73 +107,63 @@ class ImageMigrator extends AbstractMigrator {
 
         $abs_source = $this->resolveSourcePath( $oc_path );
 
-            // Strategy 1: local filesystem.
-            if ( $abs_source && file_exists( $abs_source ) ) {
-                // Dedup by MD5 hash.
-                $hash    = md5_file( $abs_source );
-                $by_hash = $this->findAttachmentByHash( $hash );
-                if ( $by_hash ) {
-                    update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
-                    return $by_hash;
-                }
-
-                if ( $this->isDry() ) {
-                    $this->logger->debug( "[DRY-RUN] Would import image (local): {$oc_path}" );
-                    return -1;
-                }
-
-                return $this->sideloadFile( $abs_source, $oc_path, $hash );
+        // Strategy 1: local filesystem.
+        if ( $abs_source && file_exists( $abs_source ) ) {
+            // Dedup by MD5 hash.
+            $hash    = md5_file( $abs_source );
+            $by_hash = $this->findAttachmentByHash( $hash );
+            if ( $by_hash ) {
+                update_post_meta( $by_hash, self::META_KEY_OC_PATH, $oc_path );
+                return $by_hash;
             }
 
-            // Local file not present — attempt remote fetch strategies.
-            $this->logger->warning( "[images] Source file not found locally: {$abs_source}. Trying HTTP fallback for {$oc_path}." );
-
             if ( $this->isDry() ) {
-                $this->logger->debug( "[DRY-RUN] Would attempt remote fetch for: {$oc_path}" );
+                $this->logger->debug( "[DRY-RUN] Would import image (local): {$oc_path}" );
                 return -1;
             }
 
-            // Strategy 1: if oc_path is already a URL, try it directly.
-            if ( preg_match( '#^https?://#i', $oc_path ) ) {
-                $aid = $this->tryRemoteSideload( $oc_path, $oc_path );
-                if ( $aid ) {
-                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
-                    return $aid;
-                }
-            }
-
-            // Strategy 2: construct from configured shop_url + '/image/' + oc_path.
-            $shop = rtrim( $this->config['opencart']['shop_url'] ?? '', '/ ' );
-            if ( $shop !== '' ) {
-                $url = $shop . '/image/' . ltrim( $oc_path, '/\\' );
-                $aid = $this->tryRemoteSideload( $url, $oc_path );
-                if ( $aid ) {
-                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
-                    return $aid;
-                }
-            }
-
-            // Strategy 3: try shop base + relative path (some OC setups omit /image/ prefix).
-            if ( $shop !== '' ) {
-                $url2 = $shop . '/' . ltrim( $oc_path, '/\\' );
-                $aid  = $this->tryRemoteSideload( $url2, $oc_path );
-                if ( $aid ) {
-                    update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
-                    return $aid;
-                }
-            }
-
-            $this->logger->warning( "[images] Remote fetch failed for: {$oc_path}" );
-            return null;
+            return $this->sideloadFile( $abs_source, $oc_path, $hash );
         }
 
-        // Strategy 2: HTTP fetch from the OpenCart shop URL.
-        $remote_id = $this->tryRemoteStrategy( $oc_path );
-        if ( $remote_id !== null ) {
-            return $remote_id;
+        // Local file not present — attempt remote fetch strategies.
+        $this->logger->warning( "[images] Source file not found locally: {$abs_source}. Trying HTTP fallback for {$oc_path}." );
+
+        if ( $this->isDry() ) {
+            $this->logger->debug( "[DRY-RUN] Would attempt remote fetch for: {$oc_path}" );
+            return -1;
         }
 
-        $this->logger->warning( "[images] Not found via any strategy: {$oc_path}" );
+        // Strategy 2: if oc_path is already a URL, try it directly.
+        if ( preg_match( '#^https?://#i', $oc_path ) ) {
+            $aid = $this->tryRemoteSideload( $oc_path, $oc_path );
+            if ( $aid ) {
+                update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                return $aid;
+            }
+        }
+
+        // Strategy 3: construct from configured shop_url + '/image/' + oc_path.
+        $shop = rtrim( $this->config['opencart']['shop_url'] ?? '', '/ ' );
+        if ( $shop !== '' ) {
+            $url = $shop . '/image/' . ltrim( $oc_path, '/\\' );
+            $aid = $this->tryRemoteSideload( $url, $oc_path );
+            if ( $aid ) {
+                update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                return $aid;
+            }
+        }
+
+        // Strategy 4: try shop base + relative path (some OC setups omit /image/ prefix).
+        if ( $shop !== '' ) {
+            $url2 = $shop . '/' . ltrim( $oc_path, '/\\' );
+            $aid  = $this->tryRemoteSideload( $url2, $oc_path );
+            if ( $aid ) {
+                update_post_meta( $aid, self::META_KEY_OC_PATH, $oc_path );
+                return $aid;
+            }
+        }
+
+        $this->logger->warning( "[images] Remote fetch failed for: {$oc_path}" );
         return null;
     }
 
