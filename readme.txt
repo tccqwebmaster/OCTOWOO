@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.14
+Stable tag: 2.4.15
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,10 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.15 =
+* **Fixed:** Prevented false "Migration completed" banner while checkpoint rows are still `pending`/`running`. The chunk loop now continues until all rows are terminal.
+* **Fixed:** `Order_statuses` now honors demo mode limit (`demo_limit`) so a 20-item demo does not import all statuses.
 
 = 2.4.14 =
 * **Fixed:** Migration could get stuck with many entities permanently `PENDING` because checkpoint keys were inconsistent (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`).

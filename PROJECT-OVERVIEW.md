@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.14  
+**Version:** 2.4.15  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,10 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.15 – False-complete guard + demo limit consistency
+- **Bug fix:** Prevented premature "Migration completed" UI state while checkpoint rows are still `pending`/`running`.
+- **Bug fix:** `OrderStatusMigrator` now respects `demo_limit`, so demo runs cap order status import too.
 
 ### v2.4.14 – Checkpoint key alignment (stuck migration fix)
 - **Bug fix:** Several migrators wrote checkpoint status under singular keys (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`). This mismatch could leave many entities permanently `pending` and make the migration appear stuck.
