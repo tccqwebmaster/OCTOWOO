@@ -32,6 +32,7 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
     <div class="ow-header">
         <div class="ow-logo">OW</div>
         <h1><?php esc_html_e( 'OctoWoo – OpenCart → WooCommerce Migration', 'octowoo' ); ?></h1>
+        <span style="margin-left:auto;font-size:12px;opacity:.65;align-self:center;">Version <?php echo esc_html( OCTOWOO_VERSION ); ?></span>
     </div>
 
     <!-- Global notices -->
@@ -796,3 +797,6 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
     </div><!-- /tab-logs -->
 
 </div><!-- #octowoo-app -->
+<p style="color:#999;font-size:11px;text-align:right;margin-top:4px;">
+    <?php printf( esc_html__( 'OctoWoo v%s', 'octowoo' ), esc_html( OCTOWOO_VERSION ) ); ?>
+</p>
