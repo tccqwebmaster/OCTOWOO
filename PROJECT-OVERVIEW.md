@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.18  
+**Version:** 2.4.19  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,10 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.19 – Related migrator demo-limit fix
+- **Bug fix:** `RelatedProductsMigrator` now honors `demo_limit`, so demo runs do not process the full related dataset.
+- **Improvement:** Related-link source query is scoped to selected product IDs for faster demo execution.
 
 ### v2.4.18 – SEO checkpoint stats + review schema compatibility
 - **Bug fix:** `SeoMigrator` now updates checkpoint progress counters (`processed_count`) and honors `demo_limit`, preventing misleading `completed` rows with `0 / total`.

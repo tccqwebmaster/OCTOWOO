@@ -24,11 +24,17 @@ class RelatedProductsMigrator extends AbstractMigrator {
 
     public function migrate(): array {
         $pfx = $this->pfx();
+        $demo_limit = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
 
         // Fetch distinct "source" products that have related entries.
         $products = $this->oc->fetchAll(
             "SELECT DISTINCT product_id FROM `{$pfx}product_related` ORDER BY product_id ASC"
         );
+
+        if ( $demo_limit > 0 && count( $products ) > $demo_limit ) {
+            $products = array_slice( $products, 0, $demo_limit );
+            $this->logger->info( "[related] Demo limit active: processing first {$demo_limit} source products." );
+        }
 
         $total = count( $products );
 
@@ -41,8 +47,21 @@ class RelatedProductsMigrator extends AbstractMigrator {
         }
 
         // Build the full related-products map: [product_id => [related_id, ...]]
-        $all_related = $this->oc->fetchAll(
-            "SELECT product_id, related_id FROM `{$pfx}product_related` ORDER BY product_id ASC"
+        $product_ids = array_values( array_map( static fn( array $r ): int => (int) ( $r['product_id'] ?? 0 ), $products ) );
+        $product_ids = array_values( array_filter( $product_ids, static fn( int $id ): bool => $id > 0 ) );
+
+        if ( empty( $product_ids ) ) {
+            $this->checkpoint->complete( self::KEY );
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        }
+
+        $placeholders = implode( ',', array_fill( 0, count( $product_ids ), '?' ) );
+        $all_related  = $this->oc->fetchAll(
+            "SELECT product_id, related_id
+             FROM `{$pfx}product_related`
+             WHERE product_id IN ({$placeholders})
+             ORDER BY product_id ASC",
+            $product_ids
         );
 
         $related_map = [];

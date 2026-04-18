@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.18
+Stable tag: 2.4.19
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,10 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.19 =
+* **Fixed:** `RelatedProductsMigrator` now respects `demo_limit`, so demo runs no longer process the full related-product dataset (e.g. 3957/3957).
+* **Improved:** Related-link query is scoped to the selected source-product IDs for better demo performance.
 
 = 2.4.18 =
 * **Fixed:** `SeoMigrator` now updates checkpoint progress counters and respects `demo_limit`, so progress no longer shows `completed` with `0 / total`.
