@@ -50,6 +50,7 @@ class OrderStatusMigrator extends AbstractMigrator {
     public function migrate(): array {
         $pfx     = $this->pfx();
         $lang_id = $this->langId();
+        $demo_limit = (int) ( $this->config['migration']['demo_limit'] ?? 0 );
 
         // Fetch order statuses for the primary language.
         $rows = $this->oc->fetchAll(
@@ -67,6 +68,12 @@ class OrderStatusMigrator extends AbstractMigrator {
                  GROUP BY order_status_id
                  ORDER BY order_status_id ASC"
             );
+        }
+
+        // Apply demo cap consistently with batch-based migrators.
+        if ( $demo_limit > 0 && count( $rows ) > $demo_limit ) {
+            $rows = array_slice( $rows, 0, $demo_limit );
+            $this->logger->info( "[order_statuses] Demo limit active: processing first {$demo_limit} statuses." );
         }
 
         $total = count( $rows );

@@ -660,7 +660,17 @@
             const d = res.data;
             var wasFirstChunk = !currentRunId;
             currentRunId = d.run_id || currentRunId;
-            renderProgressTable(d.checkpoints || []);
+            const checkpoints = d.checkpoints || [];
+            renderProgressTable(checkpoints);
+
+            // Defensive guard: if backend reports done_all but checkpoints still
+            // have pending/running rows, keep chunking instead of showing a false
+            // "completed" banner.
+            if (d.done_all && hasNonTerminalCheckpoints(checkpoints)) {
+                setBannerInfo('Migration still has pending entities. Continuing…');
+                setTimeout(runNextChunk, 300);
+                return;
+            }
 
             // Start fallback polling after the first chunk so we have a valid
             // currentRunId — avoids the race condition where an immediate poll
@@ -802,9 +812,16 @@
             if (!res.success) { return; }
 
             const data = res.data;
-            renderProgressTable(data.checkpoints || []);
+            const checkpoints = data.checkpoints || [];
+            renderProgressTable(checkpoints);
 
-            if (!data.active && isRunning && currentRunId && data.run_id === currentRunId) {
+            if (
+                !data.active &&
+                isRunning &&
+                currentRunId &&
+                data.run_id === currentRunId &&
+                !hasNonTerminalCheckpoints(checkpoints)
+            ) {
                 // Migration finished (server-side).
                 isRunning = false;
                 stopPolling();
@@ -812,6 +829,16 @@
                 setBannerDone(null);
                 refreshLogs();
             }
+        });
+    }
+
+    function hasNonTerminalCheckpoints(checkpoints) {
+        if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+            return false;
+        }
+        return checkpoints.some(function (cp) {
+            const status = String(cp.status || '').toLowerCase();
+            return status === 'pending' || status === 'running';
         });
     }
 
