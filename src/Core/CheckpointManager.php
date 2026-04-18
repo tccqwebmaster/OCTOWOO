@@ -82,10 +82,16 @@ class CheckpointManager {
     /**
      * Return the run ID that is currently in progress, or null.
      *
-     * Self-healing: if the stored run has checkpoint rows but none are in an
-     * active state (running/pending), the lock is stale (server crash, orphaned
-     * process, Background job that never resumed, etc.).  Auto-clear so the
-     * admin UI never gets stuck showing the "migration in progress" banner.
+     * Self-healing — clears stale locks automatically so the UI never gets
+     * stuck showing the "migration in progress" banner after a crash, orphaned
+     * Background Scheduler job, or incomplete abort.
+     *
+     * Three conditions each independently clear the lock:
+     *  A. All checkpoint rows are in a terminal state (aborted/completed/failed).
+     *  B. Checkpoint rows exist but the most-recently updated row is > 2 hours
+     *     old — the PHP / AS process silently died mid-batch.
+     *  C. No checkpoint rows at all AND 'octowoo_run_started_at' is > 2 hours
+     *     ago — the run was initialised but never actually executed a chunk.
      */
     public static function getActiveRunId(): ?string {
         global $wpdb;
@@ -97,7 +103,6 @@ class CheckpointManager {
 
         $table = $wpdb->prefix . 'octowoo_checkpoints';
 
-        // Check whether any checkpoint rows exist for this run.
         $total = (int) $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL
@@ -106,7 +111,7 @@ class CheckpointManager {
         );
 
         if ( $total > 0 ) {
-            // Rows exist: count only the active (non-terminal) ones.
+            // Condition A: all migrators are terminal.
             $active = (int) $wpdb->get_var(
                 $wpdb->prepare(
                     "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
@@ -115,14 +120,35 @@ class CheckpointManager {
             );
 
             if ( $active === 0 ) {
-                // All migrators are in a terminal state — lock is stale. Auto-clear.
+                // Every migrator completed, failed, or was aborted — stale lock.
                 delete_option( 'octowoo_active_run_id' );
                 $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
                 return null;
             }
+
+            // Condition B: last checkpoint heartbeat is > 2 hours old.
+            $last_updated = (string) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT MAX(updated_at) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $v
+                )
+            );
+
+            if ( $last_updated && ( time() - (int) strtotime( $last_updated ) ) > 7200 ) {
+                // No batch has run for 2+ hours — process is dead.
+                delete_option( 'octowoo_active_run_id' );
+                $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                return null;
+            }
+        } else {
+            // Condition C: run was just created but no migrators were inserted yet.
+            // If started_at is > 2 hours ago the run never actually kicked off.
+            $started_at = (string) get_option( 'octowoo_run_started_at', '' );
+            if ( $started_at && ( time() - (int) strtotime( $started_at ) ) > 7200 ) {
+                delete_option( 'octowoo_active_run_id' );
+                return null;
+            }
         }
-        // If total === 0 the run was just created (no migrators inserted yet) —
-        // treat as still active so the very first chunk request isn't blocked.
 
         return $v;
     }
