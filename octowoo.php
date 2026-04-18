@@ -22,7 +22,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // ── Plugin constants ──────────────────────────────────────────────────────────
-define( 'OCTOWOO_VERSION',    '2.4.10' );
+define( 'OCTOWOO_VERSION',    '2.4.11' );
 define( 'OCTOWOO_FILE',       __FILE__ );
 define( 'OCTOWOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'OCTOWOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

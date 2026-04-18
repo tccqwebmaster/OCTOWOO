@@ -38,13 +38,13 @@ class FilterMigrator extends AbstractMigrator {
         }
 
         // Phase 1: Build filter-group → WC attribute map.
-        $group_map = $this->migrateFilterGroups();   // oc filter_group_id => WC attribute slug
+        $group_map = $this->migrateFilterGroups();   // oc filter_group_id => WC attribute slug (no "pa_" prefix)
 
         // Phase 2: Build filter → WC term map.
         $term_map  = $this->migrateFilters( $group_map );  // oc filter_id => WC term_id
 
-        // Phase 3: Assign filter terms to products.
-        return $this->migrateProductFilters( $term_map );
+        // Phase 3: Assign filter terms to products (group_map needed to derive pa_ taxonomy).
+        return $this->migrateProductFilters( $term_map, $group_map );
     }
 
     // ── Phase 1: Filter groups → WC attributes ────────────────────────────────
@@ -161,10 +161,11 @@ class FilterMigrator extends AbstractMigrator {
     // ── Phase 3: Product-filter assignments ───────────────────────────────────
 
     /**
-     * @param  array<int, int> $term_map  oc_filter_id → WC term_id
+     * @param  array<int, int>    $term_map   oc_filter_id → WC term_id
+     * @param  array<int, string> $group_map  oc_filter_group_id → WC attribute slug (no "pa_" prefix)
      * @return array{processed: int, skipped: int, failed: int}
      */
-    private function migrateProductFilters( array $term_map ): array {
+    private function migrateProductFilters( array $term_map, array $group_map ): array {
         $pfx     = $this->pfx();
         $resume_id = $this->checkpoint->getLastId( self::KEY );
 
@@ -174,7 +175,7 @@ class FilterMigrator extends AbstractMigrator {
             );
         };
 
-        // Group filters by product so we make one wp_set_object_terms call per taxonomy per product.
+        // Iterate one product_id per batch row.
         $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
             return $this->oc->fetchBatch(
                 "SELECT DISTINCT product_id FROM `{$pfx}product_filter` ORDER BY product_id ASC",
@@ -184,8 +185,8 @@ class FilterMigrator extends AbstractMigrator {
             );
         };
 
-        $item_callback = function ( array $row ) use ( $pfx, $term_map ): bool {
-            return $this->assignProductFilters( (int) $row['product_id'], $pfx, $term_map );
+        $item_callback = function ( array $row ) use ( $pfx, $term_map, $group_map ): bool {
+            return $this->assignProductFilters( (int) $row['product_id'], $pfx, $term_map, $group_map );
         };
 
         return $this->batch->run(
@@ -199,13 +200,13 @@ class FilterMigrator extends AbstractMigrator {
         );
     }
 
-    private function assignProductFilters( int $oc_product_id, string $pfx, array $term_map ): bool {
+    private function assignProductFilters( int $oc_product_id, string $pfx, array $term_map, array $group_map ): bool {
         $wc_product_id = $this->checkpoint->getWcId( 'product', $oc_product_id );
         if ( ! $wc_product_id ) {
             return false;
         }
 
-        // Fetch all filter IDs for this product.
+        // Fetch all filter IDs for this product, including their group_id to derive the pa_ taxonomy.
         $rows = $this->oc->fetchAll(
             "SELECT pf.filter_id, f.filter_group_id
              FROM `{$pfx}product_filter` pf
@@ -223,49 +224,48 @@ class FilterMigrator extends AbstractMigrator {
             return true;
         }
 
-        // Group by attribute taxonomy so we call wp_set_object_terms once per taxonomy.
+        // Group WC term IDs by their correct pa_* attribute taxonomy.
         $by_taxonomy = [];
         foreach ( $rows as $row ) {
             $filter_id = (int) $row['filter_id'];
-            if ( ! isset( $term_map[ $filter_id ] ) ) {
+            $group_id  = (int) $row['filter_group_id'];
+
+            if ( ! isset( $term_map[ $filter_id ] ) || ! isset( $group_map[ $group_id ] ) ) {
                 continue;
             }
-            // Infer taxonomy from product_attributes stored on product meta.
-            // We re-fetch to find the pa_slug via the filter_group_id mapping.
-            $by_taxonomy[ $filter_id ] = $term_map[ $filter_id ];
+
+            $taxonomy                  = 'pa_' . $group_map[ $group_id ];
+            $by_taxonomy[ $taxonomy ][] = $term_map[ $filter_id ];
         }
 
         if ( empty( $by_taxonomy ) ) {
             return false;
         }
 
-        // Assign all filter term IDs (append, preserve existing).
-        wp_set_object_terms( (int) $wc_product_id, array_values( $by_taxonomy ), 'product_attr_filter', true );
+        // Assign terms per taxonomy (append, preserve any existing terms).
+        foreach ( $by_taxonomy as $taxonomy => $term_ids ) {
+            wp_set_object_terms( (int) $wc_product_id, array_unique( $term_ids ), $taxonomy, true );
+        }
 
-        // Build / update the product's _product_attributes meta so the attribute tab shows in frontend.
+        // Ensure _product_attributes meta is present so the Attributes tab shows on the frontend.
         $this->updateProductAttributesMeta( (int) $wc_product_id, $by_taxonomy );
 
-        $this->logger->debug( "[filters] Assigned " . count( $by_taxonomy ) . " filter term(s) to WC product #{$wc_product_id}" );
+        $this->logger->debug(
+            "[filters] Assigned " . array_sum( array_map( 'count', $by_taxonomy ) ) .
+            " filter term(s) across " . count( $by_taxonomy ) . " attribute(s) to WC product #{$wc_product_id}"
+        );
 
         return true;
     }
 
     /**
-     * Merge the filter terms into the product's serialised _product_attributes meta.
+     * Ensure _product_attributes meta contains an entry for each migrated filter attribute
+     * so that the Attributes tab is visible on the product frontend.
      *
-     * @param  int         $product_id  WC post ID.
-     * @param  array<int,int> $term_ids  WC term IDs to merge in.
+     * @param  int                    $product_id     WC post ID.
+     * @param  array<string, int[]>   $terms_by_tax   taxonomy → [WC term_ids]  (already grouped).
      */
-    private function updateProductAttributesMeta( int $product_id, array $term_ids ): void {
-        // Organise into grouped by term taxonomy.
-        $terms_by_tax = [];
-        foreach ( $term_ids as $term_id ) {
-            $term = get_term( $term_id );
-            if ( $term && ! is_wp_error( $term ) ) {
-                $terms_by_tax[ $term->taxonomy ][] = $term->term_id;
-            }
-        }
-
+    private function updateProductAttributesMeta( int $product_id, array $terms_by_tax ): void {
         if ( empty( $terms_by_tax ) ) {
             return;
         }
@@ -273,7 +273,7 @@ class FilterMigrator extends AbstractMigrator {
         $attributes = get_post_meta( $product_id, '_product_attributes', true ) ?: [];
 
         foreach ( $terms_by_tax as $taxonomy => $ids ) {
-            $slug = str_replace( 'pa_', '', $taxonomy );
+            $slug      = str_replace( 'pa_', '', $taxonomy );
             $attr_name = wc_attribute_label( $taxonomy ) ?: ucwords( str_replace( '-', ' ', $slug ) );
 
             if ( ! isset( $attributes[ $taxonomy ] ) ) {

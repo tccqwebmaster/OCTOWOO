@@ -58,6 +58,16 @@ class TagMigrator extends AbstractMigrator {
             return $this->processTagRow( $row );
         };
 
+        // Diagnose upfront so the log is clear when OpenCart has no tag data.
+        $tag_total = $total_callback();
+        if ( $tag_total === 0 ) {
+            $this->logger->info(
+                '[tags] oc_product_description.tag is empty for all products in this language – ' .
+                'no WooCommerce product tags will be created. ' .
+                'If you expected tags, verify that the tag column is populated in your OpenCart database.'
+            );
+        }
+
         return $this->batch->run(
             total_callback:  $total_callback,
             batch_callback:  $batch_callback,

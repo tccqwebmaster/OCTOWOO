@@ -23,6 +23,16 @@ class CheckpointManager {
     const STATUS_COMPLETED  = 'completed';
     const STATUS_FAILED     = 'failed';
 
+    /**
+     * Request-scoped in-memory cache for getWcId() lookups.
+     * Keyed as "{entity}:{oc_id}" → wc_id|null.
+     * Static so it is shared across all CheckpointManager instances in one request,
+     * avoiding redundant DB queries across migrators that run sequentially.
+     *
+     * @var array<string, int|null>
+     */
+    private static array $id_map_cache = [];
+
     /** @var string Current migration run ID. */
     private string $run_id;
 
@@ -382,6 +392,9 @@ class CheckpointManager {
     public function saveIdMap( string $entity, int $oc_id, int $wc_id ): void {
         global $wpdb;
 
+        // Update in-memory cache immediately so same-request lookups are instant.
+        self::$id_map_cache[ $entity . ':' . $oc_id ] = $wc_id;
+
         $table = $wpdb->prefix . 'octowoo_id_map';
 
         // Use INSERT … ON DUPLICATE KEY UPDATE to handle re-runs gracefully.
@@ -401,22 +414,29 @@ class CheckpointManager {
     /**
      * Look up the WC ID for a previously migrated OC entity.
      *
-     * Two-pass lookup:
-     *  1. Fast path  – octowoo_id_map table (populated during migration).
-     *  2. Fallback   – scan WordPress post/term meta directly.
-     *                  Covers cases where id_map was reset but content still
-     *                  exists (e.g. Reset Progress was clicked, or plugin was
-     *                  reinstalled). When found via fallback the row is
-     *                  backfilled into id_map for instant future lookups.
+     * Three-pass lookup:
+     *  0. In-memory cache – free, no DB round-trip. Populated by saveIdMap() and
+     *     by any previous getWcId() call in the same PHP request.
+     *  1. octowoo_id_map table – fast indexed DB lookup.
+     *  2. WordPress post/term/user meta fallback – covers cases where id_map was
+     *     reset but content still exists. When found via fallback the row is
+     *     backfilled into id_map AND the in-memory cache for future lookups.
      *
      * @return int|null WC ID, or null if not yet migrated.
      */
     public function getWcId( string $entity, int $oc_id ): ?int {
         global $wpdb;
 
+        $cache_key = $entity . ':' . $oc_id;
+
+        // ── Pass 0: in-memory cache (free – no DB round-trip) ─────────────────
+        if ( array_key_exists( $cache_key, self::$id_map_cache ) ) {
+            return self::$id_map_cache[ $cache_key ];
+        }
+
         $table = $wpdb->prefix . 'octowoo_id_map';
 
-        // ── Pass 1: ID map ────────────────────────────────────────────────────
+        // ── Pass 1: ID map table ───────────────────────────────────
         $wc_id = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT wc_id FROM `{$table}` WHERE entity_type = %s AND oc_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL
@@ -426,6 +446,7 @@ class CheckpointManager {
         );
 
         if ( $wc_id !== null ) {
+            self::$id_map_cache[ $cache_key ] = (int) $wc_id;
             return (int) $wc_id;
         }
 
@@ -490,36 +511,6 @@ class CheckpointManager {
                 );
                 break;
             case 'order':
-                $found = $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT pm.post_id
-                         FROM {$wpdb->postmeta} pm
-                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                         WHERE pm.meta_key = '_octowoo_oc_order_id'
-                           AND pm.meta_value = %s
-                           AND p.post_type = 'shop_order'
-                         LIMIT 1",
-                        (string) $oc_id
-                    )
-                );
-                break;
-
-            case 'coupon':
-                $found = $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT pm.post_id
-                         FROM {$wpdb->postmeta} pm
-                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                         WHERE pm.meta_key = '_octowoo_oc_id'
-                           AND pm.meta_value = %s
-                           AND p.post_type = 'shop_coupon'
-                         LIMIT 1",
-                        (string) $oc_id
-                    )
-                );
-                break;
-
-            case 'order':
                 // Legacy post-table orders.
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
@@ -548,26 +539,33 @@ class CheckpointManager {
                     );
                 }
                 break;
+
+            case 'coupon':
+                $found = $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT pm.post_id
+                         FROM {$wpdb->postmeta} pm
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         WHERE pm.meta_key = '_octowoo_oc_id'
+                           AND pm.meta_value = %s
+                           AND p.post_type = 'shop_coupon'
+                         LIMIT 1",
+                        (string) $oc_id
+                    )
+                );
+                break;
         }
 
         if ( ! $found ) {
+            // Cache the miss so we don't re-query the same entity repeatedly.
+            self::$id_map_cache[ $cache_key ] = null;
             return null;
         }
 
         $found = (int) $found;
 
-        // Backfill id_map so subsequent lookups skip this fallback.
-        $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->prepare(
-                "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id)
-                 VALUES (%s, %d, %d, %s)
-                 ON DUPLICATE KEY UPDATE wc_id = VALUES(wc_id), run_id = VALUES(run_id)",
-                $entity,
-                $oc_id,
-                $found,
-                $this->run_id
-            )
-        );
+        // Backfill id_map and cache so subsequent lookups are instant.
+        $this->saveIdMap( $entity, $oc_id, $found ); // also updates self::$id_map_cache
 
         return $found;
     }
