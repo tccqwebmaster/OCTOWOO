@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.16  
+**Version:** 2.4.17  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,10 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.17 – Cloudways image path normalization
+- **Bug fix:** Added automatic normalization for equivalent path roots (`/home/...` and `/mnt/data/home/...`) in image-path validation and image import path resolution.
+- **Improvement:** Pre-migration image scanner now uses the same normalization to avoid false "missing image" counts.
 
 ### v2.4.16 – Image chunking + progress fix
 - **Bug fix:** `ImageMigrator` previously processed the full image list in one pass, which could monopolize the run and keep the UI at `0/x` for long periods when local files were missing.

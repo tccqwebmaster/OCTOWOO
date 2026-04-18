@@ -314,8 +314,18 @@ class Validator {
             );
         }
 
-        if ( is_dir( $image_path ) && is_readable( $image_path ) ) {
-            return $this->result( self::STATUS_PASS, __( 'Image directory is accessible.', 'octowoo' ), $image_path );
+        $candidates = $this->imagePathCandidates( $image_path );
+        foreach ( $candidates as $candidate ) {
+            if ( is_dir( $candidate ) && is_readable( $candidate ) ) {
+                if ( $candidate !== $image_path ) {
+                    return $this->result(
+                        self::STATUS_PASS,
+                        __( 'Image directory is accessible (normalized path).', 'octowoo' ),
+                        $candidate
+                    );
+                }
+                return $this->result( self::STATUS_PASS, __( 'Image directory is accessible.', 'octowoo' ), $candidate );
+            }
         }
 
         return $this->result(
@@ -325,6 +335,39 @@ class Validator {
             $image_path,
             __( 'Verify the OpenCart image directory path or mount it on this server.', 'octowoo' )
         );
+    }
+
+    /**
+     * Build a short list of equivalent filesystem paths.
+     *
+     * Cloudways commonly exposes the same path with either:
+     *  - /home/...
+     *  - /mnt/data/home/...
+     *
+     * @return string[]
+     */
+    private function imagePathCandidates( string $path ): array {
+        $path = rtrim( $path, '/\\' );
+        if ( $path === '' ) {
+            return [];
+        }
+
+        $candidates = [ $path ];
+
+        if ( strpos( $path, '/home/' ) === 0 ) {
+            $candidates[] = '/mnt/data' . $path;
+        }
+
+        if ( strpos( $path, '/mnt/data/home/' ) === 0 ) {
+            $candidates[] = substr( $path, strlen( '/mnt/data' ) );
+        }
+
+        $real = realpath( $path );
+        if ( is_string( $real ) && $real !== '' ) {
+            $candidates[] = rtrim( $real, '/\\' );
+        }
+
+        return array_values( array_unique( $candidates ) );
     }
 
     private function checkLogDirectory(): array {

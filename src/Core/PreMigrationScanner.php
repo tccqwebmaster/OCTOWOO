@@ -152,6 +152,7 @@ class PreMigrationScanner {
         $missing    = 0;
         $sample     = [];
         $image_base = rtrim( $this->config['opencart']['image_path'] ?? '', '/\\' );
+        $image_base = $this->resolveImageBasePath( $image_base );
 
         // No local path → treat all as missing (will rely on HTTP fallback).
         if ( $image_base === '' ) {
@@ -173,6 +174,32 @@ class PreMigrationScanner {
         }
 
         return [ 'total' => $total, 'missing' => $missing, 'sample' => $sample ];
+    }
+
+    /**
+     * Resolve equivalent image root paths used by managed hosts.
+     */
+    private function resolveImageBasePath( string $base ): string {
+        $base = rtrim( $base, '/\\' );
+        if ( $base === '' ) {
+            return $base;
+        }
+
+        $candidates = [ $base ];
+        if ( strpos( $base, '/home/' ) === 0 ) {
+            $candidates[] = '/mnt/data' . $base;
+        }
+        if ( strpos( $base, '/mnt/data/home/' ) === 0 ) {
+            $candidates[] = substr( $base, strlen( '/mnt/data' ) );
+        }
+
+        foreach ( array_unique( $candidates ) as $candidate ) {
+            if ( is_dir( $candidate ) && is_readable( $candidate ) ) {
+                return rtrim( $candidate, '/\\' );
+            }
+        }
+
+        return $base;
     }
 
     /**

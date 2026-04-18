@@ -334,6 +334,9 @@ class ImageMigrator extends AbstractMigrator {
             return null;
         }
 
+        // Cloudways path normalization (/home vs /mnt/data/home).
+        $image_base = $this->resolveImageBasePath( $image_base );
+
         // Prevent directory traversal.
         $safe = ltrim( str_replace( '\\', '/', $oc_path ), '/' );
         if ( strpos( $safe, '..' ) !== false ) {
@@ -342,6 +345,29 @@ class ImageMigrator extends AbstractMigrator {
         }
 
         return $image_base . DIRECTORY_SEPARATOR . $safe;
+    }
+
+    /**
+     * Resolve equivalent filesystem roots used on some managed hosts.
+     */
+    private function resolveImageBasePath( string $base ): string {
+        $base = rtrim( $base, '/\\' );
+
+        $candidates = [ $base ];
+        if ( strpos( $base, '/home/' ) === 0 ) {
+            $candidates[] = '/mnt/data' . $base;
+        }
+        if ( strpos( $base, '/mnt/data/home/' ) === 0 ) {
+            $candidates[] = substr( $base, strlen( '/mnt/data' ) );
+        }
+
+        foreach ( array_unique( $candidates ) as $candidate ) {
+            if ( is_dir( $candidate ) && is_readable( $candidate ) ) {
+                return rtrim( $candidate, '/\\' );
+            }
+        }
+
+        return $base;
     }
 
     /**

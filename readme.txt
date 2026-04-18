@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.16
+Stable tag: 2.4.17
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,10 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.17 =
+* **Fixed:** Image path validation/import now auto-resolves common Cloudways path variants (`/home/...` <-> `/mnt/data/home/...`) so valid directories are not falsely reported as unreadable.
+* **Improved:** Pre-migration image scanner uses the same normalization, reducing false missing-image warnings.
 
 = 2.4.16 =
 * **Fixed:** `ImageMigrator` now processes images in real batches/chunks, updates checkpoint progress per batch, and respects `demo_limit` in demo runs.
