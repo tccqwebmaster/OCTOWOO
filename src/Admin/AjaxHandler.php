@@ -284,31 +284,39 @@ class AjaxHandler {
     // ── Action: abort ─────────────────────────────────────────────────────────
 
     private function actionAbortMigration(): void {
+        // Accept run_id from POST, fall back to the active one in DB.
+        $raw_run_id = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS );
         $run_id = sanitize_text_field(
-            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
-                ?? CheckpointManager::getActiveRunId()
-                ?? ''
+            ( $raw_run_id !== null && $raw_run_id !== '' )
+                ? $raw_run_id
+                : ( CheckpointManager::getActiveRunId() ?? '' )
         );
 
         if ( ! $run_id ) {
             wp_send_json_error( [ 'message' => __( 'No active migration to abort.', 'octowoo' ) ] );
         }
 
-        // Signal any still-running PHP process to stop gracefully.
+        // 1. Cancel any pending Action Scheduler background jobs for this run.
+        //    Without this, AS fires the next queued batch ≈5 s after abort,
+        //    which calls markRunActive() again and makes the banner re-appear.
+        BackgroundProcessor::abort( $run_id );
+
+        // 2. Signal any still-running synchronous PHP process to stop gracefully.
         MigrationManager::requestAbort( $run_id );
 
-        // Force-clear the state immediately so the next "Start" isn't blocked.
-        // This covers the case where the PHP process has already died (e.g. AJAX timeout)
-        // and will never read the transient signal itself.
+        // 3. Force-clear all checkpoint rows so the state is terminal.
+        //    Covers the case where the PHP process has already died (AJAX timeout,
+        //    server crash) and will never read the transient signal itself.
         global $wpdb;
         $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
-        $wpdb->query(
+        $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
             $wpdb->prepare(
-                "UPDATE `{$cp_table}` SET status = 'aborted' WHERE run_id = %s AND status = 'running'", // phpcs:ignore WordPress.DB.PreparedSQL
+                "UPDATE `{$cp_table}` SET status = 'aborted' WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
                 $run_id
             )
         );
 
+        // 4. Release the lock option so the next Start isn't blocked.
         $cp = new CheckpointManager( $run_id );
         $cp->markRunFinished();
 
@@ -765,27 +773,44 @@ class AjaxHandler {
     private function actionResetMigration(): void {
         global $wpdb;
 
-        // Must not be currently running.
-        if ( CheckpointManager::getActiveRunId() ) {
-            wp_send_json_error( [
-                'message' => __( 'Cannot reset while a migration is active. Abort it first.', 'octowoo' ),
-            ] );
+        $cp_table  = $wpdb->prefix . 'octowoo_checkpoints';
+        $map_table = $wpdb->prefix . 'octowoo_id_map';
+
+        // If a migration appears to be active, force-abort it first rather than
+        // hard-blocking the reset. This handles stale locks (crash, orphaned
+        // Background jobs) so the user is never stuck.
+        $active_run = CheckpointManager::getActiveRunId();
+        if ( $active_run ) {
+            BackgroundProcessor::abort( $active_run );
+            MigrationManager::requestAbort( $active_run );
+            $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->prepare(
+                    "UPDATE `{$cp_table}` SET status = 'aborted' WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $active_run
+                )
+            );
+            $cp = new CheckpointManager( $active_run );
+            $cp->markRunFinished();
         }
 
-        // Clear ID maps and checkpoints for the last run.
-        $run_id = get_option( 'octowoo_last_run_id', '' );
+        // Delete ALL checkpoint and ID-map rows for every known run.
+        // Using both active_run and last_run handles the edge case where they differ.
+        $run_ids = array_filter( array_unique( [
+            $active_run ?? '',
+            get_option( 'octowoo_last_run_id', '' ),
+        ] ) );
 
-        if ( $run_id ) {
-            $cp_table  = $wpdb->prefix . 'octowoo_checkpoints';
-            $map_table = $wpdb->prefix . 'octowoo_id_map';
-
-            $wpdb->delete( $cp_table,  [ 'run_id' => $run_id ], [ '%s' ] );
-            $wpdb->delete( $map_table, [ 'run_id' => $run_id ], [ '%s' ] );
+        foreach ( $run_ids as $rid ) {
+            $wpdb->delete( $cp_table,  [ 'run_id' => $rid ], [ '%s' ] );
+            $wpdb->delete( $map_table, [ 'run_id' => $rid ], [ '%s' ] );
         }
 
+        // Clean up all migration state options.
         delete_option( 'octowoo_last_run_id' );
         delete_option( 'octowoo_last_run_at' );
         delete_option( 'octowoo_active_run_id' );
+        delete_option( 'octowoo_run_started_at' );
+        delete_option( 'octowoo_db_lock' );
 
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
@@ -951,10 +976,12 @@ class AjaxHandler {
     // ── Action: purge imported data ───────────────────────────────────────────
 
     private function actionPurgeImported(): void {
-        // Must not be currently running.
+        // If there is a genuinely active migration (not a stale lock), block the purge
+        // to avoid deleting data that's currently being written.
+        // getActiveRunId() is now self-healing: stale locks return null automatically.
         if ( CheckpointManager::getActiveRunId() ) {
             wp_send_json_error( [
-                'message' => __( 'Cannot purge while a migration is active. Abort it first.', 'octowoo' ),
+                'message' => __( 'Cannot purge while a migration is actively running. Abort it first.', 'octowoo' ),
             ] );
         }
 

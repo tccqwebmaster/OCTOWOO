@@ -81,10 +81,50 @@ class CheckpointManager {
 
     /**
      * Return the run ID that is currently in progress, or null.
+     *
+     * Self-healing: if the stored run has checkpoint rows but none are in an
+     * active state (running/pending), the lock is stale (server crash, orphaned
+     * process, Background job that never resumed, etc.).  Auto-clear so the
+     * admin UI never gets stuck showing the "migration in progress" banner.
      */
     public static function getActiveRunId(): ?string {
+        global $wpdb;
+
         $v = get_option( 'octowoo_active_run_id', '' );
-        return $v ?: null;
+        if ( ! $v ) {
+            return null;
+        }
+
+        $table = $wpdb->prefix . 'octowoo_checkpoints';
+
+        // Check whether any checkpoint rows exist for this run.
+        $total = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                $v
+            )
+        );
+
+        if ( $total > 0 ) {
+            // Rows exist: count only the active (non-terminal) ones.
+            $active = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $v
+                )
+            );
+
+            if ( $active === 0 ) {
+                // All migrators are in a terminal state — lock is stale. Auto-clear.
+                delete_option( 'octowoo_active_run_id' );
+                $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                return null;
+            }
+        }
+        // If total === 0 the run was just created (no migrators inserted yet) —
+        // treat as still active so the very first chunk request isn't blocked.
+
+        return $v;
     }
 
     // ── Checkpoint CRUD ───────────────────────────────────────────────────────

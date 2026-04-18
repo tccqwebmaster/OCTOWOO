@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.5
+Stable tag: 2.4.6
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -147,6 +147,13 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.6 =
+* **Fixed:** Clicking Abort on a Background migration no longer re-shows the "migration in progress" banner on page refresh. Abort now cancels all pending Action Scheduler jobs via `BackgroundProcessor::abort()` — previously AS would re-queue the next batch ~5 s later and call `markRunActive()` again.
+* **Fixed:** Reset Progress now works even when an active-run lock exists. It force-aborts any running/background migration first, then wipes all checkpoint and ID-map rows for both the active and last-known run IDs. Previously it returned "Cannot reset while a migration is active".
+* **Fixed:** `CheckpointManager::getActiveRunId()` is now self-healing — if the stored run has checkpoint rows but none are in an active state (running/pending), the stale lock is cleared automatically on any page load or AJAX call.
+* **Fixed:** Purge Imported Data no longer hard-blocks on stale locks; only genuinely active runs block the purge.
+* **Improved:** Abort handler now marks both `running` and `pending` checkpoints as `aborted`.
 
 = 2.4.5 =
 * **Fixed:** Duplicate WooCommerce categories/products no longer created on re-runs. Two-stage guard: (1) `wp_insert_term` `term_exists` error now resolves the existing term directly from WP_Error data instead of a stale slug lookup; (2) `term_exists(name, 'product_cat', parent)` last-resort check before creation backfills the id_map and skips per policy.
