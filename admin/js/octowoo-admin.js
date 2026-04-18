@@ -623,7 +623,11 @@
         }
         chunkFailCount = 0;
         isRunning = true;
-        startPolling(); // continuous fallback polling so table stays live if chunks fail
+        // NOTE: polling is started AFTER the first chunk response sets a valid
+        // currentRunId.  Starting it here with an empty run_id causes a race:
+        // the poll hits the server before markRunActive() runs, the server
+        // returns active:false for the OLD finished run, and the JS callback
+        // shows "Migration completed!" before the first chunk even finishes.
         runNextChunk();
     }
 
@@ -654,8 +658,16 @@
 
             chunkFailCount = 0; // reset on any successful HTTP response
             const d = res.data;
+            var wasFirstChunk = !currentRunId;
             currentRunId = d.run_id || currentRunId;
             renderProgressTable(d.checkpoints || []);
+
+            // Start fallback polling after the first chunk so we have a valid
+            // currentRunId — avoids the race condition where an immediate poll
+            // with an empty run_id sees the OLD finished run and kills the loop.
+            if (wasFirstChunk && currentRunId) {
+                startPolling();
+            }
 
             if (d.done_all || d.aborted) {
                 isRunning = false;
@@ -792,7 +804,7 @@
             const data = res.data;
             renderProgressTable(data.checkpoints || []);
 
-            if (!data.active && isRunning) {
+            if (!data.active && isRunning && currentRunId && data.run_id === currentRunId) {
                 // Migration finished (server-side).
                 isRunning = false;
                 stopPolling();

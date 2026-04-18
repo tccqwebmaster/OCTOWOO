@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.12  
+**Version:** 2.4.13  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,9 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.13 – Poll/chunk race condition fix
+- **Bug fix:** `startPolling()` was called in `startMigration()` immediately with an empty `currentRunId`. The poll hit `actionGetProgress()` before `markRunActive()` ran, the server returned `active: false` for the OLD finished run, and the poll callback set `isRunning = false` + showed "Migration completed!" banner — killing the chunk loop before the first chunk finished. Polling now starts only after the first chunk response provides a valid `currentRunId`. Additionally, the poll completion guard now requires `data.run_id === currentRunId` to prevent stale/mismatched responses from triggering false completion.
 
 ### v2.4.12 – Brand image download_url timeout fix
 - **Bug fix:** `ManufacturerMigrator::importBrandImage()` used `download_url()` to HTTP-fetch local image files via the OpenCart shop URL. When the OC URL was unreachable (common during migration), the HTTP call hung for 60–300 s per image, causing a PHP fatal timeout on every chunk after the first batch of 20 manufacturers. Replaced with direct `copy()` to temp file + `media_handle_sideload()`, matching `ImageMigrator`'s proven approach.

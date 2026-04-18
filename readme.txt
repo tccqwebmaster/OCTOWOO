@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.12
+Stable tag: 2.4.13
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,9 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.13 =
+* **Fixed:** Race condition between `pollProgress()` and `runNextChunk()` caused migrations to show "Migration completed!" instantly with all migrators still PENDING. `startPolling()` was firing immediately with an empty `run_id`, the server returned `active: false` for the OLD finished run, and the JS completion handler killed the chunk loop before it even started. Polling now starts only after the first chunk sets a valid `currentRunId`, and the completion guard requires the poll's `run_id` to match the current run.
 
 = 2.4.12 =
 * **Fixed:** `ManufacturerMigrator::importBrandImage()` was using `download_url()` to HTTP-fetch local files via the OpenCart shop URL. When the OC URL was unreachable the call hung for 60–300 s, causing a PHP fatal timeout on every chunk after the first 20 manufacturers. Replaced with direct `copy()` to temp file + `media_handle_sideload()` (same approach as `ImageMigrator`).
