@@ -130,6 +130,19 @@ class CategoryMigrator extends AbstractMigrator {
         // Duplicate check.
         $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
 
+        // Last-resort guard: even if id_map and OC-meta are both empty (e.g. after
+        // a Reset, or when the store already had a matching category), look up the
+        // WC taxonomy directly by name + parent to prevent creating a real duplicate.
+        if ( ! $existing_wc_id ) {
+            $existing_term = term_exists( $name, 'product_cat', $wc_parent );
+            if ( ! empty( $existing_term['term_id'] ) ) {
+                $existing_wc_id = (int) $existing_term['term_id'];
+                // Backfill the map so future lookups are instant.
+                $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing_wc_id );
+                $this->logger->info( "[categories] Found existing WC term #{$existing_wc_id} by name for OC #{$oc_id} – backfilled id_map." );
+            }
+        }
+
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
                 return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image );
@@ -172,13 +185,18 @@ class CategoryMigrator extends AbstractMigrator {
         );
 
         if ( is_wp_error( $result ) ) {
-            // If term already exists by slug, retrieve it.
+            // Term already exists: use the term_id carried in the WP_Error data
+            // (wp_insert_term embeds the existing term_id as get_error_data()).
+            // NOTE: do NOT look up by the uniquified $slug — the existing term
+            // almost certainly has the *original* slug, not the suffixed one.
             if ( $result->get_error_code() === 'term_exists' ) {
-                $existing = get_term_by( 'slug', $slug, 'product_cat' );
-                if ( $existing ) {
+                $existing_id = (int) $result->get_error_data( 'term_exists' );
+                $existing    = $existing_id > 0 ? get_term( $existing_id, 'product_cat' ) : null;
+
+                if ( $existing && ! is_wp_error( $existing ) ) {
                     $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing->term_id );
                     $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image );
-                    $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id}." );
+                    $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id} (term_exists)." );
                     return true;
                 }
             }
