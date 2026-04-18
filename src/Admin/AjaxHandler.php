@@ -92,27 +92,31 @@ class AjaxHandler {
         }
 
         // Lightweight request logging to aid debugging (non-blocking).
-        try {
-            $log_run = \OctoWoo\Core\CheckpointManager::getActiveRunId() ?? get_option( 'octowoo_last_run_id', 'no-run' );
-            $logger = new \OctoWoo\Core\Logger( $log_run, AdminPage::getConfig()['logging'] ?? [] );
-            $safe_req = $_REQUEST;
-            // Mask common sensitive fields.
-            $mask_keys = [ 'db_pass', 'password', 'db_password' ];
-            $recursive_mask = function (&$arr) use (&$recursive_mask, $mask_keys) {
-                if ( ! is_array( $arr ) ) { return; }
-                foreach ( $arr as $k => &$v ) {
-                    if ( in_array( strtolower( $k ), $mask_keys, true ) ) {
-                        $v = '***';
-                        continue;
+        // Skip read-only polling actions to avoid flooding logs with noise.
+        $skip_log_actions = [ 'octowoo_get_progress', 'octowoo_get_logs' ];
+        if ( ! in_array( $action, $skip_log_actions, true ) ) {
+            try {
+                $log_run = \OctoWoo\Core\CheckpointManager::getActiveRunId() ?? get_option( 'octowoo_last_run_id', 'no-run' );
+                $logger = new \OctoWoo\Core\Logger( $log_run, AdminPage::getConfig()['logging'] ?? [] );
+                $safe_req = $_REQUEST;
+                // Mask common sensitive fields.
+                $mask_keys = [ 'db_pass', 'password', 'db_password' ];
+                $recursive_mask = function (&$arr) use (&$recursive_mask, $mask_keys) {
+                    if ( ! is_array( $arr ) ) { return; }
+                    foreach ( $arr as $k => &$v ) {
+                        if ( in_array( strtolower( $k ), $mask_keys, true ) ) {
+                            $v = '***';
+                            continue;
+                        }
+                        if ( is_array( $v ) ) { $recursive_mask( $v ); }
                     }
-                    if ( is_array( $v ) ) { $recursive_mask( $v ); }
-                }
-            };
-            $recursive_mask( $safe_req );
-            $logger->info( 'AJAX dispatch: ' . $action, [ 'user' => get_current_user_id() ] );
-            $logger->flush();
-        } catch ( \Throwable $e ) {
-            // Ignore logging failures — do not block AJAX.
+                };
+                $recursive_mask( $safe_req );
+                $logger->info( 'AJAX dispatch: ' . $action, [ 'user' => get_current_user_id() ] );
+                $logger->flush();
+            } catch ( \Throwable $e ) {
+                // Ignore logging failures — do not block AJAX.
+            }
         }
 
         switch ( $action ) {
