@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.13
+Stable tag: 2.4.14
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,11 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.14 =
+* **Fixed:** Migration could get stuck with many entities permanently `PENDING` because checkpoint keys were inconsistent (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`).
+* **Changed:** Updated checkpoint keys in affected migrators to plural so status/progress rows are tracked under the same keys used by chunk dispatch.
+* **Compatibility:** Kept ID-map entity keys singular (`category/product/customer/order/coupon`) so cross-migrator lookups and existing mapped data continue to work.
 
 = 2.4.13 =
 * **Fixed:** Race condition between `pollProgress()` and `runNextChunk()` caused migrations to show "Migration completed!" instantly with all migrators still PENDING. `startPolling()` was firing immediately with an empty `run_id`, the server returned `active: false` for the OLD finished run, and the JS completion handler killed the chunk loop before it even started. Polling now starts only after the first chunk sets a valid `currentRunId`, and the completion guard requires the poll's `run_id` to match the current run.

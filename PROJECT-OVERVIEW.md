@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.13  
+**Version:** 2.4.14  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,11 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.14 – Checkpoint key alignment (stuck migration fix)
+- **Bug fix:** Several migrators wrote checkpoint status under singular keys (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`). This mismatch could leave many entities permanently `pending` and make the migration appear stuck.
+- **Change:** Checkpoint keys are now aligned to plural names for Category/Product/Customer/Order/Coupon migrators.
+- **Compatibility:** ID-map entity keys remain singular to preserve existing OC->WC mapping behavior and dependent lookups.
 
 ### v2.4.13 – Poll/chunk race condition fix
 - **Bug fix:** `startPolling()` was called in `startMigration()` immediately with an empty `currentRunId`. The poll hit `actionGetProgress()` before `markRunActive()` ran, the server returned `active: false` for the OLD finished run, and the poll callback set `isRunning = false` + showed "Migration completed!" banner — killing the chunk loop before the first chunk finished. Polling now starts only after the first chunk response provides a valid `currentRunId`. Additionally, the poll completion guard now requires `data.run_id === currentRunId` to prevent stale/mismatched responses from triggering false completion.
