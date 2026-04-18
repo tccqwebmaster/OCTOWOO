@@ -67,6 +67,9 @@ class AjaxHandler {
             'octowoo_validate',
             'octowoo_start_background',
             'octowoo_cancel_background',
+            'octowoo_pause_migration',
+            'octowoo_resume_migration',
+            'octowoo_skip_migrator',
         ];
 
         foreach ( $actions as $action ) {
@@ -186,6 +189,18 @@ class AjaxHandler {
 
             case 'octowoo_cancel_background':
                 $this->actionCancelBackground();
+                break;
+
+            case 'octowoo_pause_migration':
+                $this->actionPauseMigration();
+                break;
+
+            case 'octowoo_resume_migration':
+                $this->actionResumeMigration();
+                break;
+
+            case 'octowoo_skip_migrator':
+                $this->actionSkipMigrator();
                 break;
 
             default:
@@ -319,10 +334,87 @@ class AjaxHandler {
         // 4. Release the lock option so the next Start isn't blocked.
         $cp = new CheckpointManager( $run_id );
         $cp->markRunFinished();
+        MigrationManager::clearRuntimeSignals( $run_id );
 
         wp_send_json_success( [
             'message' => __( 'Migration aborted and lock cleared. You can start a new migration.', 'octowoo' ),
             'run_id'  => $run_id,
+        ] );
+    }
+
+    private function actionPauseMigration(): void {
+        $run_id = sanitize_text_field(
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+                ?? CheckpointManager::getActiveRunId()
+                ?? ''
+        );
+
+        if ( ! $run_id ) {
+            wp_send_json_error( [ 'message' => __( 'No active migration to pause.', 'octowoo' ) ] );
+        }
+
+        MigrationManager::requestPause( $run_id );
+        BackgroundProcessor::cancelPending( $run_id );
+
+        wp_send_json_success( [
+            'message' => __( 'Migration paused.', 'octowoo' ),
+            'run_id'  => $run_id,
+        ] );
+    }
+
+    private function actionResumeMigration(): void {
+        $run_id = sanitize_text_field(
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+                ?? CheckpointManager::getActiveRunId()
+                ?? ''
+        );
+
+        if ( ! $run_id ) {
+            wp_send_json_error( [ 'message' => __( 'No paused migration found.', 'octowoo' ) ] );
+        }
+
+        MigrationManager::clearPause( $run_id );
+
+        wp_send_json_success( [
+            'message' => __( 'Migration resumed.', 'octowoo' ),
+            'run_id'  => $run_id,
+        ] );
+    }
+
+    private function actionSkipMigrator(): void {
+        $run_id = sanitize_text_field(
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+                ?? CheckpointManager::getActiveRunId()
+                ?? ''
+        );
+
+        if ( ! $run_id ) {
+            wp_send_json_error( [ 'message' => __( 'No active migration found.', 'octowoo' ) ] );
+        }
+
+        $migrator = sanitize_key( (string) filter_input( INPUT_POST, 'migrator', FILTER_SANITIZE_SPECIAL_CHARS ) );
+
+        if ( $migrator === '' ) {
+            global $wpdb;
+            $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
+            $migrator = (string) $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT migrator FROM `{$cp_table}` WHERE run_id = %s AND status IN ('running','pending') ORDER BY id ASC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $run_id
+                )
+            );
+        }
+
+        if ( $migrator === '' ) {
+            wp_send_json_error( [ 'message' => __( 'No current migrator to skip.', 'octowoo' ) ] );
+        }
+
+        MigrationManager::requestSkipCurrentMigrator( $run_id, $migrator );
+
+        wp_send_json_success( [
+            'message'  => sprintf( __( 'Skip requested for %s. Next chunk will continue with the next entity.', 'octowoo' ), $migrator ),
+            'run_id'   => $run_id,
+            'migrator' => $migrator,
         ] );
     }
 
@@ -348,6 +440,7 @@ class AjaxHandler {
         wp_send_json_success( [
             'run_id'      => $run_id,
             'active'      => CheckpointManager::getActiveRunId() === $run_id,
+            'paused'      => MigrationManager::checkPaused( $run_id ),
             'checkpoints' => $checkpoint->getAll(),
             'started_at'  => get_option( 'octowoo_run_started_at', '' ),
         ] );
@@ -501,6 +594,8 @@ class AjaxHandler {
                 'run_id'      => $manager->getRunId(),
                 'done_all'    => $result['done_all'],
                 'aborted'     => $result['aborted'] ?? false,
+                'paused'      => $result['paused'] ?? false,
+                'skipped'     => $result['skipped'] ?? false,
                 'migrator'    => $result['migrator'],
                 'checkpoints' => $result['checkpoints'],
                 'report'      => $result['report'],
@@ -791,6 +886,7 @@ class AjaxHandler {
             );
             $cp = new CheckpointManager( $active_run );
             $cp->markRunFinished();
+            MigrationManager::clearRuntimeSignals( $active_run );
         }
 
         // Delete ALL checkpoint and ID-map rows for every known run.
@@ -857,6 +953,10 @@ class AjaxHandler {
 
         $run_id = $resume && $active_run ? $active_run : null;
 
+        if ( $run_id ) {
+            MigrationManager::clearPause( $run_id );
+        }
+
         $overrides = [];
         // phpcs:ignore WordPress.Security.NonceVerification
         if ( filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN ) ) {
@@ -916,6 +1016,7 @@ class AjaxHandler {
 
         $cp = new CheckpointManager( $run_id );
         $cp->markRunFinished();
+        MigrationManager::clearRuntimeSignals( $run_id );
 
         wp_send_json_success( [
             'message' => __( 'Background migration cancelled.', 'octowoo' ),

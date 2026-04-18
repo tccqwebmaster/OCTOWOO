@@ -77,6 +77,9 @@ class BackgroundProcessor {
         $manager = new MigrationManager( $overrides, $run_id );
         $run_id  = $manager->getRunId();
 
+        // Fresh (re)enqueue should clear stale pause/skip/abort runtime flags.
+        MigrationManager::clearRuntimeSignals( $run_id );
+
         // Persist overrides so each AS callback can rebuild the same manager.
         set_transient( self::transientKey( $run_id ), $overrides, self::TRANSIENT_TTL );
 
@@ -171,6 +174,11 @@ class BackgroundProcessor {
             return;
         }
 
+        // Pause halts scheduling; resume will enqueue again from AJAX/UI.
+        if ( MigrationManager::checkPaused( $run_id ) ) {
+            return;
+        }
+
         $overrides = get_transient( self::transientKey( $run_id ) );
         if ( ! is_array( $overrides ) ) {
             $overrides = [];
@@ -215,6 +223,7 @@ class BackgroundProcessor {
     private static function finish( string $run_id ): void {
         $checkpoint = new CheckpointManager( $run_id );
         $checkpoint->markRunFinished();
+        MigrationManager::clearRuntimeSignals( $run_id );
     }
 
     private static function transientKey( string $run_id ): string {

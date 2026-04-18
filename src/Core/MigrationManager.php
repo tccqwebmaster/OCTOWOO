@@ -158,6 +158,7 @@ class MigrationManager {
 
         $this->logger->flush();
         $this->checkpoint->markRunFinished();
+        self::clearRuntimeSignals( $this->run_id );
 
         $report = $this->buildReport();
         $this->logger->info( 'Migration finished.', $report );
@@ -241,9 +242,23 @@ class MigrationManager {
             $this->logger->warning( 'Chunk run aborted by user flag.' );
             $this->logger->flush();
             $this->checkpoint->markRunFinished();
+            self::clearRuntimeSignals( $this->run_id );
             return [
                 'done_all'    => true,
                 'aborted'     => true,
+                'migrator'    => '',
+                'chunk'       => [],
+                'checkpoints' => $this->checkpoint->getAll(),
+                'report'      => null,
+            ];
+        }
+
+        if ( $this->isPaused() ) {
+            $this->logger->info( 'Chunk run paused by user request.' );
+            $this->logger->flush();
+            return [
+                'done_all'    => false,
+                'paused'      => true,
                 'migrator'    => '',
                 'chunk'       => [],
                 'checkpoints' => $this->checkpoint->getAll(),
@@ -271,8 +286,22 @@ class MigrationManager {
                 continue;
             }
 
+            if ( self::consumeSkipMigrator( $this->run_id, $key ) ) {
+                $this->logger->warning( "Skipping current migrator by user request: [{$key}]" );
+                $this->checkpoint->abort( $key );
+
+                return [
+                    'done_all'    => false,
+                    'skipped'     => true,
+                    'migrator'    => $key,
+                    'chunk'       => [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ],
+                    'checkpoints' => $this->checkpoint->getAll(),
+                    'report'      => null,
+                ];
+            }
+
             // Skip already-completed or permanently-failed migrators.
-            if ( $this->checkpoint->isCompleted( $key ) || $this->checkpoint->isFailed( $key ) ) {
+            if ( $this->checkpoint->isCompleted( $key ) || $this->checkpoint->isFailed( $key ) || $this->checkpoint->isAborted( $key ) ) {
                 continue;
             }
 
@@ -309,6 +338,7 @@ class MigrationManager {
         // All migrators done.
         $this->logger->flush();
         $this->checkpoint->markRunFinished();
+        self::clearRuntimeSignals( $this->run_id );
 
         $report = $this->buildReport();
         $this->logger->info( 'Migration finished (chunked).', $report );
@@ -521,11 +551,53 @@ class MigrationManager {
         return self::checkAborted( $this->run_id );
     }
 
+    private function isPaused(): bool {
+        return self::checkPaused( $this->run_id );
+    }
+
     /**
      * Static check used by BackgroundProcessor (no instance available there).
      */
     public static function checkAborted( string $run_id ): bool {
         return (bool) get_transient( 'octowoo_abort_' . $run_id );
+    }
+
+    public static function requestPause( string $run_id ): void {
+        set_transient( 'octowoo_pause_' . $run_id, '1', DAY_IN_SECONDS );
+    }
+
+    public static function clearPause( string $run_id ): void {
+        delete_transient( 'octowoo_pause_' . $run_id );
+    }
+
+    public static function checkPaused( string $run_id ): bool {
+        return (bool) get_transient( 'octowoo_pause_' . $run_id );
+    }
+
+    public static function requestSkipCurrentMigrator( string $run_id, string $migrator ): void {
+        set_transient( self::skipTransientKey( $run_id, $migrator ), '1', HOUR_IN_SECONDS );
+    }
+
+    public static function consumeSkipMigrator( string $run_id, string $migrator ): bool {
+        $key = self::skipTransientKey( $run_id, $migrator );
+        if ( ! get_transient( $key ) ) {
+            return false;
+        }
+        delete_transient( $key );
+        return true;
+    }
+
+    public static function clearRuntimeSignals( string $run_id ): void {
+        delete_transient( 'octowoo_abort_' . $run_id );
+        delete_transient( 'octowoo_pause_' . $run_id );
+
+        foreach ( self::MIGRATOR_ORDER as $migrator ) {
+            delete_transient( self::skipTransientKey( $run_id, $migrator ) );
+        }
+    }
+
+    private static function skipTransientKey( string $run_id, string $migrator ): string {
+        return 'octowoo_skip_' . $run_id . '_' . $migrator;
     }
 
     private function buildReport(): array {

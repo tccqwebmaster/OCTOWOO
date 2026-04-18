@@ -20,9 +20,11 @@
     // An activeRunId in the DB just means a run can be resumed; it does NOT
     // mean this JS instance is sending requests.
     let isRunning      = false;
+    let isPausedState  = false;
+    let currentMigrator = '';
 
     /* ── DOM refs (populated in init) ────────────────────────────────────── */
-    let $progressTable, $logContainer, $statusBanner, $btnStart, $btnResume, $btnAbort, $btnReset;
+    let $progressTable, $logContainer, $statusBanner, $btnStart, $btnResume, $btnAbort, $btnPause, $btnSkip, $btnReset;
 
     /* ── Init ────────────────────────────────────────────────────────────── */
     function init() {
@@ -33,6 +35,8 @@
         $btnStart      = $('#ow-btn-start');
         $btnResume     = $('#ow-btn-resume');
         $btnAbort      = $('#ow-btn-abort');
+        $btnPause      = $('#ow-btn-pause');
+        $btnSkip       = $('#ow-btn-skip');
         $btnReset      = $('#ow-btn-reset');
 
         // Tab navigation (query-string approach for back-button support).
@@ -49,6 +53,8 @@
         $btnStart.on('click', function () { startMigration(false, false); });
         $btnResume.on('click', function () { startMigration(true,  false); });
         $btnAbort.on('click', abortMigration);
+        $btnPause.on('click', pauseMigration);
+        $btnSkip.on('click', skipCurrentMigrator);
         $btnReset.on('click', resetMigration);
 
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
@@ -112,6 +118,8 @@
         if (octoWoo.activeRunId) {
             startPolling();
             $btnAbort.prop('disabled', false);
+            $btnPause.prop('disabled', false);
+            $btnSkip.prop('disabled', false);
         }
 
         // Settings: live validation feedback.
@@ -445,6 +453,9 @@
                 startPolling();
                 // Enable the Cancel BG button.
                 $('#ow-btn-cancel-bg').prop('disabled', false);
+                $btnAbort.prop('disabled', false);
+                $btnPause.prop('disabled', false);
+                $btnSkip.prop('disabled', false);
             } else {
                 $bgStatus.css('color', '#c62828').text('✘ ' + (res.data.message || 'Failed to queue.'));
             }
@@ -472,6 +483,8 @@
                 setButtonState('idle');
                 setBannerInfo(res.data.message);
                 $('#ow-btn-cancel-bg').prop('disabled', true);
+                $btnPause.prop('disabled', true);
+                $btnSkip.prop('disabled', true);
             } else {
                 setBannerError(res.data.message || 'Cancel failed.');
             }
@@ -600,6 +613,25 @@
     function startMigration(resume, isDemo) {
         if (isRunning) { return; }
 
+        if (resume && (isPausedState || currentRunId)) {
+            $.post(octoWoo.ajaxUrl, {
+                action: 'octowoo_resume_migration',
+                nonce:  octoWoo.nonce,
+                run_id: currentRunId,
+            }).always(function () {
+                startMigrationInternal(resume, isDemo);
+            });
+            return;
+        }
+
+        startMigrationInternal(resume, isDemo);
+    }
+
+    function startMigrationInternal(resume, isDemo) {
+        if (isRunning) { return; }
+
+        isPausedState = false;
+
         const demoLimitVal = isDemo ? 20 : 0;
 
         if (!resume) {
@@ -660,14 +692,28 @@
             const d = res.data;
             var wasFirstChunk = !currentRunId;
             currentRunId = d.run_id || currentRunId;
+            currentMigrator = d.migrator || currentMigrator;
             const checkpoints = d.checkpoints || [];
             renderProgressTable(checkpoints);
+
+            if (d.paused) {
+                isRunning = false;
+                isPausedState = true;
+                stopPolling();
+                setButtonState('paused');
+                setBannerInfo('Migration paused. Click Resume to continue from the same checkpoint.');
+                return;
+            }
+
+            if (d.skipped && d.migrator) {
+                setBannerInfo('Skipped current entity: ' + d.migrator + '. Continuing with next entity...');
+            }
 
             // Defensive guard: if backend reports done_all but checkpoints still
             // have pending/running rows, keep chunking instead of showing a false
             // "completed" banner.
             if (d.done_all && hasNonTerminalCheckpoints(checkpoints)) {
-                setBannerInfo('Migration still has pending entities. Continuing…');
+                setBannerInfo('Migration still has pending entities. Continuing...');
                 setTimeout(runNextChunk, 300);
                 return;
             }
@@ -681,6 +727,7 @@
 
             if (d.done_all || d.aborted) {
                 isRunning = false;
+                isPausedState = false;
                 stopPolling();
                 setButtonState('idle');
                 $btnResume.prop('disabled', true);
@@ -756,11 +803,54 @@
             if (res.success) {
                 stopPolling();
                 currentRunId = '';
+                currentMigrator = '';
+                isPausedState = false;
                 setButtonState('idle');
                 $btnResume.prop('disabled', true);
                 $('#ow-active-run-banner').hide();
                 setBannerInfo(res.data.message);
             }
+        });
+    }
+
+    function pauseMigration() {
+        const runId = currentRunId || octoWoo.activeRunId;
+        if (!runId) { return; }
+
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_pause_migration',
+            nonce:  octoWoo.nonce,
+            run_id: runId,
+        })
+        .done(function (res) {
+            if (!res.success) {
+                setBannerError((res.data && res.data.message) ? res.data.message : 'Pause failed.');
+                return;
+            }
+            isRunning = false;
+            isPausedState = true;
+            stopPolling();
+            setButtonState('paused');
+            setBannerInfo(res.data.message + ' Click Resume to continue.');
+        });
+    }
+
+    function skipCurrentMigrator() {
+        const runId = currentRunId || octoWoo.activeRunId;
+        if (!runId) { return; }
+
+        $.post(octoWoo.ajaxUrl, {
+            action:   'octowoo_skip_migrator',
+            nonce:    octoWoo.nonce,
+            run_id:   runId,
+            migrator: currentMigrator,
+        })
+        .done(function (res) {
+            if (!res.success) {
+                setBannerError((res.data && res.data.message) ? res.data.message : 'Skip failed.');
+                return;
+            }
+            setBannerInfo(res.data.message);
         });
     }
 
@@ -782,6 +872,8 @@
                 $progressTable.find('tbody').empty();
                 setBannerInfo(res.data.message);
                 currentRunId = '';
+                currentMigrator = '';
+                isPausedState = false;
             } else {
                 setBannerError(res.data.message);
             }
@@ -812,22 +904,24 @@
             if (!res.success) { return; }
 
             const data = res.data;
-            const checkpoints = data.checkpoints || [];
-            renderProgressTable(checkpoints);
+            isPausedState = !!data.paused;
+            renderProgressTable(data.checkpoints || []);
 
-            if (
-                !data.active &&
-                isRunning &&
-                currentRunId &&
-                data.run_id === currentRunId &&
-                !hasNonTerminalCheckpoints(checkpoints)
-            ) {
+            if (isPausedState && !isRunning) {
+                setButtonState('paused');
+            }
+
+            if (!data.active && isRunning && currentRunId && data.run_id === currentRunId) {
                 // Migration finished (server-side).
                 isRunning = false;
+                isPausedState = false;
                 stopPolling();
                 setButtonState('idle');
                 setBannerDone(null);
                 refreshLogs();
+            } else if (!data.active && !isRunning && currentRunId && data.run_id === currentRunId && !isPausedState) {
+                setButtonState('idle');
+                $('#ow-btn-cancel-bg').prop('disabled', true);
             }
         });
     }
@@ -854,10 +948,18 @@
             return;
         }
 
+        const runningCp = checkpoints.find(function (cp) { return cp.status === 'running'; })
+            || checkpoints.find(function (cp) { return cp.status === 'pending'; });
+        if (runningCp && runningCp.migrator) {
+            currentMigrator = runningCp.migrator;
+        }
+
         checkpoints.forEach(function (cp) {
             const processed = parseInt(cp.processed_count, 10) || 0;
             const total     = parseInt(cp.total_count, 10)     || 0;
-            const pct       = total > 0 ? Math.round(processed / total * 100) : (cp.status === 'completed' ? 100 : 0);
+            const safeProcessed = total > 0 ? Math.min(processed, total) : processed;
+            const pctRaw = total > 0 ? Math.round(safeProcessed / total * 100) : (cp.status === 'completed' ? 100 : 0);
+            const pct       = Math.max(0, Math.min(100, pctRaw));
             const isDone    = cp.status === 'completed';
             const isFailed  = cp.status === 'failed';
 
@@ -873,7 +975,7 @@
             const $tr = $('<tr>').append(
                 $('<td>').append($expandBtn, ' ', ucFirst(cp.migrator)),
                 $('<td>').append($('<span class="ow-badge ow-badge-' + cp.status + '">').text(cp.status)),
-                $('<td>').text(processed.toLocaleString() + ' / ' + total.toLocaleString()),
+                $('<td>').text(safeProcessed.toLocaleString() + ' / ' + total.toLocaleString()),
                 $('<td>').append($bar),
                 $('<td>').text(pct + '%')
             );
@@ -1051,10 +1153,20 @@
                 .html('<span class="ow-spinner"></span>&nbsp; Running…');
             $btnResume.prop('disabled', true);
             $btnAbort.prop('disabled', false);
+            $btnPause.prop('disabled', false);
+            $btnSkip.prop('disabled', false);
+        } else if (state === 'paused') {
+            $btnStart.prop('disabled', true).text('▶ Start Full Migration');
+            $btnResume.prop('disabled', false);
+            $btnAbort.prop('disabled', false);
+            $btnPause.prop('disabled', true);
+            $btnSkip.prop('disabled', false);
         } else {
-            $btnStart.prop('disabled', false).text('▶ Start Migration');
+            $btnStart.prop('disabled', false).text('▶ Start Full Migration');
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', true);
+            $btnPause.prop('disabled', true);
+            $btnSkip.prop('disabled', true);
         }
     }
 

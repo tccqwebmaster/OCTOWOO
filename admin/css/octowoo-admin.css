@@ -211,6 +211,7 @@
 .ow-badge-running   { background: #cce5ff; color: #004085; }
 .ow-badge-completed { background: #d4edda; color: #155724; }
 .ow-badge-failed    { background: #f8d7da; color: #721c24; }
+.ow-badge-aborted   { background: #fff3cd; color: #856404; }
 
 /* ── Progress bars ──────────────────────────────────────────────────────── */
 .ow-progress-table {

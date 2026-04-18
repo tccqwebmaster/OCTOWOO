@@ -241,6 +241,12 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="button" id="ow-btn-abort" class="ow-btn ow-btn-danger" disabled>
                     ⏹ <?php esc_html_e( 'Abort', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-pause" class="ow-btn ow-btn-secondary" disabled>
+                    ⏸ <?php esc_html_e( 'Pause', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-skip" class="ow-btn ow-btn-secondary" disabled>
+                    ⏭ <?php esc_html_e( 'Skip Current', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-reset" class="ow-btn ow-btn-secondary">
                     ↺ <?php esc_html_e( 'Reset Progress', 'octowoo' ); ?>
                 </button>

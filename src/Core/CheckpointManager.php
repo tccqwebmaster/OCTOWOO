@@ -22,6 +22,7 @@ class CheckpointManager {
     const STATUS_RUNNING    = 'running';
     const STATUS_COMPLETED  = 'completed';
     const STATUS_FAILED     = 'failed';
+    const STATUS_ABORTED    = 'aborted';
 
     /**
      * Request-scoped in-memory cache for getWcId() lookups.
@@ -200,9 +201,15 @@ class CheckpointManager {
             // Re-initialising an existing checkpoint (e.g. restart): reset counters.
             $wpdb->update(
                 $this->table,
-                [ 'total_count' => $total_count, 'status' => self::STATUS_PENDING ],
+                [
+                    'last_oc_id'      => 0,
+                    'processed_count' => 0,
+                    'total_count'     => $total_count,
+                    'status'          => self::STATUS_PENDING,
+                    'updated_at'      => current_time( 'mysql' ),
+                ],
                 [ 'run_id' => $this->run_id, 'migrator' => $migrator ],
-                [ '%d', '%s' ],
+                [ '%d', '%d', '%d', '%s', '%s' ],
                 [ '%s', '%s' ]
             );
         }
@@ -250,6 +257,10 @@ class CheckpointManager {
 
     public function fail( string $migrator ): void {
         $this->updateStatus( $migrator, self::STATUS_FAILED );
+    }
+
+    public function abort( string $migrator ): void {
+        $this->updateStatus( $migrator, self::STATUS_ABORTED );
     }
 
     /**
@@ -344,6 +355,20 @@ class CheckpointManager {
         );
 
         return $status === self::STATUS_FAILED;
+    }
+
+    public function isAborted( string $migrator ): bool {
+        global $wpdb;
+
+        $status = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                $this->run_id,
+                $migrator
+            )
+        );
+
+        return $status === self::STATUS_ABORTED;
     }
 
     /**
