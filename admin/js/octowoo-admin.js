@@ -668,6 +668,13 @@
                 } else {
                     setBannerDone(d.report);
                 }
+                // Scroll the progress table into view so the user sees the final
+                // state — especially important for fast demo runs where progress
+                // updates flash by in under a second.
+                var $table = $('#ow-progress-table');
+                if ($table.length) {
+                    $table[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
                 refreshLogs();
             } else {
                 // Fire next chunk immediately (no delay needed — each request is short).
@@ -971,6 +978,7 @@
                 }, { processed: 0, failed: 0 });
             msg += ' — ' + totals.processed.toLocaleString() + ' items processed, ' + totals.failed + ' failed.';
         }
+        msg += ' See progress table below for details.';
         // Clear the PHP-rendered "in progress" warning — it's now stale.
         $('#ow-active-run-banner').hide();
         $btnResume.prop('disabled', true);

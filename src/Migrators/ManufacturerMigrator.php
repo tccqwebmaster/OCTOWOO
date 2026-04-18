@@ -258,8 +258,12 @@ class ManufacturerMigrator extends AbstractMigrator {
     // ── Brand image ───────────────────────────────────────────────────────────
 
     /**
-     * Sideload (or re-use from ID map) the manufacturer's logo image and
+     * Copy the manufacturer's logo image into the WP media library and
      * attach it to the brand term using the convention expected by each plugin.
+     *
+     * Uses direct file copy (same approach as ImageMigrator) instead of
+     * download_url() to avoid HTTP loopback hangs / timeouts that block
+     * the chunked AJAX migration.
      */
     private function importBrandImage( int $term_id, string $oc_image_rel_path ): void {
         $image_path = $this->config['opencart']['image_path'] ?? '';
@@ -277,15 +281,11 @@ class ManufacturerMigrator extends AbstractMigrator {
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
 
-        $tmp = download_url( $this->localPathToUrl( $abs_path ) );
-        if ( is_wp_error( $tmp ) ) {
-            // Fallback: copy file directly.
-            $tmp = wp_tempnam();
-            // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-            @copy( $abs_path, $tmp );
-        }
-
-        if ( ! is_file( $tmp ) ) {
+        // Copy to a temp file so WP can sideload it safely (no HTTP roundtrip).
+        $tmp = wp_tempnam( basename( $oc_image_rel_path ) );
+        if ( ! @copy( $abs_path, $tmp ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+            @unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+            $this->logger->warning( "[manufacturers] Could not copy brand image: {$oc_image_rel_path}" );
             return;
         }
 
@@ -295,9 +295,14 @@ class ManufacturerMigrator extends AbstractMigrator {
         ];
 
         $attachment_id = media_handle_sideload( $file_array, 0 );
+
+        // Clean up temp file if sideload didn't consume it.
+        if ( file_exists( $tmp ) ) {
+            @unlink( $tmp ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+        }
+
         if ( is_wp_error( $attachment_id ) ) {
-            // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-            @unlink( $tmp );
+            $this->logger->warning( "[manufacturers] media_handle_sideload failed for brand image: " . $attachment_id->get_error_message() );
             return;
         }
 
@@ -310,27 +315,6 @@ class ManufacturerMigrator extends AbstractMigrator {
         update_term_meta( $term_id, 'image_id',          $attachment_id ); // some themes
 
         $this->logger->debug( "[manufacturers] Imported brand image as attachment #{$attachment_id} for term #{$term_id}" );
-    }
-
-    /**
-     * Convert an absolute server path to a local URL (used only when download_url isn't available).
-     */
-    private function localPathToUrl( string $abs_path ): string {
-        $upload_dir = wp_upload_dir();
-        // Try to map via uploads base.
-        if ( strpos( $abs_path, $upload_dir['basedir'] ) === 0 ) {
-            return str_replace( $upload_dir['basedir'], $upload_dir['baseurl'], $abs_path );
-        }
-        // Use first candidate URL from OC shop URL.
-        $shop_url = $this->config['opencart']['shop_url'] ?? '';
-        if ( $shop_url ) {
-            $oc_image_path = $this->config['opencart']['image_path'] ?? '';
-            if ( $oc_image_path ) {
-                $rel = str_replace( $oc_image_path, '', $abs_path );
-                return rtrim( $shop_url, '/' ) . '/image/' . ltrim( $rel, '/' );
-            }
-        }
-        return '';
     }
 
     // ── Secondary language storage ────────────────────────────────────────────

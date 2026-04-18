@@ -276,6 +276,10 @@ class MigrationManager {
                 continue;
             }
 
+            // Diagnostic: log which migrator runs on each chunk with its offset/total.
+            $cp_offset = $this->checkpoint->getProcessedCount( $key );
+            $this->logger->info( "Chunk dispatching [{$key}]: processed_so_far={$cp_offset}" );
+
             // Run ONE batch of this migrator.
             try {
                 $chunk = $this->runMigratorChunk( $key );
