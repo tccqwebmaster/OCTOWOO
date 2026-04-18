@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.4
+Stable tag: 2.4.5
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -147,6 +147,10 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.5 =
+* **Fixed:** Duplicate WooCommerce categories/products no longer created on re-runs. Two-stage guard: (1) `wp_insert_term` `term_exists` error now resolves the existing term directly from WP_Error data instead of a stale slug lookup; (2) `term_exists(name, 'product_cat', parent)` last-resort check before creation backfills the id_map and skips per policy.
+* **Fixed:** AJAX dispatch logger no longer logs high-frequency `octowoo_get_progress` and `octowoo_get_logs` polling calls, eliminating log noise and unnecessary DB writes during active migrations.
 
 = 2.4.4 =
 * **Fixed:** Added PHP Fatal error shutdown handler in chunk runner — captures memory exhaustion, class-not-found, and parse errors that bypass try/catch, logs them to the OctoWoo log table, and returns a structured JSON error so the JS UI displays the actual error message instead of a generic "HTTP 500".
