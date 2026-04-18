@@ -295,6 +295,16 @@ class Validator {
 
     private function checkImagePath(): array {
         $image_path = trim( $this->config['opencart']['image_path'] ?? '' );
+        $run_images = (bool) ( $this->config['migration']['run_images'] ?? true );
+
+        if ( ! $run_images ) {
+            return $this->result(
+                self::STATUS_WARNING,
+                __( 'Image migration is disabled for this run. You can migrate products now and import images later.', 'octowoo' ),
+                null,
+                __( 'Re-enable image migration and configure a readable OpenCart Image Path when ready.', 'octowoo' )
+            );
+        }
 
         if ( $image_path === '' ) {
             return $this->result(
