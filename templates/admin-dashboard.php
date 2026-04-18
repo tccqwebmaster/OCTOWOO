@@ -235,6 +235,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="button" id="ow-btn-start" class="ow-btn ow-btn-primary">
                     ▶ <?php esc_html_e( 'Start Full Migration', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-images-only" class="ow-btn ow-btn-secondary">
+                    🖼 <?php esc_html_e( 'Images-Only Recovery', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ! $active_run ? 'disabled' : ''; ?>>
                     ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
                 </button>

@@ -58,6 +58,7 @@
         $btnReset.on('click', resetMigration);
 
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
+        $('#ow-btn-images-only').on('click', startImagesOnlyRecovery);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -610,7 +611,7 @@
         return list.join(',');
     }
 
-    function startMigration(resume, isDemo) {
+    function startMigration(resume, isDemo, forcedMigrators, customModeLabel) {
         if (isRunning) { return; }
 
         if (resume && (isPausedState || currentRunId)) {
@@ -619,15 +620,15 @@
                 nonce:  octoWoo.nonce,
                 run_id: currentRunId,
             }).always(function () {
-                startMigrationInternal(resume, isDemo);
+                startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel);
             });
             return;
         }
 
-        startMigrationInternal(resume, isDemo);
+        startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel);
     }
 
-    function startMigrationInternal(resume, isDemo) {
+    function startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel) {
         if (isRunning) { return; }
 
         isPausedState = false;
@@ -637,11 +638,11 @@
         if (!resume) {
             const modeStr = isDemo
                 ? 'Demo Migration (first 20 items per entity)'
-                : 'Full Migration';
+                : (customModeLabel || 'Full Migration');
             if (!confirm('Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.')) { return; }
         }
 
-        chunkMigrators = buildMigrators();
+        chunkMigrators = forcedMigrators || buildMigrators();
         chunkDryRun    = 0;
         chunkDemoLimit = demoLimitVal;
 
@@ -661,6 +662,12 @@
         // returns active:false for the OLD finished run, and the JS callback
         // shows "Migration completed!" before the first chunk even finishes.
         runNextChunk();
+    }
+
+    function startImagesOnlyRecovery() {
+        // Intentionally force only the images migrator so admins can recover
+        // media attachments after uploading source files later.
+        startMigration(false, false, 'images', 'Images-Only Recovery');
     }
 
     function runNextChunk() {
@@ -1148,21 +1155,26 @@
 
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
+        const $btnImagesOnly = $('#ow-btn-images-only');
+
         if (state === 'running') {
             $btnStart.prop('disabled', true)
                 .html('<span class="ow-spinner"></span>&nbsp; Running…');
+            $btnImagesOnly.prop('disabled', true);
             $btnResume.prop('disabled', true);
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', false);
             $btnSkip.prop('disabled', false);
         } else if (state === 'paused') {
             $btnStart.prop('disabled', true).text('▶ Start Full Migration');
+            $btnImagesOnly.prop('disabled', true);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', false);
         } else {
             $btnStart.prop('disabled', false).text('▶ Start Full Migration');
+            $btnImagesOnly.prop('disabled', false);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', true);
             $btnPause.prop('disabled', true);
