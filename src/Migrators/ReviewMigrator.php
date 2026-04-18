@@ -43,7 +43,7 @@ class ReviewMigrator extends AbstractMigrator {
 
         $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
             return $this->oc->fetchBatch(
-                "SELECT review_id, product_id, customer_id, author, author_email,
+                "SELECT review_id, product_id, customer_id, author,
                         `text`, rating, `status`, date_added
                  FROM `{$pfx}review`
                  ORDER BY review_id ASC",

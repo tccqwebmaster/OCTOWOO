@@ -37,6 +37,7 @@ class SeoMigrator extends AbstractMigrator {
     public function migrate(): array {
         $pfx       = $this->pfx();
         $resume_id = $this->checkpoint->getLastId( self::KEY );
+        $demo_limit = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
 
         if ( $resume_id === PHP_INT_MAX ) {
             $this->logger->info( '[seo] Already completed – skipping.' );
@@ -67,10 +68,18 @@ class SeoMigrator extends AbstractMigrator {
             [ $this->langId() ]
         );
 
+                if ( $demo_limit > 0 && count( $rows ) > $demo_limit ) {
+                        $rows = array_slice( $rows, 0, $demo_limit );
+                        $this->logger->info( "[seo] Demo limit active: processing first {$demo_limit} rows." );
+                }
+
         $this->checkpoint->init( self::KEY, count( $rows ) );
         $this->checkpoint->start( self::KEY );
 
+                $last_id = 0;
+
         foreach ( $rows as $row ) {
+            $last_id = max( $last_id, (int) ( $row['seo_url_id'] ?? 0 ) );
             $result = $this->processSeoRow( $row );
             if ( $result === true ) {
                 $stats['processed']++;
@@ -80,6 +89,8 @@ class SeoMigrator extends AbstractMigrator {
                 $stats['skipped']++;
             }
         }
+
+        $this->checkpoint->update( self::KEY, $last_id, count( $rows ) );
 
         // Write all collected redirects to persistent storage.
         $this->persistRedirects();
