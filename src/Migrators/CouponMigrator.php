@@ -20,7 +20,11 @@ defined( 'ABSPATH' ) || exit;
 
 class CouponMigrator extends AbstractMigrator {
 
-    private const KEY = 'coupon';
+    /** Checkpoint key (matches MigrationManager order/config key). */
+    private const KEY = 'coupons';
+
+    /** Stable ID-map entity key used for cross-migrator references. */
+    private const MAP_KEY = 'coupon';
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -72,7 +76,7 @@ class CouponMigrator extends AbstractMigrator {
         // Duplicate check by coupon code.
         $existing_post = $this->findCouponByCode( $code );
         if ( $existing_post ) {
-            $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing_post );
+            $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_post );
             if ( $this->onDuplicate() === 'update' ) {
                 return $this->updateCoupon( $existing_post, $row, $coupon_products[ $oc_id ] ?? [] );
             }
@@ -81,7 +85,7 @@ class CouponMigrator extends AbstractMigrator {
         }
 
         // Map by checkpoint.
-        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
         if ( $existing_wc_id ) {
             $this->logger->debug( "[coupons] Already migrated OC #{$oc_id} – skipping." );
             return false;
@@ -118,7 +122,7 @@ class CouponMigrator extends AbstractMigrator {
         }
 
         $this->writeCouponMeta( $post_id, $discount_type, $amount, $row, $products );
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $post_id );
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $post_id );
 
         $this->logger->info( "[coupons] Created WC coupon #{$post_id}: [{$code}] ({$discount_type})" );
         return true;

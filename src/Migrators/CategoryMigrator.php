@@ -27,8 +27,11 @@ defined( 'ABSPATH' ) || exit;
 
 class CategoryMigrator extends AbstractMigrator {
 
-    /** Migrator key used in checkpoints, logs, ID map. */
-    private const KEY = 'category';
+    /** Migrator key used in checkpoints/logs (must match MigrationManager key). */
+    private const KEY = 'categories';
+
+    /** Entity key used in the OC->WC ID map (kept stable for cross-migrator lookups). */
+    private const MAP_KEY = 'category';
 
     /** @var ImageMigrator Shared image importer instance. */
     private ImageMigrator $imageMigrator;
@@ -124,11 +127,11 @@ class CategoryMigrator extends AbstractMigrator {
         // Resolve WC parent term ID.
         $wc_parent = 0;
         if ( $oc_parent > 0 ) {
-            $wc_parent = (int) ( $this->checkpoint->getWcId( self::KEY, $oc_parent ) ?? 0 );
+            $wc_parent = (int) ( $this->checkpoint->getWcId( self::MAP_KEY, $oc_parent ) ?? 0 );
         }
 
         // Duplicate check.
-        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
 
         // Last-resort guard: even if id_map and OC-meta are both empty (e.g. after
         // a Reset, or when the store already had a matching category), look up the
@@ -138,7 +141,7 @@ class CategoryMigrator extends AbstractMigrator {
             if ( ! empty( $existing_term['term_id'] ) ) {
                 $existing_wc_id = (int) $existing_term['term_id'];
                 // Backfill the map so future lookups are instant.
-                $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing_wc_id );
+                $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );
                 $this->logger->info( "[categories] Found existing WC term #{$existing_wc_id} by name for OC #{$oc_id} – backfilled id_map." );
             }
         }
@@ -194,7 +197,7 @@ class CategoryMigrator extends AbstractMigrator {
                 $existing    = $existing_id > 0 ? get_term( $existing_id, 'product_cat' ) : null;
 
                 if ( $existing && ! is_wp_error( $existing ) ) {
-                    $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing->term_id );
+                    $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing->term_id );
                     $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image );
                     $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id} (term_exists)." );
                     return true;
@@ -211,7 +214,7 @@ class CategoryMigrator extends AbstractMigrator {
         $wc_term_id = (int) $result['term_id'];
 
         $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image );
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $wc_term_id );
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_term_id );
 
         $this->logger->info( "[categories] Created WC term #{$wc_term_id} from OC #{$oc_id}: \"{$name}\"" );
         return true;

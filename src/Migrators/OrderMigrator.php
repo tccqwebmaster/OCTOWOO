@@ -23,7 +23,11 @@ defined( 'ABSPATH' ) || exit;
 
 class OrderMigrator extends AbstractMigrator {
 
-    private const KEY = 'order';
+    /** Checkpoint key (matches MigrationManager order/config key). */
+    private const KEY = 'orders';
+
+    /** Stable ID-map entity key used by lookups and legacy mappings. */
+    private const MAP_KEY = 'order';
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -90,7 +94,7 @@ class OrderMigrator extends AbstractMigrator {
         $oc_id = (int) $row['order_id'];
 
         // Duplicate check.
-        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
         if ( $existing_wc_id ) {
             $this->logger->debug( "[orders] Already migrated OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;
@@ -255,7 +259,7 @@ class OrderMigrator extends AbstractMigrator {
             false
         );
 
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $wc_order_id );
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_order_id );
 
         $wpdb->query( 'COMMIT' );
 

@@ -24,7 +24,11 @@ defined( 'ABSPATH' ) || exit;
 
 class CustomerMigrator extends AbstractMigrator {
 
-    private const KEY = 'customer';
+    /** Checkpoint key (matches MigrationManager order/config key). */
+    private const KEY = 'customers';
+
+    /** Stable ID-map entity key used by dependent migrators (orders/reviews). */
+    private const MAP_KEY = 'customer';
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -90,7 +94,7 @@ class CustomerMigrator extends AbstractMigrator {
 
         if ( $existing_wp_user ) {
             // Map the existing WP user.
-            $this->checkpoint->saveIdMap( self::KEY, $oc_id, $existing_wp_user->ID );
+            $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wp_user->ID );
 
             if ( $this->onDuplicate() === 'update' ) {
                 $this->updateCustomerMeta( $existing_wp_user->ID, $row, $addresses, $countries, $zones );
@@ -103,7 +107,7 @@ class CustomerMigrator extends AbstractMigrator {
         }
 
         // Check by octowoo_oc_id meta (previous run mapped to a user).
-        $mapped_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $mapped_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
         if ( $mapped_wc_id ) {
             $this->logger->debug( "[customers] Already migrated OC #{$oc_id} → WP #{$mapped_wc_id} – skipping." );
             return false;
@@ -173,7 +177,7 @@ class CustomerMigrator extends AbstractMigrator {
 
         update_user_meta( $user_id, '_octowoo_oc_id', $oc_id );
 
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $user_id );
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $user_id );
 
         $this->logger->info( "[customers] Created WP user #{$user_id} (OC #{$oc_id}): {$email}" );
         return true;

@@ -22,7 +22,11 @@ defined( 'ABSPATH' ) || exit;
 
 class ProductMigrator extends AbstractMigrator {
 
-    private const KEY = 'product';
+    /** Checkpoint key (matches MigrationManager order/config key). */
+    private const KEY = 'products';
+
+    /** ID-map entity key used by other migrators (orders, coupons, etc.). */
+    private const MAP_KEY = 'product';
 
     /** @var ImageMigrator Shared image importer instance. */
     private ImageMigrator $imageMigrator;
@@ -141,7 +145,7 @@ class ProductMigrator extends AbstractMigrator {
 
         // Duplicate check: first by OC ID mapping (fast), then by SKU
         // (catches products that exist in WC but weren't tagged by OctoWoo).
-        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
 
         if ( ! $existing_wc_id ) {
             $sku = sanitize_text_field( $row['sku'] ?: $row['model'] );
@@ -150,7 +154,7 @@ class ProductMigrator extends AbstractMigrator {
                 if ( $by_sku > 0 ) {
                     $existing_wc_id = $by_sku;
                     // Cache so future runs use the fast OC-ID path.
-                    $this->checkpoint->saveIdMap( self::KEY, $oc_id, $by_sku );
+                    $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $by_sku );
                     $this->logger->debug( "[products] SKU match '{$sku}' OC #{$oc_id} → WC #{$by_sku}." );
                 }
             }
@@ -344,7 +348,7 @@ class ProductMigrator extends AbstractMigrator {
         // Transient cleanup is deferred to end of batch (migrate() calls wp_cache_flush()).
         // wc_delete_product_transients( $post_id ) intentionally omitted here for performance.
 
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $post_id );
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $post_id );
 
         $wpdb->query( 'COMMIT' );
 
