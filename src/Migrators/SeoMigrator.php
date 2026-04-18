@@ -53,6 +53,9 @@ class SeoMigrator extends AbstractMigrator {
 
         if ( ! $table_exists ) {
             $this->logger->warning( '[seo] oc_seo_url table not found – skipping SEO migration.' );
+            $this->checkpoint->init( self::KEY, 0 );
+            $this->checkpoint->start( self::KEY );
+            $this->checkpoint->complete( self::KEY );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }
 

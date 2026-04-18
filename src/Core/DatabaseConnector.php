@@ -88,6 +88,13 @@ class DatabaseConnector {
                 $password,
                 $options
             );
+
+            // Local mode can have either "octowoo_oc_" (plugin-imported SQL)
+            // or plain "oc_" tables (manually imported dumps). Auto-detect
+            // a working prefix so migrations don't fail with table-not-found.
+            if ( ( $this->config['source'] ?? 'remote' ) === 'local' ) {
+                $this->resolveLocalPrefix();
+            }
         } catch ( \PDOException $e ) {
             $msg = $e->getMessage();
             // Error 1698: root user is configured with auth_socket / unix_socket plugin.
@@ -104,6 +111,57 @@ class DatabaseConnector {
                 (int) $e->getCode()
             );
         }
+    }
+
+    /**
+     * Resolve the best table prefix for local mode.
+     */
+    private function resolveLocalPrefix(): void {
+        if ( $this->pdo === null ) {
+            return;
+        }
+
+        $current = (string) $this->prefix;
+
+        $candidates = [ $current, SqlImporter::IMPORT_PREFIX, 'oc_' ];
+
+        // If current prefix starts with "octowoo_", also try stripped variant.
+        if ( strpos( $current, 'octowoo_' ) === 0 ) {
+            $candidates[] = substr( $current, strlen( 'octowoo_' ) );
+        }
+
+        $candidates = array_values( array_unique( array_filter( $candidates ) ) );
+
+        foreach ( $candidates as $candidate ) {
+            if ( $this->prefixLooksValid( $candidate ) ) {
+                $this->prefix = $candidate;
+                return;
+            }
+        }
+    }
+
+    /**
+     * Lightweight prefix validity check against common OC tables.
+     */
+    private function prefixLooksValid( string $prefix ): bool {
+        if ( $this->pdo === null || $prefix === '' ) {
+            return false;
+        }
+
+        $sql = "SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE()
+                  AND table_name IN (?, ?, ?, ?)";
+
+        $stmt = $this->pdo->prepare( $sql );
+        $stmt->execute( [
+            $prefix . 'product',
+            $prefix . 'category',
+            $prefix . 'customer',
+            $prefix . 'order',
+        ] );
+
+        return (int) $stmt->fetchColumn() >= 2;
     }
 
     /**

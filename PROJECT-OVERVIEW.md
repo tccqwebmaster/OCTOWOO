@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.19  
+**Version:** 2.4.20  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,10 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.20 – Local prefix autodetect + SEO loop guard
+- **Bug fix:** In local mode, DB connector now auto-detects available OpenCart table prefix (`octowoo_oc_` or `oc_`) so manual SQL imports work without table-not-found failures.
+- **Bug fix:** `SeoMigrator` now completes its checkpoint when `seo_url` table is missing, preventing repeated dispatch of `seo` chunks.
 
 ### v2.4.19 – Related migrator demo-limit fix
 - **Bug fix:** `RelatedProductsMigrator` now honors `demo_limit`, so demo runs do not process the full related dataset.
