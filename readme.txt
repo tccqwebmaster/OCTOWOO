@@ -114,9 +114,45 @@ Click **Resume**. OctoWoo records the last successfully processed ID for every m
 
 Yes. Use the **Purge** section to delete migrated entities by type. By default only items created by OctoWoo (tagged with `_octowoo_oc_id`) are removed, leaving your manually-created content untouched. A **Force** option removes all entities of that type.
 
+If Purge reports **0 items deleted** even though WooCommerce data exists, it usually means the OctoWoo tag was not saved (common after using Reset Progress, which clears the id-map). In that case enable **☢ Force Purge All WooCommerce Data** and run Purge again. The plugin will also show a yellow warning message explaining exactly how many untagged items were found.
+
 = Does it migrate customer passwords? =
 
-Optionally. Enable **Migrate OC passwords** in Settings. OctoWoo stores the OpenCart password hash in user meta and validates it on the customer's first WP login. On successful validation the hash is automatically upgraded to WordPress's own format. Subsequent logins use native WP authentication.
+Optionally. Enable **Try OC password hash on login** in Settings. OctoWoo stores the OpenCart password hash in user meta and validates it on the customer’s first WP login. On successful validation the hash is automatically upgraded to WordPress’s own format. Subsequent logins use native WP authentication — no manual password reset is needed for customers who remember their old password.
+
+Note: this covers OpenCart’s standard `sha1(md5(salt + password))` hashing only. Custom or third-party hashing schemes are not supported.
+
+= Will my Google rankings be affected after switching domains? =
+
+No, if you run the SEO migrator. OctoWoo’s `SeoMigrator` does two things that protect your Google position:
+
+1. **Slug preservation** — every product and category slug in WooCommerce is updated to match the original OpenCart SEO keyword, so the URL path stays identical.
+2. **301 redirects** — old OpenCart query-string URLs (`/index.php?route=product/product&product_id=X`) are redirected with HTTP 301 to the new WooCommerce URLs. Rules are written to both `.htaccess` (Apache) and a WordPress `template_redirect` hook (works on all servers).
+
+Google’s crawler will follow the 301s and transfer link equity to the new URLs. After switching `www.tccq.com` to point at WordPress, visitors who click old Google results will be seamlessly redirected — no 404 errors.
+
+= The migration is stuck and not progressing past the first batch. What do I do? =
+
+This was a known issue with the **Manufacturers** migrator (fixed in v2.4.10). The product-assignment phase was running after every 20-item chunk, scanning thousands of products each time and causing a PHP timeout. After upgrading to v2.4.10:
+
+1. Click **Cancel Background** (if running).
+2. Click **Reset Progress** to clear the stale state.
+3. Start a fresh Background migration.
+
+For other migrators, if you still see a stuck run: check the Logs tab for error messages, reduce **Batch Size** in Settings (try 10), and use Background Mode so individual chunk timeouts don’t abort the whole run.
+
+= How do I tell which version of OctoWoo is installed? =
+
+The version is shown in two places in the admin panel: right-aligned in the page header next to the plugin title, and in a small line at the bottom of the page. It reads directly from the plugin constant so it always matches the installed code.
+
+= The "migration in progress" banner won’t go away after Abort. =
+
+This was fixed in v2.4.6 and v2.4.7. The lock is now self-healing:
+
+* If all checkpoint rows are in terminal states (completed/failed/aborted), the lock clears on the next page load.
+* If the checkpoint rows are more than 2 hours old (regardless of status), the lock is force-cleared.
+
+If you are still on an older version, click **Reset Progress** — it force-aborts any active run and clears all state unconditionally.
 
 = My server has a short PHP execution time limit. What should I do? =
 
@@ -157,7 +193,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Improved:** Detailed warnings are also written to the migration log so the cause is visible in the Logs tab.
 
 = 2.4.8 =
-* **Fixed:** Purge now bacfkills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting items. Categories, products, and other entities imported by older versions of the plugin (where a slug-lookup bug prevented the meta from being saved) will now be found and deleted correctly instead of showing "0 item(s) deleted".
+* **Fixed:** Purge now backfills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting items. Categories, products, and other entities imported by older versions of the plugin (where a slug-lookup bug prevented the meta from being saved) will now be found and deleted correctly instead of showing "0 item(s) deleted".
 
 = 2.4.7 =
 * **Fixed:** `getActiveRunId()` now has a time-based stale detection fallback. If any run's checkpoint rows have a `MAX(updated_at)` older than 2 hours, the lock is auto-cleared on the next page load — even if the rows are still showing `running`/`pending` status (e.g. old runs that were never properly closed by the old code). This permanently resolves the "migration in progress" banner for existing stale runs like ones from previous days without requiring any button click.

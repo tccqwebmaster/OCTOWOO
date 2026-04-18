@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.3.2  
+**Version:** 2.4.10  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -333,7 +333,49 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 
 ---
 
-## 15. Known Issues & Limitations
+## 15. Changelog Summary (v2.4.x)
+
+All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.10 – Manufacturer migration stuck fix
+- **Bug fix:** `ManufacturerMigrator::assignManufacturersToProducts()` was called after every 20-item chunk. On stores with 4,000+ products this scanned the entire product table on each chunk, causing PHP timeouts and leaving the background migration permanently stuck at the first batch (e.g. 20/117). The product-assignment phase is now deferred to run only once, after the final manufacturer chunk completes (`is_done = true`).
+
+### v2.4.10 – Admin version display
+- **New feature:** Plugin version (`OCTOWOO_VERSION`) is now displayed in two places in the admin UI: right-aligned in the page header next to the plugin title, and in a small footer line below the entire panel. Both read directly from the constant, so they always stay current with the deployed code.
+
+### v2.4.9 – Purge diagnostic hint when id_map is empty
+- **Bug fix / UX:** When `purge()` deletes 0 items in tagged mode but WooCommerce items of that type do exist, the UI now shows a yellow warning: *"N item(s) exist in WooCommerce but have no OctoWoo tag (id-map was reset or meta was never saved). Enable ☢ Force Purge to remove them."*
+- **New:** `DataPurger::countEntityItems()` — returns `{total, tagged}` counts per entity type.
+- **New:** `DataPurger::purge()` return shape changed to `{results, diagnostics}` (BC-safe; AJAX handler unwraps it).
+- **New:** `hints` array added to the AJAX success response; JS renders each hint as a paragraph below the result line.
+- **Improved:** Detailed warning also written to the migration log (visible in the Logs tab).
+
+### v2.4.8 – Repair missing `_octowoo_oc_id` meta before purge
+- **Bug fix:** Items imported by pre-v2.4.5 code could exist in the `octowoo_id_map` table but have no `_octowoo_oc_id` termmeta/postmeta (the old `term_exists` slug-lookup bug skipped `addTermMeta()`). The tagged purge therefore found nothing to delete.
+- **New:** `DataPurger::repairMetaFromIdMap()` — walks every `octowoo_id_map` row and backfills missing meta using `update_term_meta` (term entities) or `update_post_meta` (post entities) before the deletion sweep. Idempotent.
+- Called automatically at the start of every non-force `purge()` invocation.
+
+### v2.4.7 – Time-based stale run detection
+- **Bug fix:** `CheckpointManager::getActiveRunId()` added a third self-healing condition: if any checkpoint row's `MAX(updated_at)` is older than 2 hours, the active-run lock is auto-cleared regardless of row status. This handles runs whose `running`/`pending` rows were never closed by old abort code.
+- Condition C also handles the case where no rows exist but `octowoo_run_started_at` is more than 2 hours old.
+
+### v2.4.6 – Abort / Reset / stale lock chain fixed
+- **Bug fix:** `actionAbortMigration` now calls `BackgroundProcessor::abort()` first (cancels AS jobs), then marks both `running` and `pending` checkpoint rows as `aborted`. Previously AS would re-queue the next batch 5 s later and call `markRunActive()` again, making the banner reappear on refresh.
+- **Bug fix:** `actionResetMigration` no longer hard-blocks when `getActiveRunId()` returns a value. It force-aborts the active run first, then deletes all checkpoint and id_map rows for both active and last run IDs. Also deletes `octowoo_run_started_at` and `octowoo_db_lock` options.
+- **Bug fix:** `CheckpointManager::getActiveRunId()` is self-healing: if all checkpoint rows for the stored run are in terminal states (`completed`, `failed`, `aborted`), the lock is cleared automatically (no manual intervention needed).
+- **Bug fix:** `actionPurgeImported` no longer hard-blocks; it benefits from the self-healing `getActiveRunId()`.
+
+### v2.4.5 – Duplicate category prevention
+- **Bug fix (createCategory):** The `term_exists` WP_Error handler now resolves the colliding term via `$result->get_error_data('term_exists')` (correct existing term_id) instead of `get_term_by('slug', $uniquified_slug)` (which returned null because the existing term had the original slug, not the suffixed one).
+- **Bug fix (processCategory):** Added a `term_exists(name, 'product_cat', parent)` guard before any `wp_insert_term` attempt. If a matching term is found by name+parent, the id_map is backfilled and the item is counted as a skip — preventing creation of duplicate terms on large re-runs.
+- These two fixes together eliminate the "1 Year Warranty (0) × 3" class of duplicates.
+
+### v2.4.5 – Dispatch log noise suppression
+- **Bug fix:** `AjaxHandler::dispatch()` was logging every AJAX action including the high-frequency polling calls (`octowoo_get_progress`, `octowoo_get_logs` every ~3 s). Added a `$skip_log_actions` guard to suppress these, eliminating the flood of `[INFO] dispatch: octowoo_get_progress` entries in logs and unnecessary DB writes.
+
+---
+
+## 16. Known Issues & Limitations
 
 ### 15.1 Variable Products / Variations
 - OC "options" map to WC attribute/variation combinations. Complex OC option configurations (e.g. options linked to images, file-upload options, date options) are **not migrated** — only `select` and `radio` type options are converted to variations.
@@ -385,7 +427,7 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 
 ---
 
-## 16. Security Measures Already Implemented
+## 17. Security Measures Already Implemented
 
 - All AJAX handlers verify a nonce (`octowoo_ajax`) before executing.
 - All AJAX handlers check capability (`manage_woocommerce`).
@@ -400,7 +442,7 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 
 ---
 
-## 17. Extension Points for Add-on Developers
+## 18. Extension Points for Add-on Developers
 
 ```php
 // Modify product data before insert/update
