@@ -28,6 +28,9 @@ class ImageMigrator extends AbstractMigrator {
     /** Sub-folder inside uploads directory. */
     private const UPLOAD_SUBDIR = 'opencart-migration';
 
+    /** Prevent repeating the same local-path warning for every image row. */
+    private bool $localPathWarningLogged = false;
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     /**
@@ -164,7 +167,14 @@ class ImageMigrator extends AbstractMigrator {
             return $cached;
         }
 
+        $is_local_source = ( $this->config['opencart']['image_source'] ?? 'remote' ) === 'local';
+
         $abs_source = $this->resolveSourcePath( $oc_path );
+
+        // Local mode with an unavailable base path should not spam retries.
+        if ( $is_local_source && ! $abs_source ) {
+            return null;
+        }
 
         // Strategy 1: local filesystem.
         if ( $abs_source && file_exists( $abs_source ) ) {
@@ -182,6 +192,13 @@ class ImageMigrator extends AbstractMigrator {
             }
 
             return $this->sideloadFile( $abs_source, $oc_path, $hash );
+        }
+
+        // In local-source mode we intentionally skip remote fallback when files are
+        // not accessible on this server (e.g. path not mounted / unreadable).
+        if ( $is_local_source ) {
+            $this->logger->debug( "[images] Local source file missing; skipping image: {$oc_path}" );
+            return null;
         }
 
         // Local file not present — attempt remote fetch strategies.
@@ -342,12 +359,26 @@ class ImageMigrator extends AbstractMigrator {
         }
 
         if ( empty( $image_base ) ) {
-            $this->logger->warning( '[images] opencart.image_path is not configured.' );
+            if ( ! $this->localPathWarningLogged ) {
+                $this->logger->warning( '[images] opencart.image_path is not configured. Image imports will be skipped.' );
+                $this->localPathWarningLogged = true;
+            }
             return null;
         }
 
         // Cloudways path normalization (/home vs /mnt/data/home).
         $image_base = $this->resolveImageBasePath( $image_base );
+
+        if ( ! is_dir( $image_base ) || ! is_readable( $image_base ) ) {
+            if ( ! $this->localPathWarningLogged ) {
+                $this->logger->warning(
+                    "[images] Local image path unavailable or unreadable: {$image_base}. " .
+                    'Image imports will be skipped for this run.'
+                );
+                $this->localPathWarningLogged = true;
+            }
+            return null;
+        }
 
         // Prevent directory traversal.
         $safe = ltrim( str_replace( '\\', '/', $oc_path ), '/' );
