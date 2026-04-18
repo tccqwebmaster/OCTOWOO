@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.8
+Stable tag: 2.4.9
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -147,6 +147,11 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.9 =
+* **Fixed:** Purge now detects when WooCommerce items exist but have no OctoWoo tag (e.g. after using Reset Progress which clears the id-map). Instead of silently returning "0 deleted", the UI now shows a clear warning: "N item(s) exist in WooCommerce but have no OctoWoo tag — enable Force Purge to remove them."
+* **Improved:** `DataPurger::purge()` returns per-entity diagnostic counts (total WC items vs. tagged items) alongside deletion results.
+* **Improved:** Detailed warnings are also written to the migration log so the cause is visible in the Logs tab.
 
 = 2.4.8 =
 * **Fixed:** Purge now bacfkills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting items. Categories, products, and other entities imported by older versions of the plugin (where a slug-lookup bug prevented the meta from being saved) will now be found and deleted correctly instead of showing "0 item(s) deleted".

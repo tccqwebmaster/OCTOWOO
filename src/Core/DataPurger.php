@@ -28,7 +28,7 @@ class DataPurger {
      * @param  string[] $entities  Entity keys to purge.
      * @param  bool     $force     When true, delete ALL WooCommerce data of each type,
      *                             not just items that were imported by OctoWoo.
-     * @return array<string, int>  entity => number of items deleted
+     * @return array{results: array<string,int>, diagnostics: array<string,array{total:int,tagged:int}>}
      */
     public function purge( array $entities, bool $force = false ): array {
         // Before purging: backfill any missing _octowoo_oc_id meta from the id_map
@@ -40,7 +40,8 @@ class DataPurger {
             $this->repairMetaFromIdMap();
         }
 
-        $results = [];
+        $results     = [];
+        $diagnostics = [];
 
         $map = [
             'products'      => 'purgeProducts',
@@ -66,9 +67,24 @@ class DataPurger {
             $count = $this->$method( $force );
             $results[ $entity ] = $count;
             $this->logger->info( "[purge] Finished purge: {$entity} — {$count} item(s) deleted." );
+
+            // When nothing was deleted in tagged mode, collect a diagnostic count
+            // (total WC items vs. how many carry the OctoWoo tag) so the caller can
+            // advise the user whether Force Purge is needed.
+            if ( ! $force && $count === 0 ) {
+                $diagnostics[ $entity ] = $this->countEntityItems( $entity );
+                $total_wc   = $diagnostics[ $entity ]['total'];
+                $total_tag  = $diagnostics[ $entity ]['tagged'];
+                if ( $total_wc > 0 && $total_tag === 0 ) {
+                    $this->logger->warning(
+                        "[purge] {$entity}: {$total_wc} item(s) exist in WooCommerce but NONE carry the " .
+                        "_octowoo_oc_id tag (id_map may have been reset). Use Force Purge to remove them."
+                    );
+                }
+            }
         }
 
-        return $results;
+        return [ 'results' => $results, 'diagnostics' => $diagnostics ];
     }
 
     // ── Products ──────────────────────────────────────────────────────────────
@@ -394,6 +410,85 @@ class DataPurger {
     }
 
     // ── Meta repair ───────────────────────────────────────────────────────────
+
+    /**
+     * Return how many WC items of the given entity type exist in total,
+     * and how many of those carry the _octowoo_oc_id tag.
+     *
+     * Used to generate a helpful "use Force Purge" hint when tagged purge finds 0.
+     *
+     * @return array{total: int, tagged: int}
+     */
+    private function countEntityItems( string $entity ): array {
+        global $wpdb;
+
+        switch ( $entity ) {
+            case 'categories':
+                $total  = (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                    'product_cat'
+                ) );
+                $tagged = (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s",
+                    'product_cat'
+                ) );
+                return [ 'total' => $total, 'tagged' => $tagged ];
+
+            case 'tags':
+                $total  = (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                    'product_tag'
+                ) );
+                $tagged = (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s",
+                    'product_tag'
+                ) );
+                return [ 'total' => $total, 'tagged' => $tagged ];
+
+            case 'products':
+                $total  = (int) $wpdb->get_var(
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'"
+                );
+                $tagged = (int) $wpdb->get_var(
+                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
+                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                     WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'product'"
+                );
+                return [ 'total' => $total, 'tagged' => $tagged ];
+
+            case 'coupons':
+                $total  = (int) $wpdb->get_var(
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'"
+                );
+                $tagged = (int) $wpdb->get_var(
+                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
+                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                     WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'shop_coupon'"
+                );
+                return [ 'total' => $total, 'tagged' => $tagged ];
+
+            case 'orders':
+                // Just count all shop_orders; exact tagged count requires meta_query (slow).
+                $total = (int) $wpdb->get_var(
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'"
+                );
+                return [ 'total' => $total, 'tagged' => 0 ];
+
+            case 'customers':
+                $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" );
+                $tagged = (int) $wpdb->get_var(
+                    "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'"
+                );
+                return [ 'total' => $total, 'tagged' => $tagged ];
+
+            default:
+                return [ 'total' => 0, 'tagged' => 0 ];
+        }
+    }
 
     /**
      * Backfill missing _octowoo_oc_id meta from the id_map table.

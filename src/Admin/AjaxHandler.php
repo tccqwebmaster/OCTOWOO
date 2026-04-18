@@ -1006,7 +1006,25 @@ class AjaxHandler {
 
         $results = $purger->purge( $entities, $force );
 
-        $total = array_sum( $results );
+        // purge() now returns [ 'results' => [...], 'diagnostics' => [...] ]
+        $breakdown   = $results['results']     ?? $results; // BC-safe if array is flat
+        $diagnostics = $results['diagnostics'] ?? [];
+
+        $total = array_sum( $breakdown );
+
+        // Build human-readable hints for entities where 0 were deleted but
+        // WC items do exist (id_map has been reset / meta was never saved).
+        $hints = [];
+        foreach ( $diagnostics as $entity => $counts ) {
+            if ( $counts['total'] > 0 && $counts['tagged'] === 0 ) {
+                /* translators: 1: entity name, 2: total WC count */
+                $hints[] = sprintf(
+                    __( '%1$s: %2$d item(s) exist in WooCommerce but have no OctoWoo tag (id-map was reset or meta was never saved). Enable ☢ Force Purge to remove them.', 'octowoo' ),
+                    $entity,
+                    $counts['total']
+                );
+            }
+        }
 
         wp_send_json_success( [
             'message' => sprintf(
@@ -1014,7 +1032,8 @@ class AjaxHandler {
                 __( 'Purge complete: %d item(s) deleted.', 'octowoo' ),
                 $total
             ),
-            'results' => $results,
+            'results'  => $breakdown,
+            'hints'    => $hints,
         ] );
     }
 }

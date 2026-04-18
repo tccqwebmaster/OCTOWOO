@@ -289,7 +289,21 @@
                     const breakdown = Object.entries(res.data.results || {})
                         .map(([k, v]) => k + ': ' + v)
                         .join(', ');
-                    $result.text('✔ ' + res.data.message + (breakdown ? ' (' + breakdown + ')' : '')).css('color', '#2e7d32');
+                    let msg = '✔ ' + res.data.message + (breakdown ? ' (' + breakdown + ')' : '');
+                    $result.text(msg).css('color', '#2e7d32');
+
+                    // Show diagnostic hints when 0 items were deleted but WC has data.
+                    const hints = res.data.hints || [];
+                    if (hints.length > 0) {
+                        const $hint = $('<div style="margin-top:6px;color:#b45309;font-size:12px;"></div>');
+                        hints.forEach(function (h) {
+                            $hint.append($('<p style="margin:2px 0;">⚠ ' + h + '</p>'));
+                        });
+                        $result.after($hint);
+                        // Auto-remove hint on next purge click.
+                        $('#ow-btn-purge').one('click', function () { $hint.remove(); });
+                    }
+
                     // Uncheck boxes after success.
                     $('.ow-purge-chk').prop('checked', false);
                 } else {
