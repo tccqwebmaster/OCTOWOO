@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.10
+Stable tag: 2.4.12
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,18 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.12 =
+* **Fixed:** `ManufacturerMigrator::importBrandImage()` was using `download_url()` to HTTP-fetch local files via the OpenCart shop URL. When the OC URL was unreachable the call hung for 60–300 s, causing a PHP fatal timeout on every chunk after the first 20 manufacturers. Replaced with direct `copy()` to temp file + `media_handle_sideload()` (same approach as `ImageMigrator`).
+* **Improved:** Chunk dispatcher now logs the migrator key and current offset on every chunk request, making stuck migrations easy to diagnose in the Logs tab.
+* **Improved:** After migration completes the progress table auto-scrolls into view — especially helpful for fast demo runs that previously showed only the "completed" banner.
+* **Improved:** Completion banner now includes "See progress table below for details."
+
+= 2.4.11 =
+* **Fixed:** `FilterMigrator` was assigning product filter terms using the non-existent taxonomy `product_attr_filter`. Terms were created correctly in per-group `pa_filter-xxx` taxonomies but never linked to products. Phase 3 now receives the `group_map` and assigns per correct taxonomy.
+* **Fixed:** `CheckpointManager` had a duplicate `case 'order':` that made the HPOS fallback unreachable dead code. Merged into a single case with HPOS detection.
+* **Fixed:** `CheckpointManager::getWcId()` was hitting the DB on every call (N+1 problem). Added a static in-memory cache that is primed by `saveIdMap()` and uses null-caching for misses.
+* **Improved:** `TagMigrator` now logs a diagnostic warning when all OC products have empty tag fields.
 
 = 2.4.10 =
 * **Fixed:** `ManufacturerMigrator` was calling `assignManufacturersToProducts()` (which scans ALL products) after every single 20-item chunk. With 4,000+ products this caused PHP timeouts on chunk 2+ and left the background migration stuck at 20/117. The product-assignment phase now runs only once, after the final manufacturer chunk completes.
