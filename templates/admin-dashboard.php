@@ -241,6 +241,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="button" id="ow-btn-products-images" class="ow-btn ow-btn-secondary">
                     🧩 <?php esc_html_e( 'Products + Images Recovery', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-cats-manufacturers" class="ow-btn ow-btn-secondary">
+                    🗂 <?php esc_html_e( 'Categories + Manufacturers Recovery', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ! $active_run ? 'disabled' : ''; ?>>
                     ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
                 </button>

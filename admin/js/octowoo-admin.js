@@ -60,6 +60,7 @@
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
         $('#ow-btn-images-only').on('click', startImagesOnlyRecovery);
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
+        $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -677,6 +678,12 @@
         startMigration(false, false, 'products,images,related', 'Products + Images Recovery');
     }
 
+    function startCategoriesManufacturersRecovery() {
+        // Recovery mode for taxonomy/brand terms and their media,
+        // without touching orders/customers/coupons.
+        startMigration(false, false, 'categories,manufacturers', 'Categories + Manufacturers Recovery');
+    }
+
     function runNextChunk() {
         if (!isRunning) { return; }
 
@@ -1162,7 +1169,7 @@
 
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
-        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images');
+        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers');
 
         if (state === 'running') {
             $btnStart.prop('disabled', true)

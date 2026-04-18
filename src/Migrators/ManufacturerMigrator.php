@@ -266,6 +266,10 @@ class ManufacturerMigrator extends AbstractMigrator {
      * the chunked AJAX migration.
      */
     private function importBrandImage( int $term_id, string $oc_image_rel_path ): void {
+        if ( ! $this->shouldImportImages() ) {
+            return;
+        }
+
         $image_path = $this->config['opencart']['image_path'] ?? '';
         if ( ! $image_path ) {
             return;
