@@ -315,7 +315,24 @@ class Validator {
         }
 
         $candidates = $this->imagePathCandidates( $image_path );
+        $has_existing_unreadable = false;
+        $diag_lines = [];
+
         foreach ( $candidates as $candidate ) {
+            $exists   = is_dir( $candidate );
+            $readable = $exists && is_readable( $candidate );
+
+            $diag_lines[] = sprintf(
+                '%s (exists: %s, readable: %s)',
+                $candidate,
+                $exists ? 'yes' : 'no',
+                $readable ? 'yes' : 'no'
+            );
+
+            if ( $exists && ! $readable ) {
+                $has_existing_unreadable = true;
+            }
+
             if ( is_dir( $candidate ) && is_readable( $candidate ) ) {
                 if ( $candidate !== $image_path ) {
                     return $this->result(
@@ -328,11 +345,22 @@ class Validator {
             }
         }
 
+        $diag = implode( ' | ', $diag_lines );
+
+        if ( $has_existing_unreadable ) {
+            return $this->result(
+                self::STATUS_FAIL,
+                sprintf( __( 'Image path exists but is not readable by PHP: "%s"', 'octowoo' ), $image_path ),
+                $diag,
+                __( 'Fix ownership/permissions or open_basedir restrictions for the web-server user.', 'octowoo' )
+            );
+        }
+
         return $this->result(
             self::STATUS_FAIL,
             /* translators: %s directory path */
             sprintf( __( 'Image path "%s" does not exist or is not readable.', 'octowoo' ), $image_path ),
-            $image_path,
+            $diag,
             __( 'Verify the OpenCart image directory path or mount it on this server.', 'octowoo' )
         );
     }
