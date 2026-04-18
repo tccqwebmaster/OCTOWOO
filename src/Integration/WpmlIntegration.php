@@ -62,7 +62,10 @@ class WpmlIntegration extends AbstractMigrator {
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
-        if ( empty( $this->config['multilingual']['enabled'] ) ) {
+        $settings_enabled = ! empty( $this->config['multilingual']['enabled'] );
+        $run_enabled      = ! empty( $this->config['migration']['run_multilingual'] );
+
+        if ( ! $settings_enabled && ! $run_enabled ) {
             $this->logger->info( '[multilingual] Disabled in config – skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }

@@ -104,7 +104,7 @@ class InformationMigrator extends AbstractMigrator {
 
     private function createPage( int $oc_id, array $desc ): bool {
         $title   = $this->sanitizeText( $desc['title'] ?? '' );
-        $content = $this->sanitizeText( $desc['description'] ?? '' );
+        $content = $this->cleanDescription( $desc['description'] ?? '' );
         $slug    = $this->fetchSeoSlug( $oc_id ) ?: $this->toSlug( $title );
 
         $post_id = wp_insert_post(
@@ -167,7 +167,7 @@ class InformationMigrator extends AbstractMigrator {
         wp_update_post( [
             'ID'           => $post_id,
             'post_title'   => $this->sanitizeText( $desc['title'] ?? '' ),
-            'post_content' => $this->sanitizeText( $desc['description'] ?? '' ),
+            'post_content' => $this->cleanDescription( $desc['description'] ?? '' ),
         ] );
 
         if ( ! empty( $desc['meta_title'] ) ) {
@@ -251,7 +251,7 @@ class InformationMigrator extends AbstractMigrator {
         }
 
         update_post_meta( $post_id, '_octowoo_title_ar',    $this->sanitizeText( $desc['title']            ?? '' ) );
-        update_post_meta( $post_id, '_octowoo_desc_ar',     $this->sanitizeText( $desc['description']      ?? '' ) );
+        update_post_meta( $post_id, '_octowoo_desc_ar',     $this->cleanDescription( $desc['description']  ?? '' ) );
         update_post_meta( $post_id, '_octowoo_metatitle_ar',$this->sanitizeText( $desc['meta_title']       ?? '' ) );
         update_post_meta( $post_id, '_octowoo_metadesc_ar', $this->sanitizeText( $desc['meta_description'] ?? '' ) );
     }
