@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.9
+Stable tag: 2.4.10
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -147,6 +147,9 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.10 =
+* **Fixed:** `ManufacturerMigrator` was calling `assignManufacturersToProducts()` (which scans ALL products) after every single 20-item chunk. With 4,000+ products this caused PHP timeouts on chunk 2+ and left the background migration stuck at 20/117. The product-assignment phase now runs only once, after the final manufacturer chunk completes.
 
 = 2.4.9 =
 * **Fixed:** Purge now detects when WooCommerce items exist but have no OctoWoo tag (e.g. after using Reset Progress which clears the id-map). Instead of silently returning "0 deleted", the UI now shows a clear warning: "N item(s) exist in WooCommerce but have no OctoWoo tag — enable Force Purge to remove them."

@@ -107,7 +107,13 @@ class ManufacturerMigrator extends AbstractMigrator {
         );
 
         // Phase 2: assign brand terms to products.
-        $this->assignManufacturersToProducts();
+        // In chunk mode this is called after every batch — defer until all terms
+        // have been created (is_done = true) so we don't scan 4,000+ products on
+        // every single 20-item chunk and cause PHP timeouts.
+        $is_done = $result['is_done'] ?? ! $this->batch->isDryRun();
+        if ( $is_done ) {
+            $this->assignManufacturersToProducts();
+        }
 
         return $result;
     }
