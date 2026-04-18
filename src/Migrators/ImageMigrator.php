@@ -40,48 +40,95 @@ class ImageMigrator extends AbstractMigrator {
      * @return array{processed: int, skipped: int, failed: int}
      */
     public function migrate(): array {
-        // In the standard pipeline the ImageMigrator piggybacks on ProductMigrator.
-        // Standalone: import all product images that haven't been imported yet.
-        $pfx = $this->pfx();
-
         $resume_id = $this->checkpoint->getLastId( 'images' );
         if ( $resume_id === PHP_INT_MAX ) {
             $this->logger->info( '[images] Already completed – skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }
 
-        $stats = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        $stats      = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        $batch_size = max( 1, (int) ( $this->config['migration']['batch_size'] ?? 20 ) );
+        $demo_limit = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
 
-        // Collect all distinct image paths from oc_product and oc_product_image.
-        $paths = $this->oc->fetchAll(
-            "SELECT DISTINCT image AS path FROM `{$pfx}product` WHERE image != '' AND image IS NOT NULL
-             UNION
-             SELECT DISTINCT image AS path FROM `{$pfx}product_image` WHERE image != '' AND image IS NOT NULL
-             UNION
-             SELECT DISTINCT image AS path FROM `{$pfx}category` WHERE image != '' AND image IS NOT NULL"
-        );
+        // Use one canonical image source query so total + paginated reads are consistent.
+        $pfx      = $this->pfx();
+        $base_sql = "SELECT DISTINCT image AS path FROM `{$pfx}product` WHERE image != '' AND image IS NOT NULL
+                     UNION
+                     SELECT DISTINCT image AS path FROM `{$pfx}product_image` WHERE image != '' AND image IS NOT NULL
+                     UNION
+                     SELECT DISTINCT image AS path FROM `{$pfx}category` WHERE image != '' AND image IS NOT NULL";
 
-        $this->checkpoint->init( 'images', count( $paths ) );
-        $this->checkpoint->start( 'images' );
+        $total = (int) $this->oc->fetchColumn( "SELECT COUNT(*) FROM ({$base_sql}) AS octowoo_img" );
+        if ( $demo_limit > 0 ) {
+            $total = min( $total, $demo_limit );
+        }
 
-        foreach ( $paths as $row ) {
-            $path = $row['path'];
-            if ( empty( $path ) ) {
-                continue;
+        $offset = $this->checkpoint->getProcessedCount( 'images' );
+
+        if ( $offset === 0 ) {
+            $this->checkpoint->init( 'images', $total );
+            $this->checkpoint->start( 'images' );
+        }
+
+        if ( $offset >= $total ) {
+            $this->checkpoint->complete( 'images' );
+            return $stats;
+        }
+
+        // In chunk mode process exactly one page; in full mode loop to completion.
+        $single_pass = $this->batch->isChunkMode();
+
+        while ( $offset < $total ) {
+            $limit = min( $batch_size, $total - $offset );
+            $rows  = $this->oc->fetchAll(
+                "SELECT path FROM ({$base_sql}) AS octowoo_img
+                 ORDER BY path ASC
+                 LIMIT {$limit} OFFSET {$offset}"
+            );
+
+            if ( empty( $rows ) ) {
+                break;
             }
 
-            $attachment_id = $this->importByOcPath( $path );
-            if ( $attachment_id ) {
-                $stats['processed']++;
+            $batch_done = 0;
+            foreach ( $rows as $row ) {
+                $path = (string) ( $row['path'] ?? '' );
+                if ( $path === '' ) {
+                    continue;
+                }
+
+                $attachment_id = $this->importByOcPath( $path );
+                if ( $attachment_id ) {
+                    $stats['processed']++;
+                } else {
+                    // We intentionally count missing/unreachable files as failed
+                    // but still advance progress so images cannot stall the run.
+                    $stats['failed']++;
+                }
+                $batch_done++;
+            }
+
+            if ( $batch_done > 0 ) {
+                // Use a synthetic increasing last_id for offset-based datasets.
+                $this->checkpoint->update( 'images', $offset + $batch_done, $batch_done );
+                $offset += $batch_done;
             } else {
-                $stats['failed']++;
+                // Safety: avoid infinite loops if rows were all empty.
+                $offset += count( $rows );
+                $this->checkpoint->update( 'images', $offset, count( $rows ) );
+            }
+
+            if ( $single_pass ) {
+                break;
             }
         }
 
-        $this->checkpoint->complete( 'images' );
-        $this->logger->success(
-            "[images] Done. processed={$stats['processed']}, failed={$stats['failed']}"
-        );
+        if ( $offset >= $total ) {
+            $this->checkpoint->complete( 'images' );
+            $this->logger->success(
+                "[images] Done. processed={$stats['processed']}, failed={$stats['failed']}"
+            );
+        }
 
         return $stats;
     }

@@ -62,6 +62,11 @@ class BatchProcessor {
         return $this;
     }
 
+    /** True when run() should process only one batch per call. */
+    public function isChunkMode(): bool {
+        return $this->chunk_mode;
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
