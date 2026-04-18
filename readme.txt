@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.20
+Stable tag: 2.4.21
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,9 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.21 =
+* **Fixed:** Added backend safeguard for image toggle: when `run_images=false`, `ImageMigrator` fully no-ops and embedded image imports from other migrators are skipped, preventing unwanted image fallback warnings.
 
 = 2.4.20 =
 * **Fixed:** Local mode now auto-detects available OpenCart table prefix (`octowoo_oc_` or `oc_`), so manually imported SQL dumps with plain `oc_` tables no longer fail with table-not-found errors.

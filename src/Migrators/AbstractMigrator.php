@@ -115,6 +115,13 @@ abstract class AbstractMigrator {
     }
 
     /**
+     * True when image import is enabled for this run.
+     */
+    protected function shouldImportImages(): bool {
+        return (bool) ( $this->config['migration']['run_images'] ?? true );
+    }
+
+    /**
      * Sanitise text values coming from OpenCart (ensure valid UTF-8).
      */
     protected function sanitizeText( string $text ): string {

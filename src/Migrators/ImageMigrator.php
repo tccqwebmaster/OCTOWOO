@@ -40,6 +40,14 @@ class ImageMigrator extends AbstractMigrator {
      * @return array{processed: int, skipped: int, failed: int}
      */
     public function migrate(): array {
+        if ( ! $this->shouldImportImages() ) {
+            $this->checkpoint->init( 'images', 0 );
+            $this->checkpoint->start( 'images' );
+            $this->checkpoint->complete( 'images' );
+            $this->logger->info( '[images] Image import disabled by settings (run_images=false) – skipping.' );
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        }
+
         $resume_id = $this->checkpoint->getLastId( 'images' );
         if ( $resume_id === PHP_INT_MAX ) {
             $this->logger->info( '[images] Already completed – skipping.' );
@@ -142,6 +150,10 @@ class ImageMigrator extends AbstractMigrator {
      * @return int|null  WP attachment post ID, or null on failure.
      */
     public function importByOcPath( string $oc_path ): ?int {
+        if ( ! $this->shouldImportImages() ) {
+            return null;
+        }
+
         if ( empty( $oc_path ) ) {
             return null;
         }
