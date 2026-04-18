@@ -59,6 +59,7 @@
 
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
         $('#ow-btn-images-only').on('click', startImagesOnlyRecovery);
+        $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -670,6 +671,12 @@
         startMigration(false, false, 'images', 'Images-Only Recovery');
     }
 
+    function startProductsImagesRecovery() {
+        // Recovery mode: refresh product-image linking and gallery imports
+        // without running unrelated entities.
+        startMigration(false, false, 'products,images,related', 'Products + Images Recovery');
+    }
+
     function runNextChunk() {
         if (!isRunning) { return; }
 
@@ -1155,26 +1162,26 @@
 
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
-        const $btnImagesOnly = $('#ow-btn-images-only');
+        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images');
 
         if (state === 'running') {
             $btnStart.prop('disabled', true)
                 .html('<span class="ow-spinner"></span>&nbsp; Running…');
-            $btnImagesOnly.prop('disabled', true);
+            $btnRecovery.prop('disabled', true);
             $btnResume.prop('disabled', true);
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', false);
             $btnSkip.prop('disabled', false);
         } else if (state === 'paused') {
             $btnStart.prop('disabled', true).text('▶ Start Full Migration');
-            $btnImagesOnly.prop('disabled', true);
+            $btnRecovery.prop('disabled', true);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', false);
         } else {
             $btnStart.prop('disabled', false).text('▶ Start Full Migration');
-            $btnImagesOnly.prop('disabled', false);
+            $btnRecovery.prop('disabled', false);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', true);
             $btnPause.prop('disabled', true);
