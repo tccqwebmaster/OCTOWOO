@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.21
+Stable tag: 2.4.22
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,13 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.22 =
+* **Added:** Pause / Resume and Skip Current controls for chunked/background runs to improve recovery from slow or problematic entities.
+* **Added:** Recovery shortcuts in Migration UI: `Images-Only Recovery`, `Products + Images Recovery`, and `Categories + Manufacturers Recovery`.
+* **Fixed:** Local image source mode now skips cleanly (single clear warning) when image path is unavailable, instead of repeated per-image HTTP fallback warnings.
+* **Improved:** Manufacturer logo import now respects global image toggle (`run_images`) for faster non-image runs.
+* **Improved:** System validator now allows migrate-now/images-later workflow by returning a warning (not hard fail) when image migration is intentionally disabled.
 
 = 2.4.21 =
 * **Fixed:** Added backend safeguard for image toggle: when `run_images=false`, `ImageMigrator` fully no-ops and embedded image imports from other migrators are skipped, preventing unwanted image fallback warnings.

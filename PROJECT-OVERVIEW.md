@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.21  
+**Version:** 2.4.22  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,13 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.22 – Recovery controls + image-path resilience
+- **Feature:** Added runtime controls for long migrations: pause/resume and skip-current entity.
+- **Feature:** Added targeted recovery actions in admin UI: Images-only, Products+Images, and Categories+Manufacturers.
+- **Bug fix:** Local image-source mode now short-circuits cleanly when filesystem path is unavailable, avoiding repeated per-image fallback noise.
+- **Improvement:** Manufacturer brand logo import now honors global `run_images` toggle for faster non-image runs.
+- **Improvement:** Validator now returns warning (not hard fail) when image migration is intentionally disabled, supporting migrate-now/images-later workflow.
 
 ### v2.4.21 – Backend image-toggle safeguard
 - **Bug fix:** When image import is disabled (`run_images=false`), `ImageMigrator` now no-ops completely, and nested image imports are skipped to prevent unexpected image fallback warnings.
