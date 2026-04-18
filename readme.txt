@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.7
+Stable tag: 2.4.8
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -147,6 +147,9 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.8 =
+* **Fixed:** Purge now bacfkills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting items. Categories, products, and other entities imported by older versions of the plugin (where a slug-lookup bug prevented the meta from being saved) will now be found and deleted correctly instead of showing "0 item(s) deleted".
 
 = 2.4.7 =
 * **Fixed:** `getActiveRunId()` now has a time-based stale detection fallback. If any run's checkpoint rows have a `MAX(updated_at)` older than 2 hours, the lock is auto-cleared on the next page load — even if the rows are still showing `running`/`pending` status (e.g. old runs that were never properly closed by the old code). This permanently resolves the "migration in progress" banner for existing stale runs like ones from previous days without requiring any button click.

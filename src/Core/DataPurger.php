@@ -31,6 +31,15 @@ class DataPurger {
      * @return array<string, int>  entity => number of items deleted
      */
     public function purge( array $entities, bool $force = false ): array {
+        // Before purging: backfill any missing _octowoo_oc_id meta from the id_map
+        // table. This covers items created by an older code path that ran saveIdMap()
+        // but skipped addTermMeta() (e.g. the term_exists slug-lookup bug in pre-v2.4.5
+        // releases) as well as any items whose meta was lost due to a partial migration.
+        // Non-destructive: update_term_meta / update_post_meta are idempotent.
+        if ( ! $force ) {
+            $this->repairMetaFromIdMap();
+        }
+
         $results = [];
 
         $map = [
@@ -382,5 +391,80 @@ class DataPurger {
         }
 
         return $deleted;
+    }
+
+    // ── Meta repair ───────────────────────────────────────────────────────────
+
+    /**
+     * Backfill missing _octowoo_oc_id meta from the id_map table.
+     *
+     * Walks every row in octowoo_id_map and applies update_term_meta /
+     * update_post_meta to the corresponding WC entity if the tag is absent.
+     * This is idempotent (update_*_meta does nothing when the value already
+     * matches) and fast (SELECT before each update is skipped because
+     * update_term_meta / update_post_meta handles the upsert internally).
+     *
+     * Covers:
+     *  - Categories/terms whose addTermMeta() was skipped by the old
+     *    pre-v2.4.5 term_exists slug-lookup bug.
+     *  - Any post-type entity whose meta was lost due to a partial run.
+     */
+    private function repairMetaFromIdMap(): void {
+        global $wpdb;
+
+        $map_table = $wpdb->prefix . 'octowoo_id_map';
+
+        // Check the table exists — it may not on a brand-new install.
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $map_table ) ) !== $map_table ) { // phpcs:ignore WordPress.DB.PreparedSQL
+            return;
+        }
+
+        $rows = $wpdb->get_results(
+            "SELECT entity_type, oc_id, wc_id FROM `{$map_table}`", // phpcs:ignore WordPress.DB.PreparedSQL
+            ARRAY_A
+        );
+
+        if ( empty( $rows ) ) {
+            return;
+        }
+
+        // Entity types stored in the map as terms (taxonomy-based).
+        $term_entities = [ 'category', 'manufacturer', 'tag', 'filter' ];
+
+        $repaired = 0;
+        foreach ( $rows as $row ) {
+            $entity = (string) $row['entity_type'];
+            $oc_id  = (int) $row['oc_id'];
+            $wc_id  = (int) $row['wc_id'];
+
+            if ( $wc_id <= 0 || $oc_id <= 0 ) {
+                continue;
+            }
+
+            if ( in_array( $entity, $term_entities, true ) ) {
+                // Term-based entity: ensure the term still exists.
+                $term = get_term( $wc_id );
+                if ( $term && ! is_wp_error( $term ) ) {
+                    $existing = get_term_meta( $wc_id, '_octowoo_oc_id', true );
+                    if ( (int) $existing !== $oc_id ) {
+                        update_term_meta( $wc_id, '_octowoo_oc_id', $oc_id );
+                        $repaired++;
+                    }
+                }
+            } else {
+                // Post-based entity: ensure the post still exists.
+                if ( get_post( $wc_id ) ) {
+                    $existing = get_post_meta( $wc_id, '_octowoo_oc_id', true );
+                    if ( (int) $existing !== $oc_id ) {
+                        update_post_meta( $wc_id, '_octowoo_oc_id', $oc_id );
+                        $repaired++;
+                    }
+                }
+            }
+        }
+
+        if ( $repaired > 0 ) {
+            $this->logger->info( "[purge] Repaired _octowoo_oc_id meta on {$repaired} item(s) from id_map before purge." );
+        }
     }
 }
