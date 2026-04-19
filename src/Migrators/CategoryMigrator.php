@@ -106,7 +106,7 @@ class CategoryMigrator extends AbstractMigrator {
             return false;
         }
 
-        $name        = $this->sanitizeText( $desc['name'] ?? '' );
+        $name        = $this->sanitizeName( $desc['name'] ?? '' );
         $description = $this->cleanDescription( $desc['description'] ?? '' );
 
         if ( $name === '' ) {
@@ -302,7 +302,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         // Secondary language data for WPML / Polylang translation pass.
         if ( ! empty( $desc_ar ) ) {
-            update_term_meta( $wc_term_id, '_octowoo_name_ar',        $this->sanitizeText( $desc_ar['name']             ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_name_ar',        $this->sanitizeName( $desc_ar['name']             ?? '' ) );
             update_term_meta( $wc_term_id, '_octowoo_description_ar', $this->cleanDescription( $desc_ar['description']  ?? '' ) );
             update_term_meta( $wc_term_id, '_octowoo_metatitle_ar',   $this->sanitizeText( $desc_ar['meta_title']       ?? '' ) );
             update_term_meta( $wc_term_id, '_octowoo_metadesc_ar',    $this->sanitizeText( $desc_ar['meta_description'] ?? '' ) );

@@ -133,6 +133,20 @@ abstract class AbstractMigrator {
     }
 
     /**
+     * Sanitise names/titles coming from OpenCart.
+     *
+     * OpenCart stores sometimes contain HTML or escaped entities in name fields
+     * (e.g. &lt;b&gt;Name&lt;/b&gt;). Names should be plain text in WooCommerce.
+     */
+    protected function sanitizeName( string $name ): string {
+        $name = $this->sanitizeText( $name );
+        $name = html_entity_decode( $name, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+        $name = wp_strip_all_tags( $name, true );
+        $name = preg_replace( '/\s+/u', ' ', $name );
+        return trim( $name );
+    }
+
+    /**
      * Clean an OpenCart HTML description for use as a WooCommerce product/category description.
      *
      * Strips any leading <h1>–<h6> block that OpenCart editors commonly prepend as a copy of
@@ -144,6 +158,9 @@ abstract class AbstractMigrator {
      */
     protected function cleanDescription( string $html ): string {
         $html = $this->sanitizeText( $html );
+        // Some OpenCart stores save HTML as escaped entities (&lt;p&gt;...&lt;/p&gt;).
+        // Decode first so WooCommerce stores real markup instead of literal tags.
+        $html = html_entity_decode( $html, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
         // Remove one optional leading heading block (h1–h6), including any inner tags.
         $html = preg_replace( '/^\s*<h[1-6][^>]*>.*?<\/h[1-6]>\s*/is', '', $html );
         return trim( $html );

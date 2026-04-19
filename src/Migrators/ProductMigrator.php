@@ -121,7 +121,7 @@ class ProductMigrator extends AbstractMigrator {
             return false;
         }
 
-        $name        = $this->sanitizeText( $desc['name'] ?? '' );
+        $name        = $this->sanitizeName( $desc['name'] ?? '' );
         $description = $this->cleanDescription( $desc['description'] ?? '' );
         $short_desc  = $this->sanitizeText( $desc['tag'] ?? '' );
 
@@ -130,9 +130,23 @@ class ProductMigrator extends AbstractMigrator {
         $desc_ar      = '';
         $metatitle_ar = '';
         $metadesc_ar  = '';
+        $sec = null;
         if ( $lang_id_sec > 0 && isset( $descriptions[ $oc_id ][ $lang_id_sec ] ) ) {
-            $sec          = $descriptions[ $oc_id ][ $lang_id_sec ];
-            $name_ar      = $this->sanitizeText( $sec['name']             ?? '' );
+            $sec = $descriptions[ $oc_id ][ $lang_id_sec ];
+        } elseif ( ! empty( $descriptions[ $oc_id ] ) ) {
+            // Fallback: when configured secondary language ID is wrong/missing,
+            // use the first non-primary language row so WPML can still create translations.
+            foreach ( $descriptions[ $oc_id ] as $candidate_lang_id => $candidate_desc ) {
+                if ( (int) $candidate_lang_id !== $lang_id ) {
+                    $sec = $candidate_desc;
+                    $this->logger->warning( "[products] Secondary language ID {$lang_id_sec} not found for OC #{$oc_id}; using language_id={$candidate_lang_id} as fallback." );
+                    break;
+                }
+            }
+        }
+
+        if ( is_array( $sec ) ) {
+            $name_ar      = $this->sanitizeName( $sec['name']             ?? '' );
             $desc_ar      = $this->cleanDescription( $sec['description']      ?? '' );
             $metatitle_ar = $this->sanitizeText( $sec['meta_title']       ?? '' );
             $metadesc_ar  = $this->sanitizeText( $sec['meta_description'] ?? '' );
@@ -376,7 +390,7 @@ class ProductMigrator extends AbstractMigrator {
 
         wp_update_post( [
             'ID'           => $wc_post_id,
-            'post_title'   => $this->sanitizeText( $desc['name'] ?? '' ),
+            'post_title'   => $this->sanitizeName( $desc['name'] ?? '' ),
             'post_content' => wp_kses_post( $this->cleanDescription( $desc['description'] ?? '' ) ),
             'post_excerpt' => wp_kses_post( $this->sanitizeText( $desc['tag'] ?? '' ) ),
         ] );

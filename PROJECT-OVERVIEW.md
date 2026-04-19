@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.24  
+**Version:** 2.4.25  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -336,6 +336,11 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.25 – Description + Arabic import robustness
+- **Bug fix:** Escaped OpenCart HTML in descriptions is now decoded before sanitization, so frontend content renders correctly instead of showing raw tags.
+- **Bug fix:** Product secondary-language extraction now falls back to the first non-primary language row when configured secondary language ID is missing.
+- **Improvement:** Product and category names now enforce plain-text normalization to prevent HTML fragments in titles.
 
 ### v2.4.24 – Brand/manufacturer mapping reliability
 - **Bug fix:** Manufacturer/brand mapping now uses a stable singular ID-map key with backward compatibility to older plural-key runs.

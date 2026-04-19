@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.24
+Stable tag: 2.4.25
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,11 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.25 =
+* **Fixed:** Product/category descriptions now decode escaped HTML entities before cleaning, preventing literal `<p>`/`<h1>` tags from appearing on storefront.
+* **Fixed:** Product secondary-language selection now falls back to the first non-primary language row when configured secondary language ID is missing.
+* **Improved:** Product/category names are now normalized to plain text (decode entities + strip tags), preventing HTML fragments from leaking into titles.
 
 = 2.4.24 =
 * **Fixed:** Manufacturer/brand ID mapping now uses a stable key (`manufacturer`) with backward compatibility, improving re-run and resume linking.
