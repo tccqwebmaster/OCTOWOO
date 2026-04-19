@@ -65,9 +65,9 @@ class MigrationManager {
         'tax',             // Tax classes – before products so the map is ready
         'order_statuses',  // Custom order statuses – before orders
         'categories',
-        'manufacturers',   // Brands – before products so ID map is ready
         'images',
         'products',
+        'manufacturers',   // Brands + assignment – after products so term links can be applied
         'related',         // Related products – requires products to be migrated first
         'bundles',         // Product bundles – requires products to be migrated first
         'customers',

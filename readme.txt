@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.22
+Stable tag: 2.4.24
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,15 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.24 =
+* **Fixed:** Manufacturer/brand ID mapping now uses a stable key (`manufacturer`) with backward compatibility, improving re-run and resume linking.
+* **Fixed:** Brand assignment now runs after products are migrated, ensuring product-to-brand relationships are correctly applied in the same run.
+* **Improved:** Added support for `pa_brand` taxonomy detection and deterministic manufacturer batch ordering for safer resume behavior.
+
+= 2.4.23 =
+* **Fixed:** Category resume pagination is now deterministic by ordering category batches by `category_id`, preventing missed rows on resume.
+* **Fixed:** Category/subcategory hierarchy now auto-recovers when a child is imported before its parent by deferring and re-parenting once the parent mapping exists.
 
 = 2.4.22 =
 * **Added:** Pause / Resume and Skip Current controls for chunked/background runs to improve recovery from slow or problematic entities.

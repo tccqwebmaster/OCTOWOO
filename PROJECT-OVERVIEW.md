@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.22  
+**Version:** 2.4.24  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -160,9 +160,9 @@ MigrationManager runs migrators in this fixed sequence (dependencies first):
 1.  TaxMigrator             → Creates WC tax classes (needed by ProductMigrator)
 2.  OrderStatusMigrator     → Builds OC→WC status map (needed by OrderMigrator)
 3.  CategoryMigrator        → Product categories with hierarchy
-4.  ManufacturerMigrator    → Brand terms + product assignment
-5.  ImageMigrator           → Media library import (needed by ProductMigrator)
-6.  ProductMigrator         → Products (simple/variable), attributes, variations
+4.  ImageMigrator           → Media library import (needed by ProductMigrator)
+5.  ProductMigrator         → Products (simple/variable), attributes, variations
+6.  ManufacturerMigrator    → Brand terms + product assignment (needs products)
 7.  RelatedProductsMigrator → Upsell links (needs products)
 8.  BundleMigrator          → OC4 product bundles (needs products)
 9.  CustomerMigrator        → WP user accounts
@@ -336,6 +336,17 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.24 – Brand/manufacturer mapping reliability
+- **Bug fix:** Manufacturer/brand mapping now uses a stable singular ID-map key with backward compatibility to older plural-key runs.
+- **Bug fix:** Manufacturer migrator now assigns brands after products are present, improving product-brand linking accuracy.
+- **Improvement:** Added `pa_brand` taxonomy support and deterministic manufacturer ordering to keep resume behavior stable.
+
+### v2.4.23 – Category hierarchy reliability
+- **Bug fix:** Category batch ordering is now `category_id`-first to keep resume pagination deterministic and avoid skipped categories.
+- **Bug fix:** Added deferred parent resolution for categories; children imported before parents are automatically re-parented once parent mapping is available.
+- **Bug fix:** Manufacturer/brand mapping now uses a stable ID-map key (`manufacturer`) with backward compatibility, improving brand lookup on re-runs and repairs.
+- **Bug fix:** Manufacturer brand assignment now runs after products are migrated, so brand terms are correctly applied to products in the same run.
 
 ### v2.4.22 – Recovery controls + image-path resilience
 - **Feature:** Added runtime controls for long migrations: pause/resume and skip-current entity.

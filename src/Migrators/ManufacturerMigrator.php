@@ -45,6 +45,7 @@ defined( 'ABSPATH' ) || exit;
 class ManufacturerMigrator extends AbstractMigrator {
 
     private const KEY = 'manufacturers';
+    private const MAP_KEY = 'manufacturer';
 
     /**
      * Candidate brand taxonomies (in priority order).
@@ -55,6 +56,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         'pwb-brand',             // Perfect WooCommerce Brands
         'yith_product_brand',    // YITH WooCommerce Brands
         'berocket_brand',        // Brands for WooCommerce by BeRocket
+        'pa_brand',              // Attribute-based brand taxonomy used by some setups
         'brand',                 // Generic / theme-based
     ];
 
@@ -85,7 +87,7 @@ class ManufacturerMigrator extends AbstractMigrator {
             return $this->oc->fetchBatch(
                 "SELECT manufacturer_id, name, image, sort_order
                  FROM `{$pfx}manufacturer`
-                 ORDER BY sort_order ASC, manufacturer_id ASC",
+                 ORDER BY manufacturer_id ASC, sort_order ASC",
                 [],
                 $limit,
                 $offset
@@ -112,7 +114,11 @@ class ManufacturerMigrator extends AbstractMigrator {
         // every single 20-item chunk and cause PHP timeouts.
         $is_done = $result['is_done'] ?? ! $this->batch->isDryRun();
         if ( $is_done ) {
-            $this->assignManufacturersToProducts();
+            if ( $this->checkpoint->isCompleted( 'products' ) ) {
+                $this->assignManufacturersToProducts();
+            } else {
+                $this->logger->info( '[manufacturers] Brand assignment deferred: products are not migrated yet.' );
+            }
         }
 
         return $result;
@@ -130,7 +136,8 @@ class ManufacturerMigrator extends AbstractMigrator {
         }
 
         // Duplicate check.
-        $existing_wc_id = $this->checkpoint->getWcId( self::KEY, $oc_id );
+        $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id )
+            ?? $this->checkpoint->getWcId( self::KEY, $oc_id );
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
                 return $this->updateBrandTerm( (int) $existing_wc_id, $row );
@@ -159,7 +166,9 @@ class ManufacturerMigrator extends AbstractMigrator {
         // Handle slug conflict.
         if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
             $term_id = (int) $result->get_error_data( 'term_exists' );
-            $this->checkpoint->saveIdMap( self::KEY, $oc_id, $term_id );
+            $this->saveManufacturerMap( $oc_id, $term_id );
+            update_term_meta( $term_id, '_octowoo_oc_manufacturer_id', $oc_id );
+            update_term_meta( $term_id, '_octowoo_oc_id', $oc_id );
             $this->logger->debug( "[manufacturers] OC #{$oc_id} matched existing brand term #{$term_id}: '{$name}'" );
             return false; // Counted as skipped.
         }
@@ -170,7 +179,6 @@ class ManufacturerMigrator extends AbstractMigrator {
         }
 
         $term_id      = (int) $result['term_id'];
-        $term_tax_id  = (int) $result['term_taxonomy_id'];
 
         // Store OC ID for reference (specific and generic keys).
         add_term_meta( $term_id, '_octowoo_oc_manufacturer_id', $oc_id, true );
@@ -185,7 +193,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         $this->storeSecondaryLanguage( $term_id, $oc_id );
 
         // Save ID mapping.
-        $this->checkpoint->saveIdMap( self::KEY, $oc_id, $term_id );
+        $this->saveManufacturerMap( $oc_id, $term_id );
 
         $this->logger->info( "[manufacturers] Created brand term #{$term_id} ← OC #{$oc_id}: '{$name}' ({$this->taxonomy})" );
 
@@ -236,7 +244,8 @@ class ManufacturerMigrator extends AbstractMigrator {
             $oc_manufacturer_id = (int) $row['manufacturer_id'];
 
             $wc_product_id = $this->checkpoint->getWcId( 'product', $oc_product_id );
-            $wc_term_id    = $this->checkpoint->getWcId( self::KEY, $oc_manufacturer_id );
+            $wc_term_id    = $this->checkpoint->getWcId( self::MAP_KEY, $oc_manufacturer_id )
+                ?? $this->checkpoint->getWcId( self::KEY, $oc_manufacturer_id );
 
             if ( ! $wc_product_id || ! $wc_term_id ) {
                 continue;
@@ -252,6 +261,15 @@ class ManufacturerMigrator extends AbstractMigrator {
 
         if ( $assigned > 0 ) {
             $this->logger->info( "[manufacturers] Assigned brand terms to {$assigned} product(s)." );
+        }
+    }
+
+    private function saveManufacturerMap( int $oc_id, int $term_id ): void {
+        $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $term_id );
+
+        // Backward compatibility with older runs that used the plural key.
+        if ( self::MAP_KEY !== self::KEY ) {
+            $this->checkpoint->saveIdMap( self::KEY, $oc_id, $term_id );
         }
     }
 

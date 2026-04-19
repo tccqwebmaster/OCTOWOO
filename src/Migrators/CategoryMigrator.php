@@ -65,7 +65,7 @@ class CategoryMigrator extends AbstractMigrator {
                 "SELECT category_id, parent_id, sort_order, image
                  FROM `{$pfx}category`
                  WHERE status = 1
-                 ORDER BY parent_id ASC, sort_order ASC, category_id ASC",
+                 ORDER BY category_id ASC, parent_id ASC, sort_order ASC",
                 [],
                 $limit,
                 $offset
@@ -126,8 +126,16 @@ class CategoryMigrator extends AbstractMigrator {
 
         // Resolve WC parent term ID.
         $wc_parent = 0;
+        $pending_parent_oc_id = 0;
         if ( $oc_parent > 0 ) {
             $wc_parent = (int) ( $this->checkpoint->getWcId( self::MAP_KEY, $oc_parent ) ?? 0 );
+            if ( $wc_parent <= 0 ) {
+                // Parent can be imported later; keep this category at root for now,
+                // then re-parent automatically once the parent mapping is available.
+                $pending_parent_oc_id = $oc_parent;
+                $this->logger->warning( "[categories] Parent OC #{$oc_parent} not mapped yet for OC #{$oc_id}; creating as root temporarily and scheduling re-parent." );
+                $wc_parent = 0;
+            }
         }
 
         // Duplicate check.
@@ -148,8 +156,18 @@ class CategoryMigrator extends AbstractMigrator {
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image );
+                return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
             }
+
+            if ( ! $this->isDry() ) {
+                if ( $pending_parent_oc_id > 0 ) {
+                    update_term_meta( $existing_wc_id, '_octowoo_pending_parent_oc_id', $pending_parent_oc_id );
+                } else {
+                    delete_term_meta( $existing_wc_id, '_octowoo_pending_parent_oc_id' );
+                }
+                $this->reparentPendingChildren( $oc_id, $existing_wc_id );
+            }
+
             $this->logger->debug( "[categories] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false; // 'skip'
         }
@@ -159,7 +177,7 @@ class CategoryMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createCategory( $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image );
+        return $this->createCategory( $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
     }
 
     // ── Create / update ───────────────────────────────────────────────────────
@@ -172,7 +190,8 @@ class CategoryMigrator extends AbstractMigrator {
         int    $oc_id,
         array  $desc,
         array  $desc_ar = [],
-        string $image   = ''
+        string $image   = '',
+        int    $pending_parent_oc_id = 0
     ): bool {
         // Ensure slug uniqueness.
         $slug = $this->uniqueSlug( $slug, 0 );
@@ -198,8 +217,9 @@ class CategoryMigrator extends AbstractMigrator {
 
                 if ( $existing && ! is_wp_error( $existing ) ) {
                     $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing->term_id );
-                    $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image );
+                    $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
                     $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id} (term_exists)." );
+                    $this->reparentPendingChildren( $oc_id, (int) $existing->term_id );
                     return true;
                 }
             }
@@ -213,8 +233,9 @@ class CategoryMigrator extends AbstractMigrator {
 
         $wc_term_id = (int) $result['term_id'];
 
-        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image );
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_term_id );
+        $this->reparentPendingChildren( $oc_id, $wc_term_id );
 
         $this->logger->info( "[categories] Created WC term #{$wc_term_id} from OC #{$oc_id}: \"{$name}\"" );
         return true;
@@ -229,7 +250,8 @@ class CategoryMigrator extends AbstractMigrator {
         int    $oc_id,
         array  $desc,
         array  $desc_ar = [],
-        string $image   = ''
+        string $image   = '',
+        int    $pending_parent_oc_id = 0
     ): bool {
         $result = wp_update_term(
             $wc_term_id,
@@ -249,16 +271,23 @@ class CategoryMigrator extends AbstractMigrator {
             return false;
         }
 
-        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image );
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+        $this->reparentPendingChildren( $oc_id, $wc_term_id );
         $this->logger->info( "[categories] Updated WC term #{$wc_term_id} (OC #{$oc_id})." );
         return true;
     }
 
     // ── Term meta ─────────────────────────────────────────────────────────────
 
-    private function addTermMeta( int $wc_term_id, int $oc_id, array $desc, array $desc_ar = [], string $image = '' ): void {
+    private function addTermMeta( int $wc_term_id, int $oc_id, array $desc, array $desc_ar = [], string $image = '', int $pending_parent_oc_id = 0 ): void {
         // Store OC source ID for cross-referencing.
         update_term_meta( $wc_term_id, '_octowoo_oc_id', $oc_id );
+
+        if ( $pending_parent_oc_id > 0 ) {
+            update_term_meta( $wc_term_id, '_octowoo_pending_parent_oc_id', $pending_parent_oc_id );
+        } else {
+            delete_term_meta( $wc_term_id, '_octowoo_pending_parent_oc_id' );
+        }
 
         // Yoast / Rank Math SEO meta.
         if ( ! empty( $desc['meta_title'] ) ) {
@@ -285,6 +314,57 @@ class CategoryMigrator extends AbstractMigrator {
             if ( $attachment_id && $attachment_id > 0 ) {
                 update_term_meta( $wc_term_id, 'thumbnail_id', $attachment_id );
             }
+        }
+    }
+
+    /**
+     * Re-parent any categories that were waiting on this OC parent ID.
+     */
+    private function reparentPendingChildren( int $resolved_parent_oc_id, int $resolved_parent_wc_id ): void {
+        global $wpdb;
+
+        $termmeta_table      = $wpdb->termmeta;
+        $term_taxonomy_table = $wpdb->term_taxonomy;
+
+        $term_ids = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT tm.term_id
+                 FROM `{$termmeta_table}` tm
+                 INNER JOIN `{$term_taxonomy_table}` tt ON tt.term_id = tm.term_id
+                 WHERE tm.meta_key = %s
+                   AND tm.meta_value = %s
+                   AND tt.taxonomy = 'product_cat'",
+                '_octowoo_pending_parent_oc_id',
+                (string) $resolved_parent_oc_id
+            )
+        );
+
+        if ( empty( $term_ids ) ) {
+            return;
+        }
+
+        foreach ( $term_ids as $term_id_raw ) {
+            $child_term_id = (int) $term_id_raw;
+
+            if ( $child_term_id <= 0 || $child_term_id === $resolved_parent_wc_id ) {
+                continue;
+            }
+
+            $updated = wp_update_term(
+                $child_term_id,
+                'product_cat',
+                [ 'parent' => $resolved_parent_wc_id ]
+            );
+
+            if ( is_wp_error( $updated ) ) {
+                $this->logger->warning(
+                    "[categories] Failed to re-parent WC #{$child_term_id} under WC #{$resolved_parent_wc_id}: " . $updated->get_error_message()
+                );
+                continue;
+            }
+
+            delete_term_meta( $child_term_id, '_octowoo_pending_parent_oc_id' );
+            $this->logger->info( "[categories] Re-parented WC #{$child_term_id} under WC #{$resolved_parent_wc_id}." );
         }
     }
 
