@@ -78,6 +78,11 @@ class ProductMigrator extends AbstractMigrator {
         wp_defer_term_counting( true );
         wp_suspend_cache_invalidation( true );
 
+        // If WPML is active, switch to the configured primary language so that
+        // every wp_insert_post() call during this batch is auto-assigned to the
+        // correct primary language by WPML (not the admin's browsing language).
+        $this->wpmlSwitchToPrimary();
+
         $result = $this->batch->run(
             total_callback:  $total_callback,
             batch_callback:  $batch_callback,
@@ -87,6 +92,8 @@ class ProductMigrator extends AbstractMigrator {
             resume_after_id: $resume_id,
             id_field:        'product_id'
         );
+
+        $this->wpmlRestoreLanguage();
 
         // Re-enable term counting (this triggers a single deferred recount) and
         // flush the object cache once for the entire batch.

@@ -259,7 +259,12 @@ class WpmlIntegration extends AbstractMigrator {
         $element_type = 'post_' . $post_type;
 
         if ( $this->adapter === 'wpml' ) {
-            $this->wpmlSetPostLanguage( $primary_id,    $element_type, $this->primary_lang,   null );
+            // Get the existing trid FIRST (WPML may have auto-assigned one during
+            // wp_insert_post). Passing the existing trid avoids creating a duplicate
+            // translation group for the same post.
+            $existing_trid = $this->wpmlGetTrid( $primary_id, $element_type );
+            $this->wpmlSetPostLanguage( $primary_id, $element_type, $this->primary_lang, $existing_trid );
+            // Re-fetch trid after language update to ensure we have the canonical value.
             $trid = $this->wpmlGetTrid( $primary_id, $element_type );
             $this->wpmlSetPostLanguage( $translated_id, $element_type, $this->secondary_lang, $trid );
 
@@ -417,7 +422,11 @@ class WpmlIntegration extends AbstractMigrator {
         $element_type = "tax_{$taxonomy}";
 
         if ( $this->adapter === 'wpml' ) {
-            $this->wpmlSetTermLanguage( $primary_term,      $element_type, $this->primary_lang,   null );
+            // Get existing trid FIRST (WPML may have auto-assigned one during
+            // wp_insert_term) to avoid creating a duplicate translation group.
+            $existing_trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
+            $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid );
+            // Re-fetch after update for canonical trid.
             $trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
             $translated_term = get_term( $translated_term_id, $taxonomy );
             if ( $translated_term && ! is_wp_error( $translated_term ) ) {

@@ -88,6 +88,35 @@ abstract class AbstractMigrator {
     }
 
     /**
+     * Return the configured WPML/Polylang primary language code (e.g. 'en').
+     */
+    protected function primaryLocale(): string {
+        return (string) ( $this->config['multilingual']['primary_locale'] ?? 'en' );
+    }
+
+    /**
+     * If WPML is active, switch the current language to the configured primary
+     * locale so that any subsequent wp_insert_post() / wp_insert_term() calls
+     * are automatically assigned to the primary language by WPML.
+     *
+     * Call wpmlRestoreLanguage() after the batch to reset.
+     */
+    protected function wpmlSwitchToPrimary(): void {
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', $this->primaryLocale() );
+        }
+    }
+
+    /**
+     * Restore WPML to the default language after a batch.
+     */
+    protected function wpmlRestoreLanguage(): void {
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', null );
+        }
+    }
+
+    /**
      * Sanitise a string value for use as a WordPress post slug.
      * Preserves Arabic characters (does NOT transliterate them).
      */

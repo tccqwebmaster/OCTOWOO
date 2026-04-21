@@ -76,7 +76,11 @@ class CategoryMigrator extends AbstractMigrator {
             return $this->processCategory( $row, $descriptions, $seo_urls, $lang_id );
         };
 
-        return $this->batch->run(
+        // If WPML is active, switch to primary language so that wp_insert_term()
+        // calls during this batch are auto-assigned to the correct language by WPML.
+        $this->wpmlSwitchToPrimary();
+
+        $result = $this->batch->run(
             total_callback:   $total_callback,
             batch_callback:   $batch_callback,
             item_callback:    $item_callback,
@@ -85,6 +89,10 @@ class CategoryMigrator extends AbstractMigrator {
             resume_after_id:  $resume_id,
             id_field:         'category_id'
         );
+
+        $this->wpmlRestoreLanguage();
+
+        return $result;
     }
 
     // ── Per-item processing ───────────────────────────────────────────────────
