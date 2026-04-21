@@ -133,8 +133,10 @@ class DataPurger {
     private function purgeProducts( bool $force = false ): int {
         global $wpdb;
 
+        $this->clearIdMapEntity( 'product' );
+        $this->clearIdMapEntity( 'variation' );
+
         if ( $force ) {
-            // Bulk SQL path — much faster than calling wp_delete_post() one by one
             // for stores with thousands of products.
 
             // Count parent products before deletion (variations are collateral).
@@ -196,14 +198,17 @@ class DataPurger {
     // ── Categories / Tags / Manufacturers ─────────────────────────────────────
 
     private function purgeCategories( bool $force = false ): int {
+        $this->clearIdMapEntity( 'category' );
         return $this->purgeTermsByTaxonomy( 'product_cat', $force );
     }
 
     private function purgeTags( bool $force = false ): int {
+        $this->clearIdMapEntity( 'tag' );
         return $this->purgeTermsByTaxonomy( 'product_tag', $force );
     }
 
     private function purgeManufacturers( bool $force = false ): int {
+        $this->clearIdMapEntity( 'manufacturer' );
         $deleted = 0;
         // Support common brand taxonomy plugins.
         foreach ( [ 'product_brand', 'pwb-brand', 'pa_brand' ] as $tax ) {
@@ -222,6 +227,17 @@ class DataPurger {
             }
         }
         return $deleted;
+    }
+
+    /**
+     * Delete all id_map rows for a given entity type.
+     * Called by purge methods so that stale OC→WC mappings don't survive
+     * across re-migrations (which causes ID-collision bugs after AUTO_INCREMENT reset).
+     */
+    private function clearIdMapEntity( string $entity_type ): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'octowoo_id_map';
+        $wpdb->delete( $table, [ 'entity_type' => $entity_type ], [ '%s' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
     }
 
     private function purgeTermsByTaxonomy( string $taxonomy, bool $force = false ): int {
@@ -261,6 +277,8 @@ class DataPurger {
     private function purgeCustomers( bool $force = false ): int {
         global $wpdb;
 
+        $this->clearIdMapEntity( 'customer' );
+
         // Force mode still requires the OctoWoo tag for customers – deleting
         // all WP users without filtering is too destructive.
         $user_ids = $wpdb->get_col(
@@ -291,6 +309,8 @@ class DataPurger {
 
     private function purgeOrders( bool $force = false ): int {
         global $wpdb;
+
+        $this->clearIdMapEntity( 'order' );
 
         if ( $force ) {
             // Use direct SQL for speed — loading full WC_Order objects for bulk
@@ -368,6 +388,8 @@ class DataPurger {
 
     private function purgeCoupons( bool $force = false ): int {
         global $wpdb;
+
+        $this->clearIdMapEntity( 'coupon' );
 
         if ( $force ) {
             $count = (int) $wpdb->get_var(

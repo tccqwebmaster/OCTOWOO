@@ -154,6 +154,16 @@ class CategoryMigrator extends AbstractMigrator {
                 $pending_parent_oc_id = $oc_parent;
                 $this->logger->warning( "[categories] Parent OC #{$oc_parent} not mapped yet for OC #{$oc_id}; creating as root temporarily and scheduling re-parent." );
                 $wc_parent = 0;
+            } else {
+                // Validate the resolved parent is a real, usable term — it could be a
+                // stale id_map entry pointing to a now-deleted term, or a WPML stub
+                // that reused the old ID after AUTO_INCREMENT reset.
+                $parent_check = get_term( $wc_parent, 'product_cat' );
+                if ( ! $parent_check || is_wp_error( $parent_check ) || trim( (string) $parent_check->name ) === '' ) {
+                    $this->logger->warning( "[categories] Resolved parent WC #{$wc_parent} (OC #{$oc_parent}) is missing or a WPML stub; scheduling re-parent for OC #{$oc_id}." );
+                    $pending_parent_oc_id = $oc_parent;
+                    $wc_parent = 0;
+                }
             }
         }
 
