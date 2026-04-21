@@ -90,7 +90,42 @@ class DataPurger {
             }
         }
 
+        // Always reset MySQL AUTO_INCREMENT counters after purge so a fresh
+        // migration doesn't inherit the old high-watermark IDs.
+        $this->resetAutoIncrements();
+
         return [ 'results' => $results, 'diagnostics' => $diagnostics ];
+    }
+
+    /**
+     * Reset AUTO_INCREMENT counters on the core WordPress tables.
+     *
+     * After a bulk purge, MySQL's auto-increment watermark stays at the old high
+     * value, so the next migrated product gets ID 20001 instead of 1.
+     * Running ALTER TABLE … AUTO_INCREMENT = 1 is safe on non-empty tables:
+     * MySQL simply chooses MAX(existing_id) + 1 as the real next value, so
+     * no existing rows are overwritten.
+     *
+     * Called automatically at the end of every purge() run.
+     */
+    private function resetAutoIncrements(): void {
+        global $wpdb;
+
+        $tables = [
+            $wpdb->posts,                    // Products, pages, orders (post-based).
+            $wpdb->terms,                    // Terms shared table (term_id).
+            $wpdb->term_taxonomy,            // Taxonomy assignments.
+            $wpdb->comments,                 // Reviews.
+            $wpdb->users,                    // Customers.
+            $wpdb->usermeta,                 // User meta.
+        ];
+
+        foreach ( $tables as $table ) {
+            // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "ALTER TABLE `{$table}` AUTO_INCREMENT = 1" );
+        }
+
+        $this->logger->info( '[purge] AUTO_INCREMENT counters reset on core WP tables.' );
     }
 
     // ── Products ──────────────────────────────────────────────────────────────
