@@ -160,6 +160,19 @@ class CategoryMigrator extends AbstractMigrator {
         // Duplicate check.
         $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
 
+        // Guard: if the found WC term has an empty name it is almost certainly a
+        // WPML Arabic stub (WPML copies _octowoo_oc_id via field-sync).  Treat it
+        // as "not found" so we look up – or create – the real English primary term.
+        if ( $existing_wc_id ) {
+            $check_term = get_term( $existing_wc_id, 'product_cat' );
+            if ( ! $check_term || is_wp_error( $check_term ) || trim( (string) $check_term->name ) === '' ) {
+                $this->logger->warning(
+                    "[categories] WC #{$existing_wc_id} (OC #{$oc_id}) has no usable name – likely a WPML stub; treating as new."
+                );
+                $existing_wc_id = null;
+            }
+        }
+
         // Last-resort guard: even if id_map and OC-meta are both empty (e.g. after
         // a Reset, or when the store already had a matching category), look up the
         // WC taxonomy directly by name + parent to prevent creating a real duplicate.

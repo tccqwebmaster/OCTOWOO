@@ -239,7 +239,7 @@ class DataPurger {
                 "SELECT DISTINCT tm.term_id
                    FROM {$wpdb->termmeta} tm
                    JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
-                  WHERE tm.meta_key = '_octowoo_oc_id'
+                  WHERE ( tm.meta_key = '_octowoo_oc_id' OR tm.meta_key = '_octowoo_translation_lang' )
                     AND tt.taxonomy   = %s",
                 $taxonomy
             ) );

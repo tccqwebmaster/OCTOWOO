@@ -496,6 +496,9 @@ class CheckpointManager {
                 break;
 
             case 'category':
+                // Exclude WPML/Polylang Arabic stub terms (_octowoo_translation_lang)
+                // that WPML sometimes copies _octowoo_oc_id onto via field-sync.
+                // Always pick the lowest term_id (the original English primary term).
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT tm.term_id
@@ -504,6 +507,12 @@ class CheckpointManager {
                          WHERE tm.meta_key = '_octowoo_oc_id'
                            AND tm.meta_value = %s
                            AND tt.taxonomy = 'product_cat'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM {$wpdb->termmeta} tm2
+                               WHERE tm2.term_id = tm.term_id
+                                 AND tm2.meta_key = '_octowoo_translation_lang'
+                           )
+                         ORDER BY tm.term_id ASC
                          LIMIT 1",
                         (string) $oc_id
                     )
