@@ -279,30 +279,51 @@ class DataPurger {
 
         $this->clearIdMapEntity( 'customer' );
 
-        // Force mode still requires the OctoWoo tag for customers – deleting
-        // all WP users without filtering is too destructive.
-        $user_ids = $wpdb->get_col(
-            "SELECT user_id FROM {$wpdb->usermeta}
-              WHERE meta_key = '_octowoo_oc_id'"
-        );
-
         if ( ! function_exists( 'wp_delete_user' ) ) {
             require_once ABSPATH . 'wp-admin/includes/user.php';
         }
 
-        $deleted = 0;
-        foreach ( array_map( 'intval', $user_ids ) as $uid ) {
-            // Never delete administrators — safety guard.
-            if ( user_can( $uid, 'manage_options' ) ) {
-                $this->logger->warning( "[purge] Skipping user #{$uid} (admin)." );
-                continue;
-            }
-            if ( wp_delete_user( $uid ) ) {
-                $deleted++;
-            }
+        // Collect IDs: force = all octowoo-tagged; tagged = same (never delete all users).
+        // Always exclude administrators regardless of mode.
+        $cap_key = $wpdb->prefix . 'capabilities';
+        $user_ids = $wpdb->get_col(
+            "SELECT DISTINCT um.user_id
+               FROM {$wpdb->usermeta} um
+              WHERE um.meta_key = '_octowoo_oc_id'
+                AND NOT EXISTS (
+                    SELECT 1 FROM {$wpdb->usermeta} cap
+                     WHERE cap.user_id  = um.user_id
+                       AND cap.meta_key = '{$cap_key}'
+                       AND cap.meta_value LIKE '%administrator%'
+                )"
+        );
+
+        if ( empty( $user_ids ) ) {
+            return 0;
         }
 
-        return $deleted;
+        // Bulk direct SQL — same as what wp_delete_user() does internally,
+        // but without per-user PHP hooks (crucial for 7,000+ customers).
+        $ids_int = array_map( 'intval', $user_ids );
+        $csv     = implode( ',', $ids_int );
+
+        $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE user_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->users}    WHERE ID       IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+        // Reassign posts owned by deleted users to the first admin.
+        $admin_id = (int) $wpdb->get_var(
+            "SELECT u.ID FROM {$wpdb->users} u
+               JOIN {$wpdb->usermeta} m ON m.user_id = u.ID
+              WHERE m.meta_key = '{$cap_key}'
+                AND m.meta_value LIKE '%administrator%'
+              LIMIT 1"
+        );
+        if ( $admin_id > 0 ) {
+            $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->posts} SET post_author = %d WHERE post_author IN ({$csv})", $admin_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+        }
+
+        $this->logger->info( "[purge] Bulk-deleted " . count( $ids_int ) . " customers via SQL." );
+        return count( $ids_int );
     }
 
     // ── Orders ────────────────────────────────────────────────────────────────
@@ -355,31 +376,50 @@ class DataPurger {
             return $count;
         }
 
-        // ── Tagged (non-force) path — use wc_get_orders() for HPOS compat. ──
+        // ── Tagged (non-force) path — filter by _octowoo_oc_order_id via direct SQL. ──
         $deleted = 0;
-        $page    = 1;
 
-        do {
-            $orders = wc_get_orders( [
-                'limit'      => 50,
-                'page'       => $page,
-                'return'     => 'objects',
-                'type'       => 'shop_order',
-                'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery
-                    [
-                        'key'     => '_octowoo_oc_order_id',
-                        'compare' => 'EXISTS',
-                    ],
-                ],
-            ] );
+        // ── HPOS tagged path ──
+        $hpos_table = $wpdb->prefix . 'wc_orders';
+        $hpos_meta  = $wpdb->prefix . 'wc_orders_meta';
+        $has_hpos   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_table ) );
 
-            foreach ( $orders as $order ) {
-                $order->delete( true );
-                $deleted++;
+        if ( $has_hpos ) {
+            $hpos_ids = $wpdb->get_col(
+                "SELECT DISTINCT o.id
+                   FROM {$wpdb->prefix}wc_orders o
+                   JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id
+                  WHERE o.type = 'shop_order'
+                    AND om.meta_key = '_octowoo_oc_order_id'"
+            );
+            if ( ! empty( $hpos_ids ) ) {
+                $csv_h = implode( ',', array_map( 'intval', $hpos_ids ) );
+                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders_meta WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $deleted += count( $hpos_ids );
+                $this->logger->info( "[purge] HPOS tagged: deleted " . count( $hpos_ids ) . " orders via SQL." );
             }
+        }
 
-            $page++;
-        } while ( count( $orders ) === 50 );
+        // ── Legacy post-based tagged path ──
+        $legacy_ids = $wpdb->get_col(
+            "SELECT DISTINCT p.ID
+               FROM {$wpdb->posts} p
+               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+              WHERE pm.meta_key = '_octowoo_oc_order_id'
+                AND p.post_type = 'shop_order'"
+        );
+        if ( ! empty( $legacy_ids ) ) {
+            $csv_l = implode( ',', array_map( 'intval', $legacy_ids ) );
+            $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $deleted += count( $legacy_ids );
+            $this->logger->info( "[purge] Legacy tagged: deleted " . count( $legacy_ids ) . " orders via SQL." );
+        }
 
         return $deleted;
     }
@@ -416,14 +456,15 @@ class DataPurger {
                 AND p.post_type   = 'shop_coupon'"
         );
 
-        $deleted = 0;
-        foreach ( array_map( 'intval', $ids ) as $id ) {
-            if ( wp_delete_post( $id, true ) ) {
-                $deleted++;
-            }
+        if ( empty( $ids ) ) {
+            return 0;
         }
 
-        return $deleted;
+        $csv = implode( ',', array_map( 'intval', $ids ) );
+        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+        return count( $ids );
     }
 
     // ── Reviews ───────────────────────────────────────────────────────────────
@@ -447,14 +488,16 @@ class DataPurger {
             );
         }
 
-        $deleted = 0;
-        foreach ( array_map( 'intval', $comment_ids ) as $cid ) {
-            if ( wp_delete_comment( $cid, true ) ) {
-                $deleted++;
-            }
+        if ( empty( $comment_ids ) ) {
+            return 0;
         }
 
-        return $deleted;
+        $csv = implode( ',', array_map( 'intval', $comment_ids ) );
+        $wpdb->query( "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->comments}    WHERE comment_ID IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+        $this->logger->info( "[purge] Bulk-deleted " . count( $comment_ids ) . " reviews via SQL." );
+        return count( $comment_ids );
     }
 
     // ── Information pages ─────────────────────────────────────────────────────
@@ -462,10 +505,8 @@ class DataPurger {
     private function purgeInformation( bool $force = false ): int {
         global $wpdb;
 
-        // Both tagged and force modes only delete pages that OctoWoo created:
-        //   - pages with _octowoo_oc_id  (directly migrated from OpenCart)
-        //   - pages with _octowoo_translation_of  (WPML/Polylang translated copies)
-        // Manually-created pages (header templates, custom pages, etc.) are NEVER touched.
+        // Both tagged and force modes only delete OctoWoo-created pages.
+        // Manually-created pages (theme templates, custom pages) are NEVER touched.
         $ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
                FROM {$wpdb->posts} p
@@ -474,14 +515,16 @@ class DataPurger {
                 AND p.post_type = 'page'"
         );
 
-        $deleted = 0;
-        foreach ( array_map( 'intval', $ids ) as $id ) {
-            if ( wp_delete_post( $id, true ) ) {
-                $deleted++;
-            }
+        if ( empty( $ids ) ) {
+            return 0;
         }
 
-        return $deleted;
+        $csv = implode( ',', array_map( 'intval', $ids ) );
+        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+        $this->logger->info( "[purge] Bulk-deleted " . count( $ids ) . " information pages via SQL." );
+        return count( $ids );
     }
 
     // ── Downloads ─────────────────────────────────────────────────────────────

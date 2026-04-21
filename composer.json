@@ -1,7 +1,7 @@
 {
     "name": "octowoo/octowoo",
     "description": "Production-ready OpenCart to WooCommerce migration plugin",
-    "version": "2.4.32",
+    "version": "2.4.33",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
     "keywords": [
