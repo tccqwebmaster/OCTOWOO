@@ -8,7 +8,7 @@
  *                    reviews, information pages, SEO URLs, WPML/Polylang, Yoast SEO, and more)
  *                    into WooCommerce. Supports batch processing, resume, dry-run, cron
  *                    auto-import, WP-CLI, and an add-on hook system.
- * Version:           2.4.29
+ * Version:           2.4.30
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            OctoWoo Team
@@ -22,7 +22,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // ── Plugin constants ──────────────────────────────────────────────────────────
-define( 'OCTOWOO_VERSION',    '2.4.29' );
+define( 'OCTOWOO_VERSION',    '2.4.30' );
 define( 'OCTOWOO_FILE',       __FILE__ );
 define( 'OCTOWOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'OCTOWOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
