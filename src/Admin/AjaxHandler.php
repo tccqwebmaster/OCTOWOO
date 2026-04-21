@@ -1173,7 +1173,16 @@ class AjaxHandler {
         $breakdown   = $results['results']     ?? $results; // BC-safe if array is flat
         $diagnostics = $results['diagnostics'] ?? [];
 
-        $total = array_sum( $breakdown );
+        // Sum only integer results; string values are per-entity error messages.
+        $total        = 0;
+        $entity_errors = [];
+        foreach ( $breakdown as $entity => $val ) {
+            if ( is_int( $val ) ) {
+                $total += $val;
+            } else {
+                $entity_errors[] = $entity . ': ' . $val;
+            }
+        }
 
         // Build human-readable hints for entities where 0 were deleted but
         // WC items do exist (id_map has been reset / meta was never saved).
@@ -1187,6 +1196,9 @@ class AjaxHandler {
                     $counts['total']
                 );
             }
+        }
+        foreach ( $entity_errors as $err ) {
+            $hints[] = '⚠ Entity error — ' . $err . ' (check OctoWoo log for details)';
         }
 
         wp_send_json_success( [

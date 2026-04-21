@@ -64,7 +64,13 @@ class DataPurger {
             }
             $mode = $force ? 'force' : 'tagged';
             $this->logger->info( "[purge] Starting purge ({$mode}): {$entity}" );
-            $count = $this->$method( $force );
+            try {
+                $count = $this->$method( $force );
+            } catch ( \Throwable $e ) {
+                $this->logger->error( "[purge] {$entity} failed: " . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() );
+                $results[ $entity ] = 'error: ' . $e->getMessage();
+                continue;
+            }
             $results[ $entity ] = $count;
             $this->logger->info( "[purge] Finished purge: {$entity} — {$count} item(s) deleted." );
 
@@ -249,29 +255,68 @@ class DataPurger {
     // ── Orders ────────────────────────────────────────────────────────────────
 
     private function purgeOrders( bool $force = false ): int {
-        // wc_get_orders() handles both legacy posts and HPOS transparently.
+        global $wpdb;
+
+        if ( $force ) {
+            // Use direct SQL for speed — loading full WC_Order objects for bulk
+            // deletion is extremely slow and memory-intensive on large stores.
+            $count = 0;
+
+            // ── HPOS path (WooCommerce 7+ High-Performance Order Storage) ──
+            $hpos_table = $wpdb->prefix . 'wc_orders';
+            $has_hpos   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_table ) );
+
+            if ( $has_hpos ) {
+                $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                if ( $count > 0 ) {
+                    // Delete order item meta → order items → order meta → orders.
+                    $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $wpdb->query( "DELETE oi FROM {$wpdb->prefix}woocommerce_order_items oi JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $wpdb->query( "DELETE om FROM {$wpdb->prefix}wc_orders_meta om JOIN {$wpdb->prefix}wc_orders o ON o.id = om.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $this->logger->info( "[purge] HPOS: bulk-deleted {$count} orders via SQL." );
+                }
+            }
+
+            // ── Legacy path (post-based orders in wp_posts) ──
+            // Also runs after HPOS in case some orders were not yet migrated.
+            $legacy_ids = array_map( 'intval', (array) $wpdb->get_col(
+                "SELECT ID FROM {$wpdb->posts}
+                  WHERE post_type = 'shop_order'
+                    AND post_status != 'auto-draft'"
+            ) );
+            if ( ! empty( $legacy_ids ) ) {
+                $csv = implode( ',', $legacy_ids );
+                $wpdb->query( "DELETE FROM {$wpdb->postmeta}                          WHERE post_id      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items     WHERE order_id     IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->posts}                             WHERE ID           IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                if ( ! $has_hpos ) {
+                    $count = count( $legacy_ids );
+                    $this->logger->info( "[purge] Legacy: bulk-deleted {$count} orders via SQL." );
+                }
+            }
+
+            return $count;
+        }
+
+        // ── Tagged (non-force) path — use wc_get_orders() for HPOS compat. ──
         $deleted = 0;
         $page    = 1;
 
-        $query_args = [
-            'limit'  => 100,
-            'page'   => $page,
-            'return' => 'objects',
-            'type'   => 'shop_order',
-        ];
-
-        if ( ! $force ) {
-            $query_args['meta_query'] = [ // phpcs:ignore WordPress.DB.SlowDBQuery
-                [
-                    'key'     => '_octowoo_oc_order_id',
-                    'compare' => 'EXISTS',
-                ],
-            ];
-        }
-
         do {
-            $query_args['page'] = $page;
-            $orders = wc_get_orders( $query_args );
+            $orders = wc_get_orders( [
+                'limit'      => 50,
+                'page'       => $page,
+                'return'     => 'objects',
+                'type'       => 'shop_order',
+                'meta_query' => [ // phpcs:ignore WordPress.DB.SlowDBQuery
+                    [
+                        'key'     => '_octowoo_oc_order_id',
+                        'compare' => 'EXISTS',
+                    ],
+                ],
+            ] );
 
             foreach ( $orders as $order ) {
                 $order->delete( true );
@@ -279,7 +324,7 @@ class DataPurger {
             }
 
             $page++;
-        } while ( count( $orders ) === 100 );
+        } while ( count( $orders ) === 50 );
 
         return $deleted;
     }
