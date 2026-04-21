@@ -184,49 +184,129 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
             <p class="ow-form-hint" style="margin-top:8px;">
                 * <?php esc_html_e( 'Bundles requires WooCommerce Product Bundles (SomewhereWarm) + OpenCart 4.x.', 'octowoo' ); ?>
             </p>
+
+            <!-- Language reference & timing note -->
+            <div style="margin-top:14px;padding:12px 16px;background:#f0f6fc;border-left:4px solid #2271b1;border-radius:4px;font-size:12px;color:#3c434a;line-height:1.6;">
+                <strong style="font-size:13px;">🌐 <?php esc_html_e( 'Multilingual (Arabic / Secondary Language)', 'octowoo' ); ?></strong><br>
+                <?php esc_html_e( 'Arabic is imported automatically at the END of the full migration in a dedicated "multilingual pass" — you do not need to start a second migration. Just enable "Multilingual data (WPML / Polylang)" in Step 2 below.', 'octowoo' ); ?>
+                <hr style="border:none;border-top:1px solid #c9d9e8;margin:10px 0;">
+                <strong><?php esc_html_e( 'OpenCart Language IDs — quick reference:', 'octowoo' ); ?></strong>
+                <span style="color:#666;"><?php esc_html_e( '(Verify in OpenCart Admin → System → Localisation → Languages)', 'octowoo' ); ?></span><br>
+                <div style="display:grid;grid-template-columns:repeat(4,auto);gap:4px 20px;margin-top:6px;width:fit-content;">
+                    <span style="font-weight:600;"><?php esc_html_e( 'Language', 'octowoo' ); ?></span>
+                    <span style="font-weight:600;"><?php esc_html_e( 'Typical ID', 'octowoo' ); ?></span>
+                    <span style="font-weight:600;"><?php esc_html_e( 'Language', 'octowoo' ); ?></span>
+                    <span style="font-weight:600;"><?php esc_html_e( 'Typical ID', 'octowoo' ); ?></span>
+
+                    <span><?php esc_html_e( 'English', 'octowoo' ); ?></span><span><code>1</code></span>
+                    <span><?php esc_html_e( 'Arabic', 'octowoo' ); ?></span><span><code>2 or 3</code></span>
+
+                    <span><?php esc_html_e( 'French', 'octowoo' ); ?></span><span><code>2–4</code></span>
+                    <span><?php esc_html_e( 'German', 'octowoo' ); ?></span><span><code>3–5</code></span>
+
+                    <span><?php esc_html_e( 'Turkish', 'octowoo' ); ?></span><span><code>2–4</code></span>
+                    <span><?php esc_html_e( 'Persian (Farsi)', 'octowoo' ); ?></span><span><code>2–5</code></span>
+                </div>
+                <p style="margin:8px 0 0;color:#666;">
+                    <?php
+                    printf(
+                        /* translators: link to settings tab */
+                        esc_html__( 'Set "Primary Language ID" and "Secondary Language ID" in %s.', 'octowoo' ),
+                        '<a href="#" class="ow-tab-btn" data-tab="settings" style="color:#2271b1;">' . esc_html__( 'Settings → OpenCart', 'octowoo' ) . '</a>'
+                    );
+                    ?>
+                </p>
+            </div>
         </div>
 
         <!-- ── STEP 2: Additional Options ───────────────────────────────── -->
         <div class="ow-card">
-            <h2><?php esc_html_e( '2 — Additional Options', 'octowoo' ); ?></h2>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 32px;font-size:13px;">
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-images" checked style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Transfer images from Categories &amp; Product descriptions', 'octowoo' ); ?></span>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+                <h2 style="margin:0;"><?php esc_html_e( '2 — Additional Options', 'octowoo' ); ?></h2>
+                <span style="display:flex;gap:8px;">
+                    <button type="button" id="ow-opt-select-all" class="ow-btn ow-btn-secondary" style="font-size:11px;padding:3px 12px;">☑ <?php esc_html_e( 'Select All', 'octowoo' ); ?></button>
+                    <button type="button" id="ow-opt-deselect-all" class="ow-btn ow-btn-secondary" style="font-size:11px;padding:3px 12px;">☐ <?php esc_html_e( 'Deselect All', 'octowoo' ); ?></button>
+                </span>
+            </div>
+
+            <?php
+            $ow_opts = [
+                [
+                    'id'      => 'ow-opt-images',
+                    'checked' => true,
+                    'icon'    => '🖼',
+                    'label'   => __( 'Transfer images from Categories &amp; Product descriptions', 'octowoo' ),
+                    'hint'    => __( 'Downloads product images from the OpenCart image folder into the WooCommerce media library.', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-downloads',
+                    'checked' => true,
+                    'icon'    => '📦',
+                    'label'   => __( 'Migrate downloadable products', 'octowoo' ),
+                    'hint'    => __( 'Copies downloadable product files from OpenCart and attaches them to WooCommerce products. Disable if you have no downloadable products.', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-passwords',
+                    'checked' => true,
+                    'icon'    => '🔑',
+                    'label'   => __( "Migrate customers' passwords", 'octowoo' ),
+                    'hint'    => __( 'Converts OpenCart password hashes so customers can log in on WooCommerce with the same password.', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-seo',
+                    'checked' => true,
+                    'icon'    => '🔗',
+                    'label'   => __( 'Migrate categories &amp; products SEO URLs', 'octowoo' ),
+                    'hint'    => __( 'Imports OpenCart SEO-friendly URLs as WooCommerce post slugs (Yoast meta also copied).', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-redirects',
+                    'checked' => false,
+                    'icon'    => '↪',
+                    'label'   => __( 'Create 301 redirects after migration', 'octowoo' ),
+                    'hint'    => __( 'Writes redirect rules into .htaccess so old OpenCart URLs (e.g. /index.php?route=product/product&product_id=12) forward to the new WooCommerce URLs.', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-strip-html',
+                    'checked' => false,
+                    'icon'    => '✂',
+                    'label'   => __( 'Strip HTML from category &amp; product names', 'octowoo' ),
+                    'hint'    => __( 'Removes &lt;b&gt;, &lt;span&gt; and other HTML tags that some OpenCart themes inject into names.', 'octowoo' ),
+                ],
+                [
+                    'id'      => 'ow-opt-multilingual',
+                    'checked' => false,
+                    'icon'    => '🌐',
+                    'label'   => __( 'Multilingual data (WPML / Polylang)', 'octowoo' ),
+                    'hint'    => __( 'Runs a translation pass AFTER all primary migrators finish. Creates Arabic (or secondary language) posts/terms and links them via WPML/Polylang. Requires WPML or Polylang to be active.', 'octowoo' ),
+                ],
+            ];
+            ?>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <?php foreach ( $ow_opts as $ow_o ) : ?>
+                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 14px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;transition:background .15s;" onmouseover="this.style.background='#f0f6fc'" onmouseout="this.style.background='#fafafa'">
+                    <input type="checkbox" id="<?php echo esc_attr( $ow_o['id'] ); ?>" class="ow-step2-opt"
+                           <?php checked( $ow_o['checked'] ); ?> style="margin-top:3px;flex-shrink:0;">
+                    <span>
+                        <span style="font-weight:600;"><?php echo $ow_o['icon']; ?> <?php echo $ow_o['label']; ?></span><br>
+                        <span style="font-size:11px;color:#666;line-height:1.5;"><?php echo esc_html( $ow_o['hint'] ); ?></span>
+                    </span>
                 </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-passwords" checked style="margin-top:2px;">
-                    <span><?php esc_html_e( "Migrate customers' passwords", 'octowoo' ); ?></span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-seo" checked style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Migrate categories &amp; products SEO URLs', 'octowoo' ); ?></span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-redirects" style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Create 301 redirects on your store after migration', 'octowoo' ); ?></span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-strip-html" style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Strip HTML from category &amp; product names', 'octowoo' ); ?></span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-downloads" checked style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Migrate downloadable products', 'octowoo' ); ?></span>
-                </label>
-                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
-                    <input type="checkbox" id="ow-opt-multilingual" style="margin-top:2px;">
-                    <span><?php esc_html_e( 'Multilingual data (WPML / Polylang)', 'octowoo' ); ?></span>
-                </label>
+                <?php endforeach; ?>
             </div>
         </div>
 
         <!-- ── STEP 3: Run Migration ────────────────────────────────────── -->
         <div class="ow-card">
             <h2 style="margin-bottom:6px;"><?php esc_html_e( '3 — Run Migration', 'octowoo' ); ?></h2>
-            <p class="ow-form-hint" style="margin:0 0 14px;">
+            <p class="ow-form-hint" style="margin:0 0 10px;">
                 <?php esc_html_e( 'Run a Demo first (migrates ~20 items per entity) to verify the result, then run a Full Migration.', 'octowoo' ); ?>
             </p>
+            <div style="margin-bottom:14px;padding:9px 14px;background:#fff8e1;border-left:4px solid #f0b429;border-radius:4px;font-size:12px;color:#3c434a;">
+                💡 <strong><?php esc_html_e( 'Tip:', 'octowoo' ); ?></strong>
+                <?php esc_html_e( 'If you want to run in the background (so you can close the browser tab), scroll down and choose "Start in Background" instead of the standard Start buttons.', 'octowoo' ); ?>
+                <?php esc_html_e( 'Background mode uses WooCommerce Action Scheduler — make sure WooCommerce cron is running.', 'octowoo' ); ?>
+            </div>
             <!-- Standard (AJAX chunk) mode -->
             <div class="ow-actions">
                 <button type="button" id="ow-btn-demo" class="ow-btn ow-btn-warning">

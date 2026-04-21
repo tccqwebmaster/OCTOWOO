@@ -256,6 +256,14 @@
             });
         });
 
+        // ── Step 2 Additional Options — Select All / Deselect All ─────────
+        $('#ow-opt-select-all').on('click', function () {
+            $('.ow-step2-opt').prop('checked', true);
+        });
+        $('#ow-opt-deselect-all').on('click', function () {
+            $('.ow-step2-opt').prop('checked', false);
+        });
+
         // ── Purge imported data ───────────────────────────────────────────
 
         // Select All / Deselect All toggles.
