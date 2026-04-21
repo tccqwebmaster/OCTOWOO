@@ -732,7 +732,7 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <?php esc_html_e( 'Permanently delete data that was imported by OctoWoo. Only items created by this plugin (identified by an internal OctoWoo tag) are affected — your manually-added products, pages, blog posts, and admin users are never touched.', 'octowoo' ); ?>
             </p>
 
-            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px 20px; font-size:13px; margin-bottom:18px;">
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px 20px; font-size:13px; margin-bottom:10px;">
                 <?php
                 $purge_entities = [
                     'products'      => __( 'Products (+ images & variations)', 'octowoo' ),
@@ -755,6 +755,15 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <?php endforeach; ?>
             </div>
 
+            <div style="margin-bottom:14px; font-size:13px;">
+                <button type="button" id="ow-btn-select-all" class="ow-btn" style="padding:4px 12px; font-size:12px;">
+                    <?php esc_html_e( '\u2611 Select All', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-deselect-all" class="ow-btn" style="padding:4px 12px; font-size:12px; margin-left:6px;">
+                    <?php esc_html_e( '\u2610 Deselect All', 'octowoo' ); ?>
+                </button>
+            </div>
+
             <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
                 <button type="button" id="ow-btn-purge" class="ow-btn ow-btn-danger">
                     🗑 <?php esc_html_e( 'Purge Selected', 'octowoo' ); ?>
@@ -763,10 +772,13 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                     <input type="checkbox" id="ow-force-purge" value="1">
                     <?php esc_html_e( '☢ Force Purge All WooCommerce Data (ignores OctoWoo tag)', 'octowoo' ); ?>
                 </label>
+                <button type="button" id="ow-btn-purge-everything" class="ow-btn ow-btn-danger" style="background:#7b1fa2; border-color:#7b1fa2;">
+                    ☢ <?php esc_html_e( 'Purge Everything (Force)', 'octowoo' ); ?>
+                </button>
                 <span id="ow-purge-result" style="font-size:13px;"></span>
             </div>
             <p class="ow-form-hint" style="color:#c62828; margin-top:8px;">
-                <?php esc_html_e( 'Force Purge deletes ALL WooCommerce products/categories/orders/etc. — even items not imported by OctoWoo. Use this only if normal purge returns 0 and you want a complete clean slate. Customers and Information pages always require the OctoWoo tag regardless.', 'octowoo' ); ?>
+                <?php esc_html_e( 'Force Purge deletes ALL WooCommerce products/categories/orders/etc. — even items not imported by OctoWoo. Information Pages (force or normal) only deletes pages that OctoWoo created — your manually-built pages, header templates, and theme pages are always protected. Customers always require the OctoWoo tag.', 'octowoo' ); ?>
             </p>
         </div>
 

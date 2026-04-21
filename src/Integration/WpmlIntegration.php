@@ -70,10 +70,18 @@ class WpmlIntegration extends AbstractMigrator {
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }
 
+        // Guard against re-execution when a prior chunk already completed this step.
+        if ( $this->checkpoint->isCompleted( self::KEY ) ) {
+            $this->logger->info( '[multilingual] Already completed – skipping.' );
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        }
+
         $this->primary_lang   = $this->config['multilingual']['primary_locale']   ?? 'en';
         $this->secondary_lang = $this->config['multilingual']['secondary_locale']  ?? 'ar';
 
         $this->adapter = $this->detectAdapter();
+
+        $this->resolveLanguageCodes();
 
         if ( $this->adapter === 'none' ) {
             $this->logger->warning( '[multilingual] Neither WPML nor Polylang is active. Skipping translation pass.' );
@@ -133,18 +141,42 @@ class WpmlIntegration extends AbstractMigrator {
         foreach ( $rows as $row ) {
             $primary_id = (int) $row['wc_id'];
 
-            // Check if a translation already exists.
-            if ( $this->translationExists( $primary_id, 'post_' . $post_type ) ) {
-                $skipped++;
-                continue;
-            }
-
             // Fetch secondary language data from post meta.
             $ar_title   = get_post_meta( $primary_id, $title_meta_key,   true );
             $ar_content = get_post_meta( $primary_id, $content_meta_key, true );
 
             if ( ! $ar_title ) {
+                $this->logger->debug( "[multilingual] No Arabic title meta for {$post_type} WC #{$primary_id} (meta key: {$title_meta_key}) – skipping." );
                 $skipped++;
+                continue;
+            }
+
+            // If translation already exists (e.g. WPML duplicated English),
+            // update it with Arabic data instead of skipping permanently.
+            $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
+            if ( $existing_translation_id > 0 ) {
+                if ( $this->isDry() ) {
+                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$ar_title}" );
+                    $processed++;
+                    continue;
+                }
+
+                $primary_post_for_slug = get_post( $primary_id );
+                $updated = wp_update_post( [
+                    'ID'           => $existing_translation_id,
+                    'post_title'   => $ar_title,
+                    'post_content' => $ar_content,
+                    'post_name'    => $primary_post_for_slug ? $primary_post_for_slug->post_name : '',
+                ], true );
+
+                if ( is_wp_error( $updated ) ) {
+                    $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $updated->get_error_message() );
+                    $failed++;
+                    continue;
+                }
+
+                $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
+                $processed++;
                 continue;
             }
 
@@ -180,7 +212,9 @@ class WpmlIntegration extends AbstractMigrator {
      * Create a translated WP post in the secondary language.
      */
     private function createTranslatedPost( \WP_Post $source, string $title, string $content, string $post_type ): int {
-        $slug = $this->toSlug( $title );
+        // Always use the primary (English) slug so Arabic URLs stay clean
+        // (e.g. /ar/product/apple-cable/ instead of /ar/product/%d8%a7%d8%a8%d9%84-...).
+        $slug = $source->post_name;
 
         // Avoid metadata contamination – create a plain duplicate.
         $insert_data = [
@@ -189,7 +223,7 @@ class WpmlIntegration extends AbstractMigrator {
             'post_excerpt'   => '',
             'post_status'    => $source->post_status,
             'post_type'      => $source->post_type,
-            'post_name'      => $slug ?: ( $source->post_name . '-' . $this->secondary_lang ),
+            'post_name'      => $slug,
             'post_author'    => $source->post_author,
             'menu_order'     => $source->menu_order,
         ];
@@ -268,16 +302,38 @@ class WpmlIntegration extends AbstractMigrator {
         foreach ( $rows as $row ) {
             $primary_term_id = (int) $row['wc_id'];
 
-            if ( $this->translationExists( $primary_term_id, "tax_{$taxonomy}" ) ) {
-                $skipped++;
-                continue;
-            }
-
             $ar_name        = get_term_meta( $primary_term_id, '_octowoo_name_ar',        true );
             $ar_description = get_term_meta( $primary_term_id, '_octowoo_description_ar', true );
 
             if ( ! $ar_name ) {
+                $this->logger->debug( "[multilingual] No Arabic name meta for {$taxonomy} term WC #{$primary_term_id} – skipping." );
                 $skipped++;
+                continue;
+            }
+
+            $existing_translation_id = $this->getExistingTranslationId( $primary_term_id, "tax_{$taxonomy}" );
+            if ( $existing_translation_id > 0 ) {
+                if ( $this->isDry() ) {
+                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$taxonomy} term #{$primary_term_id}: {$ar_name}" );
+                    $processed++;
+                    continue;
+                }
+
+                $primary_term_for_slug = get_term( $primary_term_id, $taxonomy );
+                $updated = wp_update_term( $existing_translation_id, $taxonomy, [
+                    'name'        => $ar_name,
+                    'description' => $ar_description,
+                    'slug'        => ( $primary_term_for_slug && ! is_wp_error( $primary_term_for_slug ) ) ? $primary_term_for_slug->slug : '',
+                ] );
+
+                if ( is_wp_error( $updated ) ) {
+                    $this->logger->error( "[multilingual] Failed updating existing translated term #{$existing_translation_id}: " . $updated->get_error_message() );
+                    $failed++;
+                    continue;
+                }
+
+                $this->logger->debug( "[multilingual] Updated existing {$taxonomy} translation term #{$existing_translation_id} from primary #{$primary_term_id}." );
+                $processed++;
                 continue;
             }
 
@@ -313,10 +369,8 @@ class WpmlIntegration extends AbstractMigrator {
      * Create a translated taxonomy term in the secondary language.
      */
     private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy ): int {
-        $slug = $this->toSlug( $name );
-
-        // Ensure unique slug.
-        $slug = $slug ?: ( $source->slug . '-' . $this->secondary_lang );
+        // Always use the primary (English) slug so Arabic URLs stay clean.
+        $slug = $source->slug;
 
         $result = wp_insert_term( $name, $taxonomy, [
             'description' => $description ?: $source->description,
@@ -450,6 +504,13 @@ class WpmlIntegration extends AbstractMigrator {
      * Check whether $element_id already has a translation in the secondary language.
      */
     private function translationExists( int $element_id, string $element_type ): bool {
+        return $this->getExistingTranslationId( $element_id, $element_type ) > 0;
+    }
+
+    /**
+     * Return translated object ID in secondary language, or 0 when missing.
+     */
+    private function getExistingTranslationId( int $element_id, string $element_type ): int {
         if ( $this->adapter === 'wpml' ) {
             $translated = apply_filters(
                 'wpml_object_id',
@@ -458,17 +519,20 @@ class WpmlIntegration extends AbstractMigrator {
                 false,
                 $this->secondary_lang
             );
-            return $translated && (int) $translated !== $element_id;
+            $translated_id = (int) $translated;
+            return ( $translated_id > 0 && $translated_id !== $element_id ) ? $translated_id : 0;
         }
 
         if ( $this->adapter === 'polylang' ) {
             if ( strpos( $element_type, 'post_' ) === 0 && function_exists( 'pll_get_post' ) ) {
                 $translated = pll_get_post( $element_id, $this->secondary_lang );
-                return ! empty( $translated ) && (int) $translated !== $element_id;
+                $translated_id = (int) $translated;
+                return ( $translated_id > 0 && $translated_id !== $element_id ) ? $translated_id : 0;
             }
             if ( strpos( $element_type, 'tax_' ) === 0 && function_exists( 'pll_get_term' ) ) {
                 $translated = pll_get_term( $element_id, $this->secondary_lang );
-                return ! empty( $translated ) && (int) $translated !== $element_id;
+                $translated_id = (int) $translated;
+                return ( $translated_id > 0 && $translated_id !== $element_id ) ? $translated_id : 0;
             }
         }
 
@@ -492,10 +556,10 @@ class WpmlIntegration extends AbstractMigrator {
                 'posts_per_page' => 1,
                 'fields'         => 'ids',
             ] );
-            return ! empty( $existing );
+            return ! empty( $existing ) ? (int) $existing[0] : 0;
         }
 
-        return false;
+        return 0;
     }
 
     // ── Adapter detection ─────────────────────────────────────────────────────
@@ -526,6 +590,106 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         return 'none';
+    }
+
+    /**
+     * Normalize configured language values (locale/code) to active plugin codes.
+     */
+    private function resolveLanguageCodes(): void {
+        $configured_primary   = (string) $this->primary_lang;
+        $configured_secondary = (string) $this->secondary_lang;
+
+        if ( $this->adapter === 'wpml' ) {
+            $langs = apply_filters( 'wpml_active_languages', null, [ 'skip_missing' => 0 ] );
+            if ( is_array( $langs ) && ! empty( $langs ) ) {
+                $this->primary_lang = $this->resolveAgainstWpmlLanguages( $configured_primary, $langs, 'en' );
+                $this->secondary_lang = $this->resolveAgainstWpmlLanguages( $configured_secondary, $langs, 'ar' );
+            }
+        } elseif ( $this->adapter === 'polylang' && function_exists( 'pll_languages_list' ) ) {
+            $active_slugs = (array) pll_languages_list( [ 'fields' => 'slug' ] );
+            if ( ! empty( $active_slugs ) ) {
+                $this->primary_lang = $this->resolveAgainstSimpleSlugs( $configured_primary, $active_slugs, 'en' );
+                $this->secondary_lang = $this->resolveAgainstSimpleSlugs( $configured_secondary, $active_slugs, 'ar' );
+            }
+        }
+
+        if ( $this->primary_lang === $this->secondary_lang ) {
+            $this->logger->warning( "[multilingual] Primary and secondary resolved to same language '{$this->primary_lang}'. Forcing fallback secondary 'ar'." );
+            $this->secondary_lang = 'ar';
+        }
+    }
+
+    /**
+     * Resolve a configured language value against WPML active languages.
+     *
+     * @param string $configured Language code or locale (e.g. en, en_US).
+     * @param array  $langs      WPML active languages payload.
+     * @param string $fallback   Fallback code.
+     */
+    private function resolveAgainstWpmlLanguages( string $configured, array $langs, string $fallback ): string {
+        $configured = trim( $configured );
+        if ( $configured === '' ) {
+            return $fallback;
+        }
+
+        if ( isset( $langs[ $configured ] ) ) {
+            return $configured;
+        }
+
+        $norm_target = $this->normalizeLangCode( $configured );
+
+        foreach ( $langs as $code => $info ) {
+            if ( $this->normalizeLangCode( (string) $code ) === $norm_target ) {
+                return (string) $code;
+            }
+
+            $locale = (string) ( $info['default_locale'] ?? $info['locale'] ?? '' );
+            if ( $locale !== '' && $this->normalizeLangCode( $locale ) === $norm_target ) {
+                return (string) $code;
+            }
+        }
+
+        return $fallback;
+    }
+
+    /**
+     * Resolve configured language code/locale against simple slug arrays.
+     *
+     * @param string   $configured Language code or locale.
+     * @param string[] $slugs      Active slugs.
+     * @param string   $fallback   Fallback slug.
+     */
+    private function resolveAgainstSimpleSlugs( string $configured, array $slugs, string $fallback ): string {
+        $configured = trim( $configured );
+        if ( $configured === '' ) {
+            return $fallback;
+        }
+
+        if ( in_array( $configured, $slugs, true ) ) {
+            return $configured;
+        }
+
+        $norm_target = $this->normalizeLangCode( $configured );
+        foreach ( $slugs as $slug ) {
+            if ( $this->normalizeLangCode( (string) $slug ) === $norm_target ) {
+                return (string) $slug;
+            }
+        }
+
+        return $fallback;
+    }
+
+    /**
+     * Normalize locales/codes (en_US, en-GB, EN) to base lowercase code (en).
+     */
+    private function normalizeLangCode( string $value ): string {
+        $value = strtolower( trim( $value ) );
+        if ( $value === '' ) {
+            return '';
+        }
+
+        $parts = preg_split( '/[_-]/', $value );
+        return (string) ( $parts[0] ?? $value );
     }
 
     // ── Static registration helper ────────────────────────────────────────────

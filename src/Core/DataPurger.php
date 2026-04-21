@@ -113,6 +113,10 @@ class DataPurger {
                     AND post_status != 'auto-draft'"
             ) );
 
+            if ( empty( $all_ids ) ) {
+                return 0;
+            }
+
             $csv = implode( ',', $all_ids );
 
             // Delete child data first, then the posts themselves.
@@ -356,13 +360,15 @@ class DataPurger {
     private function purgeInformation( bool $force = false ): int {
         global $wpdb;
 
-        // Force mode intentionally still requires the OctoWoo tag for 'page' post type
-        // because force-deleting ALL pages would destroy unrelated WP content.
+        // Both tagged and force modes only delete pages that OctoWoo created:
+        //   - pages with _octowoo_oc_id  (directly migrated from OpenCart)
+        //   - pages with _octowoo_translation_of  (WPML/Polylang translated copies)
+        // Manually-created pages (header templates, custom pages, etc.) are NEVER touched.
         $ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
                FROM {$wpdb->posts} p
                JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
-              WHERE pm.meta_key = '_octowoo_oc_id'
+              WHERE pm.meta_key IN ('_octowoo_oc_id', '_octowoo_translation_of')
                 AND p.post_type = 'page'"
         );
 

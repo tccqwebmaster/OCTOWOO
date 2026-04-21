@@ -117,6 +117,17 @@ class CategoryMigrator extends AbstractMigrator {
         // Secondary language description (Arabic).
         $lang_id_sec = $this->langIdSecondary();
         $desc_ar     = ( $lang_id_sec > 0 ) ? ( $descriptions[ $oc_id ][ $lang_id_sec ] ?? [] ) : [];
+        if ( empty( $desc_ar ) && ! empty( $descriptions[ $oc_id ] ) ) {
+            // Fallback: use first non-primary language row when secondary ID
+            // is missing/misconfigured, so multilingual pass still has Arabic data.
+            foreach ( $descriptions[ $oc_id ] as $candidate_lang_id => $candidate_desc ) {
+                if ( (int) $candidate_lang_id !== $lang_id ) {
+                    $desc_ar = $candidate_desc;
+                    $this->logger->warning( "[categories] Secondary language ID {$lang_id_sec} not found for OC #{$oc_id}; using language_id={$candidate_lang_id} as fallback." );
+                    break;
+                }
+            }
+        }
 
         // Category thumbnail image path.
         $image = $row['image'] ?? '';
@@ -253,20 +264,54 @@ class CategoryMigrator extends AbstractMigrator {
         string $image   = '',
         int    $pending_parent_oc_id = 0
     ): bool {
+        $existing_term = get_term( $wc_term_id, 'product_cat' );
+        $safe_name = $this->sanitizeName( $name );
+        if ( $safe_name === '' && $existing_term && ! is_wp_error( $existing_term ) ) {
+            $safe_name = $this->sanitizeName( (string) $existing_term->name );
+        }
+
+        $update_args = [
+            'slug'        => $slug,
+            'description' => $description,
+            'parent'      => $wc_parent,
+        ];
+        if ( $safe_name !== '' ) {
+            $update_args['name'] = $safe_name;
+        }
+
         $result = wp_update_term(
             $wc_term_id,
             'product_cat',
-            [
-                'name'        => $name,
-                'slug'        => $slug,
-                'description' => $description,
-                'parent'      => $wc_parent,
-            ]
+            $update_args
         );
 
         if ( is_wp_error( $result ) ) {
+            // Some catalogs contain malformed names that WP normalizes to an
+            // empty value. Retry without forcing "name" so WP keeps existing.
+            $error_code    = (string) $result->get_error_code();
+            $error_message = (string) $result->get_error_message();
+            $is_empty_term = $error_code === 'empty_term_name'
+                || stripos( $error_code, 'empty' ) !== false
+                || stripos( $error_message, 'empty term' ) !== false;
+
+            if ( $is_empty_term ) {
+                $retry_args = [
+                    'slug'        => $slug,
+                    'description' => $description,
+                    'parent'      => $wc_parent,
+                ];
+
+                $retry = wp_update_term( $wc_term_id, 'product_cat', $retry_args );
+                if ( ! is_wp_error( $retry ) ) {
+                    $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+                    $this->reparentPendingChildren( $oc_id, $wc_term_id );
+                    $this->logger->warning( "[categories] Name update skipped for WC #{$wc_term_id} (OC #{$oc_id}) due to empty normalized term name; kept existing term name." );
+                    return true;
+                }
+            }
+
             $this->logger->error(
-                "[categories] wp_update_term failed for WC #{$wc_term_id}: " . $result->get_error_message()
+                "[categories] wp_update_term failed for WC #{$wc_term_id} (OC #{$oc_id}): " . $result->get_error_message()
             );
             return false;
         }

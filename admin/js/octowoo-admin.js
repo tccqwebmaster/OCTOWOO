@@ -257,6 +257,63 @@
         });
 
         // ── Purge imported data ───────────────────────────────────────────
+
+        // Select All / Deselect All toggles.
+        $('#ow-btn-select-all').on('click', function () {
+            $('.ow-purge-chk').prop('checked', true);
+        });
+        $('#ow-btn-deselect-all').on('click', function () {
+            $('.ow-purge-chk').prop('checked', false);
+        });
+
+        // Helper: fire a purge AJAX call with given entities + force flag.
+        function doPurge( entities, force, $btn, originalLabel ) {
+            const $result = $('#ow-purge-result');
+            $btn.prop('disabled', true).text('Purging…');
+            $result.text('').css('color', '#555');
+
+            $.post(octoWoo.ajaxUrl, {
+                action:   'octowoo_purge_imported',
+                nonce:    octoWoo.nonce,
+                entities: entities,
+                force:    force ? '1' : '0',
+            })
+            .done(function (res) {
+                if (res.success) {
+                    const breakdown = Object.entries(res.data.results || {})
+                        .map(([k, v]) => k + ': ' + v)
+                        .join(', ');
+                    let msg = '✔ ' + res.data.message + (breakdown ? ' (' + breakdown + ')' : '');
+                    $result.text(msg).css('color', '#2e7d32');
+
+                    // Show diagnostic hints when 0 items were deleted but WC has data.
+                    const hints = res.data.hints || [];
+                    if (hints.length > 0) {
+                        const $hint = $('<div style="margin-top:6px;color:#b45309;font-size:12px;"></div>');
+                        hints.forEach(function (h) {
+                            $hint.append($('<p style="margin:2px 0;">⚠ ' + h + '</p>'));
+                        });
+                        $result.after($hint);
+                        $('#ow-btn-purge').one('click', function () { $hint.remove(); });
+                    }
+
+                    // Uncheck boxes after success.
+                    $('.ow-purge-chk').prop('checked', false);
+                } else {
+                    $result.text('✘ ' + (res.data.message || 'Purge failed.')).css('color', '#c62828');
+                }
+            })
+            .fail(function (xhr) {
+                $result.text('✘ ' + (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message
+                    ? xhr.responseJSON.data.message
+                    : xhr.statusText)).css('color', '#c62828');
+            })
+            .always(function () {
+                $btn.prop('disabled', false).text(originalLabel);
+            });
+        }
+
+        // Purge Selected button.
         $('#ow-btn-purge').on('click', function () {
             const entities = [];
             $('.ow-purge-chk:checked').each(function () { entities.push($(this).val()); });
@@ -275,58 +332,35 @@
 
             if ( force ) {
                 const typed = prompt( confirmMsg );
-                if ( typed === null || typed.trim().toUpperCase() !== 'FORCE' ) {
-                    return;
-                }
+                if ( typed === null || typed.trim().toUpperCase() !== 'FORCE' ) { return; }
             } else {
-                if ( ! confirm( confirmMsg ) ) {
-                    return;
-                }
+                if ( ! confirm( confirmMsg ) ) { return; }
             }
-            const $btn = $('#ow-btn-purge');
-            const $result = $('#ow-purge-result');
-            $btn.prop('disabled', true).text('Purging…');
-            $result.text('').css('color', '#555');
 
-            $.post(octoWoo.ajaxUrl, {
-                action:   'octowoo_purge_imported',
-                nonce:    octoWoo.nonce,
-                entities: entities,
-                force:    force ? '1' : '0',
-            })
-            .done(function (res) {
-                if (res.success) {
-                    // Build per-entity breakdown string.
-                    const breakdown = Object.entries(res.data.results || {})
-                        .map(([k, v]) => k + ': ' + v)
-                        .join(', ');
-                    let msg = '✔ ' + res.data.message + (breakdown ? ' (' + breakdown + ')' : '');
-                    $result.text(msg).css('color', '#2e7d32');
+            doPurge( entities, force, $(this), '🗑 Purge Selected' );
+        });
 
-                    // Show diagnostic hints when 0 items were deleted but WC has data.
-                    const hints = res.data.hints || [];
-                    if (hints.length > 0) {
-                        const $hint = $('<div style="margin-top:6px;color:#b45309;font-size:12px;"></div>');
-                        hints.forEach(function (h) {
-                            $hint.append($('<p style="margin:2px 0;">⚠ ' + h + '</p>'));
-                        });
-                        $result.after($hint);
-                        // Auto-remove hint on next purge click.
-                        $('#ow-btn-purge').one('click', function () { $hint.remove(); });
-                    }
+        // Purge Everything (Force) — selects all entities + force in one click.
+        $('#ow-btn-purge-everything').on('click', function () {
+            const allEntities = [];
+            $('.ow-purge-chk').each(function () { allEntities.push($(this).val()); });
 
-                    // Uncheck boxes after success.
-                    $('.ow-purge-chk').prop('checked', false);
-                } else {
-                    $result.text('✘ ' + (res.data.message || 'Purge failed.')).css('color', '#c62828');
-                }
-            })
-            .fail(function (xhr) {
-                $result.text('✘ ' + xhr.statusText).css('color', '#c62828');
-            })
-            .always(function () {
-                $btn.prop('disabled', false).text('🗑 Purge Selected');
-            });
+            const typed = prompt(
+                '☢ PURGE EVERYTHING ☢\n\n' +
+                'This will force-delete ALL of the following:\n' +
+                '  • Products, Variations, Images\n' +
+                '  • Categories, Tags, Brands, Filters\n' +
+                '  • Orders, Coupons\n' +
+                '  • Customers (OctoWoo-tagged only)\n' +
+                '  • Reviews\n' +
+                '  • Information Pages (WooCommerce shop/cart/checkout and home page are protected)\n' +
+                '  • Downloads\n\n' +
+                'Your theme, design, menus, WooCommerce settings, and admin users are NOT affected.\n\n' +
+                'This cannot be undone. Type "FORCE" to confirm:'
+            );
+            if ( typed === null || typed.trim().toUpperCase() !== 'FORCE' ) { return; }
+
+            doPurge( allEntities, true, $(this), '☢ Purge Everything (Force)' );
         });
     }
 
@@ -579,6 +613,7 @@
     let chunkDryRun    = 0;
     let chunkDemoLimit = 0;
     let chunkFailCount = 0;
+    let chunkClearOrdersPending = false;
 
     /**
      * Build a comma-separated migrator list from the entity + option checkboxes.
@@ -647,6 +682,7 @@
         chunkMigrators = forcedMigrators || buildMigrators();
         chunkDryRun    = 0;
         chunkDemoLimit = demoLimitVal;
+        chunkClearOrdersPending = !resume;
 
         setButtonState('running');
         setBannerRunning();
@@ -687,6 +723,10 @@
     function runNextChunk() {
         if (!isRunning) { return; }
 
+        const shouldClearOrders = chunkClearOrdersPending ? 1 : 0;
+        // Send clear_orders only once at the beginning of a new run.
+        chunkClearOrdersPending = false;
+
         $.post(octoWoo.ajaxUrl, {
             action:      'octowoo_run_chunk',
             nonce:       octoWoo.nonce,
@@ -694,6 +734,7 @@
             resume:      currentRunId ? 1 : 0,
             dry_run:     chunkDryRun,
             demo_limit:  chunkDemoLimit,
+            clear_orders: shouldClearOrders,
             migrators:   chunkMigrators,
         })
         .done(function (res) {

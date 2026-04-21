@@ -247,6 +247,24 @@ class InformationMigrator extends AbstractMigrator {
         );
 
         if ( ! $desc ) {
+            // Fallback: use first non-primary language row when configured
+            // secondary language ID is missing/misconfigured.
+            $desc = $this->oc->fetchRow(
+                "SELECT title, description, meta_title, meta_description, language_id
+                 FROM `{$pfx}information_description`
+                 WHERE information_id = ? AND language_id <> ?
+                 ORDER BY language_id ASC
+                 LIMIT 1",
+                [ $oc_id, $this->langId() ]
+            );
+
+            if ( $desc ) {
+                $fallback_lang_id = (int) ( $desc['language_id'] ?? 0 );
+                $this->logger->warning( "[information] Secondary language ID {$lang2} not found for OC #{$oc_id}; using language_id={$fallback_lang_id} as fallback." );
+            }
+        }
+
+        if ( ! $desc ) {
             return;
         }
 

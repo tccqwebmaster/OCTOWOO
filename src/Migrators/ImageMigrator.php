@@ -31,6 +31,16 @@ class ImageMigrator extends AbstractMigrator {
     /** Prevent repeating the same local-path warning for every image row. */
     private bool $localPathWarningLogged = false;
 
+    /**
+     * Circuit breaker: set to true after the first connection-level failure
+     * (timeout, DNS error, etc.) so we stop hammering an unreachable host
+     * for the remainder of this migration chunk.
+     */
+    private bool $remoteHostDown = false;
+
+    /** Transient key used to persist the circuit-breaker state across AJAX chunks. */
+    private const TRANSIENT_REMOTE_DOWN = 'octowoo_img_remote_down';
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     /**
@@ -202,6 +212,16 @@ class ImageMigrator extends AbstractMigrator {
         }
 
         // Local file not present — attempt remote fetch strategies.
+        // Sync instance flag from transient so the circuit breaker survives across
+        // AJAX chunks (each chunk creates a new ImageMigrator instance).
+        if ( ! $this->remoteHostDown ) {
+            $this->remoteHostDown = (bool) get_transient( self::TRANSIENT_REMOTE_DOWN );
+        }
+        if ( $this->remoteHostDown ) {
+            $this->logger->debug( "[images] Remote host known unreachable; skipping: {$oc_path}." );
+            return null;
+        }
+
         $this->logger->warning( "[images] Source file not found locally: {$abs_source}. Trying HTTP fallback for {$oc_path}." );
 
         if ( $this->isDry() ) {
@@ -465,12 +485,23 @@ class ImageMigrator extends AbstractMigrator {
      * Download remote URL to a temporary file and return the path, or null.
      */
     private function downloadToTemp( string $url ): ?string {
+        // Fast-fail if the circuit breaker has already tripped (within this image's
+        // multi-strategy loop or from a previous image in this chunk).
+        if ( $this->remoteHostDown ) {
+            return null;
+        }
+
         if ( ! function_exists( 'wp_remote_get' ) ) {
             require_once ABSPATH . 'wp-includes/http.php';
         }
 
-        $resp = wp_remote_get( $url, [ 'timeout' => 20, 'redirection' => 5, 'sslverify' => false ] );
+        $resp = wp_remote_get( $url, [ 'timeout' => 10, 'redirection' => 3, 'sslverify' => false ] );
         if ( is_wp_error( $resp ) ) {
+            // Connection-level failure (timeout, DNS, refused) — trip the circuit breaker
+            // and persist it via transient so subsequent AJAX chunks skip remote too.
+            $this->remoteHostDown = true;
+            set_transient( self::TRANSIENT_REMOTE_DOWN, 1, 30 * MINUTE_IN_SECONDS );
+            $this->logger->warning( '[images] Remote host unreachable (' . $resp->get_error_message() . '). Disabling remote image fetching for this and future chunks.' );
             return null;
         }
 

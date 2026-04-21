@@ -466,6 +466,31 @@ class MigrationManager {
 
         $this->batch->setChunkMode( false );
 
+        // Some migrators (for example multilingual integrations) may not use
+        // BatchProcessor::runChunk() and therefore never update checkpoint
+        // status/counters in AJAX chunk mode. Treat them as one-shot chunks.
+        if ( ! array_key_exists( 'is_done', $result ) ) {
+            $processed = (int) ( $result['processed'] ?? 0 );
+            $skipped   = (int) ( $result['skipped'] ?? 0 );
+            $failed    = (int) ( $result['failed'] ?? 0 );
+            $total     = $processed + $skipped + $failed;
+
+            $this->checkpoint->init( $key, $total );
+            $this->checkpoint->start( $key );
+            if ( $total > 0 ) {
+                $this->checkpoint->update( $key, $total, $total );
+            }
+            $this->checkpoint->complete( $key );
+
+            $result['is_done'] = true;
+
+            $this->logger->debug(
+                "Chunk fallback [{$key}]: finalized non-chunk-aware migrator with total={$total}."
+            );
+
+            return $result;
+        }
+
         // Ensure is_done is always present.
         $result['is_done'] = $result['is_done'] ?? $this->checkpoint->isCompleted( $key );
 

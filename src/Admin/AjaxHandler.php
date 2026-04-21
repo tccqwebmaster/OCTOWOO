@@ -91,7 +91,9 @@ class AjaxHandler {
 
         // Verify nonce for all actions.
         if ( ! check_ajax_referer( self::NONCE, 'nonce', false ) ) {
-            wp_send_json_error( [ 'message' => __( 'Invalid security token.', 'octowoo' ) ], 403 );
+            // Send HTTP 200 so jQuery routes to .done(), not .fail(), giving the
+            // user a readable error message rather than a bare "✘ error".
+            wp_send_json_error( [ 'message' => __( 'Invalid security token. Please refresh the page and try again.', 'octowoo' ) ] );
         }
 
         // Lightweight request logging to aid debugging (non-blocking).
@@ -250,17 +252,31 @@ class AjaxHandler {
         $run_id = $resume && $active_run ? $active_run : null;
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $dry_run_flag = filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN );
+        $dry_run_raw = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $demo_limit_raw = (int) filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
+        $demo_limit_raw = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
 
         // Build runtime overrides: dry-run flag + demo limit + per-migrator run flags.
         $overrides = [];
-        if ( $dry_run_flag ) {
-            $overrides['migration']['dry_run'] = true;
+        if ( $dry_run_raw !== null ) {
+            $overrides['migration']['dry_run'] = filter_var( $dry_run_raw, FILTER_VALIDATE_BOOLEAN );
         }
-        if ( $demo_limit_raw > 0 ) {
-            $overrides['migration']['demo_limit'] = $demo_limit_raw;
+        if ( $demo_limit_raw !== null && $demo_limit_raw !== false ) {
+            $overrides['migration']['demo_limit'] = max( 0, (int) $demo_limit_raw );
+        }
+
+        $should_clear_orders = $clear_orders_raw !== null
+            ? filter_var( $clear_orders_raw, FILTER_VALIDATE_BOOLEAN )
+            : false;
+        if ( $should_clear_orders && ! $resume ) {
+            $this->purgeOrdersBeforeRun();
+        }
+
+        // Clear image circuit-breaker so a fresh run always reattempts remote images.
+        if ( ! $resume ) {
+            delete_transient( 'octowoo_img_remote_down' );
         }
 
         // phpcs:ignore WordPress.Security.NonceVerification
@@ -518,9 +534,11 @@ class AjaxHandler {
         // phpcs:ignore WordPress.Security.NonceVerification
         $resume   = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $dry_run  = filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN );
+        $dry_run_raw  = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
         // phpcs:ignore WordPress.Security.NonceVerification
         $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
 
         // ── Stale-lock guard (same logic as actionStartMigration) ────────────
         $active_run = CheckpointManager::getActiveRunId();
@@ -554,15 +572,22 @@ class AjaxHandler {
             $run_id = null; // let MigrationManager generate a fresh ID
         }
 
+        $should_clear_orders = $clear_orders_raw !== null
+            ? filter_var( $clear_orders_raw, FILTER_VALIDATE_BOOLEAN )
+            : false;
+        if ( $should_clear_orders && $run_id === null ) {
+            $this->purgeOrdersBeforeRun();
+        }
+
         // phpcs:ignore WordPress.Security.NonceVerification
-        $demo_limit_chunk = (int) filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
+        $demo_limit_chunk = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
 
         $overrides = [];
-        if ( $dry_run ) {
-            $overrides['migration']['dry_run'] = true;
+        if ( $dry_run_raw !== null ) {
+            $overrides['migration']['dry_run'] = filter_var( $dry_run_raw, FILTER_VALIDATE_BOOLEAN );
         }
-        if ( $demo_limit_chunk > 0 ) {
-            $overrides['migration']['demo_limit'] = $demo_limit_chunk;
+        if ( $demo_limit_chunk !== null && $demo_limit_chunk !== false ) {
+            $overrides['migration']['demo_limit'] = max( 0, (int) $demo_limit_chunk );
         }
         if ( $migrators_raw !== '' ) {
             $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
@@ -663,6 +688,22 @@ class AjaxHandler {
      */
     private function actionGetReport(): void {
         wp_send_json_success( \OctoWoo\Core\MigrationReport::load() );
+    }
+
+    /**
+     * Purge WooCommerce orders before starting a new migration run.
+     */
+    private function purgeOrdersBeforeRun(): void {
+        $log_run = CheckpointManager::getActiveRunId()
+            ?? get_option( 'octowoo_last_run_id', 'pre-run' );
+
+        $logger = new Logger( (string) $log_run, AdminPage::getConfig()['logging'] ?? [] );
+        $purger = new DataPurger( $logger );
+
+        $logger->info( '[pre-run] Clearing WooCommerce orders before migration start.' );
+        $purger->purge( [ 'orders' ], true );
+        $logger->info( '[pre-run] WooCommerce orders cleared.' );
+        $logger->flush();
     }
 
     // ── Action: import SQL dump ───────────────────────────────────────────────
@@ -959,22 +1000,32 @@ class AjaxHandler {
 
         $overrides = [];
         // phpcs:ignore WordPress.Security.NonceVerification
-        if ( filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN ) ) {
-            $overrides['migration']['dry_run'] = true;
+        $dry_run_bg_raw = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
+        if ( $dry_run_bg_raw !== null ) {
+            $overrides['migration']['dry_run'] = filter_var( $dry_run_bg_raw, FILTER_VALIDATE_BOOLEAN );
         }
         // phpcs:ignore WordPress.Security.NonceVerification
-        $demo_limit = (int) filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
-        if ( $demo_limit > 0 ) {
-            $overrides['migration']['demo_limit'] = $demo_limit;
+        $demo_limit = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
+        if ( $demo_limit !== null && $demo_limit !== false ) {
+            $overrides['migration']['demo_limit'] = max( 0, (int) $demo_limit );
         }
         // phpcs:ignore WordPress.Security.NonceVerification
         $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $clear_orders_bg_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
         if ( $migrators_raw !== '' ) {
             $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
             $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
             foreach ( $allowed as $key ) {
                 $overrides['migration'][ 'run_' . $key ] = in_array( $key, $selected, true );
             }
+        }
+
+        $should_clear_orders = $clear_orders_bg_raw !== null
+            ? filter_var( $clear_orders_bg_raw, FILTER_VALIDATE_BOOLEAN )
+            : false;
+        if ( $should_clear_orders && ! $resume ) {
+            $this->purgeOrdersBeforeRun();
         }
 
         try {
@@ -1105,7 +1156,18 @@ class AjaxHandler {
         $logger = new Logger( $run_id );
         $purger = new DataPurger( $logger );
 
-        $results = $purger->purge( $entities, $force );
+        try {
+            $results = $purger->purge( $entities, $force );
+        } catch ( \Throwable $e ) {
+            $logger->error( '[purge] Unexpected exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() );
+            wp_send_json_error( [
+                'message' => sprintf(
+                    /* translators: error message */
+                    __( 'Purge failed with an unexpected error: %s', 'octowoo' ),
+                    $e->getMessage()
+                ),
+            ] );
+        }
 
         // purge() now returns [ 'results' => [...], 'diagnostics' => [...] ]
         $breakdown   = $results['results']     ?? $results; // BC-safe if array is flat
