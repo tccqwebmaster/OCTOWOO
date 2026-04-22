@@ -115,7 +115,8 @@ class WpmlIntegration extends AbstractMigrator {
         $processed += $p; $skipped += $s; $failed += $f;
 
         // Translate product categories.
-        [ $p, $s, $f ] = $this->translateTerms( 'product_cat' );
+        $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
+        [ $p, $s, $f ] = $this->translateTerms( 'product_cat', $cat_seo_map );
         $processed += $p; $skipped += $s; $failed += $f;
 
         $this->logger->info( "[multilingual] Done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
@@ -412,6 +413,47 @@ class WpmlIntegration extends AbstractMigrator {
     }
 
     /**
+     * Pre-fetch all secondary-language SEO keywords for categories from
+     * oc_seo_url indexed by OC category_id.
+     *
+     * @return array<int, string>  [ oc_category_id => sanitised_slug ]
+     */
+    private function fetchSecondaryCategorySeoMap(): array {
+        $lang_id_sec = $this->langIdSecondary();
+        if ( $lang_id_sec === 0 ) {
+            return [];
+        }
+
+        $pfx = $this->pfx();
+
+        $table_exists = $this->oc->fetchColumn(
+            'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+            [ $pfx . 'seo_url' ]
+        );
+        if ( ! $table_exists ) {
+            return [];
+        }
+
+        $rows = $this->oc->fetchAll(
+            "SELECT query, keyword
+             FROM `{$pfx}seo_url`
+             WHERE store_id = 0 AND language_id = ? AND keyword != ''",
+            [ $lang_id_sec ]
+        );
+
+        $map = [];
+        foreach ( $rows as $row ) {
+            if ( preg_match( '/^category_id=(\d+)$/', $row['query'], $m ) ) {
+                $map[ (int) $m[1] ] = sanitize_title( $row['keyword'] );
+            }
+        }
+
+        $this->logger->debug( '[multilingual] Fetched ' . count( $map ) . ' secondary-language SEO keywords for category redirect mapping.' );
+
+        return $map;
+    }
+
+    /**
      * Collect a secondary-language SEO redirect into the pending batch.
      *
      * Old path  = /{secondary_lang}/{oc_keyword}  (e.g. /ar/some-product-slug)
@@ -427,6 +469,22 @@ class WpmlIntegration extends AbstractMigrator {
 
         $old_path = '/' . $this->secondary_lang . '/' . $oc_keyword;
         $this->pending_sec_redirects[ $old_path ] = $new_url;
+    }
+
+    /**
+     * Collect a secondary-language SEO redirect for a translated taxonomy term.
+     *
+     * Old path = /{secondary_lang}/{oc_keyword}  (e.g. /ar/electronics-in-qatar)
+     * New URL  = WPML-aware term link            (e.g. /ar/product-category/electronics-in-qatar/)
+     */
+    private function queueSecondaryTermRedirect( int $translated_term_id, string $taxonomy, string $oc_keyword ): void {
+        $term_link = apply_filters( 'wpml_permalink', get_term_link( $translated_term_id, $taxonomy ), $this->secondary_lang );
+        if ( empty( $term_link ) || is_wp_error( $term_link ) ) {
+            return;
+        }
+
+        $old_path = '/' . $this->secondary_lang . '/' . $oc_keyword;
+        $this->pending_sec_redirects[ $old_path ] = $term_link;
     }
 
     /**
@@ -554,7 +612,7 @@ class WpmlIntegration extends AbstractMigrator {
      *
      * @return int[] [processed, skipped, failed]
      */
-    private function translateTerms( string $taxonomy ): array {
+    private function translateTerms( string $taxonomy, array $sec_seo_map = [] ): array {
         global $wpdb;
 
         $entity_type = 'category';
@@ -562,7 +620,7 @@ class WpmlIntegration extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
                 $entity_type
             ),
             ARRAY_A
@@ -574,14 +632,26 @@ class WpmlIntegration extends AbstractMigrator {
 
         foreach ( $rows as $row ) {
             $primary_term_id = (int) $row['wc_id'];
+            $oc_id           = (int) $row['oc_id'];
 
             $ar_name        = get_term_meta( $primary_term_id, '_octowoo_name_ar',        true );
             $ar_description = get_term_meta( $primary_term_id, '_octowoo_description_ar', true );
 
-            if ( ! $ar_name ) {
-                $this->logger->debug( "[multilingual] No Arabic name meta for {$taxonomy} term WC #{$primary_term_id} – skipping." );
-                $skipped++;
+            // Fetch primary term for slug and fallback values.
+            $primary_term = get_term( $primary_term_id, $taxonomy );
+            if ( ! $primary_term || is_wp_error( $primary_term ) ) {
+                $failed++;
                 continue;
+            }
+
+            // Fall back to English when Arabic meta is absent so every
+            // category still gets a linked Arabic term.
+            if ( ! $ar_name ) {
+                $ar_name = $primary_term->name;
+                $this->logger->debug( "[multilingual] No Arabic name meta for {$taxonomy} term WC #{$primary_term_id} – using English name as fallback." );
+            }
+            if ( ! $ar_description ) {
+                $ar_description = $primary_term->description;
             }
 
             $existing_translation_id = $this->getExistingTranslationId( $primary_term_id, "tax_{$taxonomy}" );
@@ -592,11 +662,10 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
-                $primary_term_for_slug = get_term( $primary_term_id, $taxonomy );
                 $updated = wp_update_term( $existing_translation_id, $taxonomy, [
                     'name'        => $ar_name,
                     'description' => $ar_description,
-                    'slug'        => ( $primary_term_for_slug && ! is_wp_error( $primary_term_for_slug ) ) ? $primary_term_for_slug->slug : '',
+                    'slug'        => $primary_term->slug,
                 ] );
 
                 if ( is_wp_error( $updated ) ) {
@@ -605,14 +674,13 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
+                // Register old OC Arabic URL → new WC Arabic category URL.
+                if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                    $this->queueSecondaryTermRedirect( $existing_translation_id, $taxonomy, $sec_seo_map[ $oc_id ] );
+                }
+
                 $this->logger->debug( "[multilingual] Updated existing {$taxonomy} translation term #{$existing_translation_id} from primary #{$primary_term_id}." );
                 $processed++;
-                continue;
-            }
-
-            $primary_term = get_term( $primary_term_id, $taxonomy );
-            if ( ! $primary_term || is_wp_error( $primary_term ) ) {
-                $failed++;
                 continue;
             }
 
@@ -631,9 +699,17 @@ class WpmlIntegration extends AbstractMigrator {
 
             $this->linkTermTranslation( $primary_term_id, $translated_term_id, $taxonomy );
 
+            // Register old OC Arabic URL → new WC Arabic category URL.
+            if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                $this->queueSecondaryTermRedirect( $translated_term_id, $taxonomy, $sec_seo_map[ $oc_id ] );
+            }
+
             $this->logger->debug( "[multilingual] Linked {$taxonomy} term #{$primary_term_id} ({$this->primary_lang}) ↔ #{$translated_term_id} ({$this->secondary_lang})" );
             $processed++;
         }
+
+        // Persist any queued secondary-language category redirects.
+        $this->flushSecondaryLangRedirects();
 
         return [ $processed, $skipped, $failed ];
     }
