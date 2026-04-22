@@ -508,7 +508,39 @@ class AjaxHandler {
                 return static function ( $message, $title, $args ) use ( $default_handler ) {
                     $status = isset( $args['response'] ) ? (int) $args['response'] : 200;
                     if ( $status >= 500 ) {
-                        $text = is_string( $message ) ? wp_strip_all_tags( (string) $message ) : 'Server error';
+                        // Extract human-readable text from any message type WP may pass.
+                        if ( $message instanceof \WP_Error ) {
+                            $text = $message->get_error_message();
+                        } elseif ( is_string( $message ) && $message !== '' ) {
+                            $text = wp_strip_all_tags( $message );
+                        } elseif ( is_numeric( $message ) ) {
+                            $text = 'wp_die code: ' . $message;
+                        } else {
+                            $text = '';
+                        }
+
+                        // Always try to enrich with PHP's last recorded error.
+                        $last_err = error_get_last();
+                        if ( $last_err && in_array( $last_err['type'], [ E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR ], true ) ) {
+                            $php_msg = 'PHP Fatal: ' . $last_err['message']
+                                . ' in ' . basename( $last_err['file'] ) . ':' . $last_err['line'];
+                            $text = $text !== '' ? $text . ' | ' . $php_msg : $php_msg;
+                        }
+
+                        if ( $text === '' ) {
+                            $text = 'Fatal error (type: ' . gettype( $message ) . ') — check server error log.';
+                        }
+
+                        // Persist the real error to the OctoWoo Logs tab.
+                        try {
+                            $run    = \OctoWoo\Core\CheckpointManager::getActiveRunId()
+                                    ?? (string) get_option( 'octowoo_last_run_id', 'fatal' );
+                            $logger = new \OctoWoo\Core\Logger( $run );
+                            $logger->error( 'wp_die (HTTP 500): ' . $text );
+                            $logger->flush();
+                        } catch ( \Throwable $ignore ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement
+                        }
+
                         if ( ! headers_sent() ) {
                             header( 'Content-Type: application/json; charset=utf-8' );
                         }
