@@ -142,18 +142,32 @@ class WpmlIntegration extends AbstractMigrator {
             $primary_id = (int) $row['wc_id'];
 
             // Fetch secondary language data from post meta.
-            $ar_title   = get_post_meta( $primary_id, $title_meta_key,   true );
-            $ar_content = get_post_meta( $primary_id, $content_meta_key, true );
+            $ar_title   = (string) get_post_meta( $primary_id, $title_meta_key,   true );
+            $ar_content = (string) get_post_meta( $primary_id, $content_meta_key, true );
 
             // Arabic short description — only relevant for products.
             $ar_excerpt = $post_type === 'product'
                 ? (string) get_post_meta( $primary_id, '_octowoo_short_description_ar', true )
                 : '';
 
-            if ( ! $ar_title ) {
-                $this->logger->debug( "[multilingual] No Arabic title meta for {$post_type} WC #{$primary_id} (meta key: {$title_meta_key}) – skipping." );
-                $skipped++;
+            // Fall back to English values when Arabic meta is missing so every
+            // product always gets a translation post (WPML still routes it under
+            // /ar/ and WC meta, SKU, tags, and brands are all correctly assigned).
+            $primary_post_raw = get_post( $primary_id );
+            if ( ! $primary_post_raw ) {
+                $failed++;
                 continue;
+            }
+
+            if ( $ar_title === '' ) {
+                $ar_title = $primary_post_raw->post_title;
+                $this->logger->debug( "[multilingual] No Arabic title for {$post_type} #{$primary_id} – using English title as fallback." );
+            }
+            if ( $ar_content === '' ) {
+                $ar_content = $primary_post_raw->post_content;
+            }
+            if ( $ar_excerpt === '' && $post_type === 'product' ) {
+                $ar_excerpt = $primary_post_raw->post_excerpt;
             }
 
             // If translation already exists (e.g. WPML duplicated English),
@@ -166,7 +180,7 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
-                $primary_post_for_slug = get_post( $primary_id );
+                $primary_post_for_slug = $primary_post_raw;
                 $update_data = [
                     'ID'           => $existing_translation_id,
                     'post_title'   => $ar_title,
@@ -199,19 +213,13 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            $primary_post = get_post( $primary_id );
-            if ( ! $primary_post ) {
-                $failed++;
-                continue;
-            }
-
             if ( $this->isDry() ) {
                 $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$ar_title}" );
                 $processed++;
                 continue;
             }
 
-            $translated_id = $this->createTranslatedPost( $primary_post, $ar_title, $ar_content, $post_type, $ar_excerpt );
+            $translated_id = $this->createTranslatedPost( $primary_post_raw, $ar_title, $ar_content, $post_type, $ar_excerpt );
 
             if ( ! $translated_id ) {
                 $failed++;
@@ -230,7 +238,7 @@ class WpmlIntegration extends AbstractMigrator {
             // the primary so Arabic URLs look identical (just with the /ar/ prefix):
             //   English: /product/zelda-switch/
             //   Arabic:  /ar/product/zelda-switch/   (NOT /ar/product/zelda-switch-2/)
-            $this->fixTranslationSlug( $translated_id, $primary_post->post_name );
+            $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
 
             $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
             $processed++;
