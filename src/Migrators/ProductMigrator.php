@@ -138,6 +138,7 @@ class ProductMigrator extends AbstractMigrator {
         $short_ar     = '';
         $metatitle_ar = '';
         $metadesc_ar  = '';
+        $metakw_ar    = '';
         $sec = null;
         if ( $lang_id_sec > 0 && isset( $descriptions[ $oc_id ][ $lang_id_sec ] ) ) {
             $sec = $descriptions[ $oc_id ][ $lang_id_sec ];
@@ -159,6 +160,7 @@ class ProductMigrator extends AbstractMigrator {
             $short_ar     = $this->sanitizeText( $sec['tag']              ?? '' );
             $metatitle_ar = $this->sanitizeText( $sec['meta_title']       ?? '' );
             $metadesc_ar  = $this->sanitizeText( $sec['meta_description'] ?? '' );
+            $metakw_ar    = $this->sanitizeText( $sec['meta_keyword']     ?? '' );
         }
 
         if ( $name === '' ) {
@@ -185,7 +187,7 @@ class ProductMigrator extends AbstractMigrator {
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar );
+                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar );
             }
             $this->logger->debug( "[products] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;
@@ -196,7 +198,7 @@ class ProductMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar );
+        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar );
     }
 
     // ── Create product ────────────────────────────────────────────────────────
@@ -215,7 +217,8 @@ class ProductMigrator extends AbstractMigrator {
         string $desc_ar      = '',
         string $metatitle_ar = '',
         string $metadesc_ar  = '',
-        string $short_ar     = ''
+        string $short_ar     = '',
+        string $metakw_ar    = ''
     ): bool {
         global $wpdb;
 
@@ -235,7 +238,7 @@ class ProductMigrator extends AbstractMigrator {
                 $wpdb, $oc_id, $product_type, $has_vars,
                 $row, $desc, $name, $description, $short_desc,
                 $oc_categories, $oc_images, $oc_options, $oc_specials,
-                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar
+                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar
             );
         } catch ( \Throwable $e ) {
             $wpdb->query( 'ROLLBACK' );
@@ -267,7 +270,8 @@ class ProductMigrator extends AbstractMigrator {
         string $desc_ar      = '',
         string $metatitle_ar = '',
         string $metadesc_ar  = '',
-        string $short_ar     = ''
+        string $short_ar     = '',
+        string $metakw_ar    = ''
     ): bool {
 
         $post_id = wp_insert_post( [
@@ -339,7 +343,11 @@ class ProductMigrator extends AbstractMigrator {
         if ( $metadesc_ar ) {
             update_post_meta( $post_id, '_octowoo_metadesc_ar', $metadesc_ar );
         }
-
+        if ( $metakw_ar ) {
+            update_post_meta( $post_id, '_octowoo_metakw_ar', $metakw_ar );
+        }        if ( $metakw_ar ) {
+            update_post_meta( $post_id, '_octowoo_metakw_ar', $metakw_ar );
+        }
         // SEO meta fields.
         if ( ! empty( $desc['meta_title'] ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_title', $this->sanitizeText( $desc['meta_title'] ) );
@@ -347,8 +355,9 @@ class ProductMigrator extends AbstractMigrator {
         if ( ! empty( $desc['meta_description'] ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_metadesc', $this->sanitizeText( $desc['meta_description'] ) );
         }
-
-        // Assign WC categories.
+        if ( ! empty( $desc['meta_keyword'] ) ) {
+            update_post_meta( $post_id, '_yoast_wpseo_focuskw', $this->sanitizeText( $desc['meta_keyword'] ) );
+        }
         $this->assignCategories( $post_id, $oc_categories );
 
         // Featured image + gallery.
@@ -399,7 +408,8 @@ class ProductMigrator extends AbstractMigrator {
         string $desc_ar      = '',
         string $metatitle_ar = '',
         string $metadesc_ar  = '',
-        string $short_ar     = ''
+        string $short_ar     = '',
+        string $metakw_ar    = ''
     ): bool {
         $oc_id = (int) $row['product_id'];
 
@@ -436,6 +446,20 @@ class ProductMigrator extends AbstractMigrator {
         }
         if ( $metadesc_ar ) {
             update_post_meta( $wc_post_id, '_octowoo_metadesc_ar', $metadesc_ar );
+        }
+        if ( $metakw_ar ) {
+            update_post_meta( $wc_post_id, '_octowoo_metakw_ar', $metakw_ar );
+        }
+
+        // English SEO meta (keep in sync on update).
+        if ( ! empty( $desc['meta_title'] ) ) {
+            update_post_meta( $wc_post_id, '_yoast_wpseo_title',   $this->sanitizeText( $desc['meta_title'] ) );
+        }
+        if ( ! empty( $desc['meta_description'] ) ) {
+            update_post_meta( $wc_post_id, '_yoast_wpseo_metadesc', $this->sanitizeText( $desc['meta_description'] ) );
+        }
+        if ( ! empty( $desc['meta_keyword'] ) ) {
+            update_post_meta( $wc_post_id, '_yoast_wpseo_focuskw',  $this->sanitizeText( $desc['meta_keyword'] ) );
         }
 
         wc_delete_product_transients( $wc_post_id );

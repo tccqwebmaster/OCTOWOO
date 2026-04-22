@@ -382,6 +382,7 @@ class CategoryMigrator extends AbstractMigrator {
             update_term_meta( $wc_term_id, '_octowoo_description_ar', $this->cleanDescription( $desc_ar['description']  ?? '' ) );
             update_term_meta( $wc_term_id, '_octowoo_metatitle_ar',   $this->sanitizeText( $desc_ar['meta_title']       ?? '' ) );
             update_term_meta( $wc_term_id, '_octowoo_metadesc_ar',    $this->sanitizeText( $desc_ar['meta_description'] ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metakw_ar',      $this->sanitizeText( $desc_ar['meta_keyword']     ?? '' ) );
         }
 
         // Category thumbnail: import the OC image and assign as WC thumbnail.

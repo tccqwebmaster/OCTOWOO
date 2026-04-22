@@ -216,6 +216,9 @@ class WpmlIntegration extends AbstractMigrator {
                     $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
                 }
 
+                // Sync Yoast SEO meta to the existing translation.
+                $this->applyYoastPostMeta( $primary_id, $existing_translation_id );
+
                 // After wp_update_post() the slug uniqueness check may have
                 // appended -2 again. Force the correct slug now.
                 if ( $primary_post_for_slug ) {
@@ -306,13 +309,30 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // Copy Yoast SEO meta for secondary language.
-        $ar_meta_title = get_post_meta( (int) $source->ID, '_octowoo_metatitle_ar', true );
-        $ar_meta_desc  = get_post_meta( (int) $source->ID, '_octowoo_metadesc_ar',  true );
+        // Fall back to English when Arabic meta is absent so the translated post
+        // always has meaningful Yoast data instead of blank fields.
+        $ar_meta_title = (string) get_post_meta( (int) $source->ID, '_octowoo_metatitle_ar', true );
+        $ar_meta_desc  = (string) get_post_meta( (int) $source->ID, '_octowoo_metadesc_ar',  true );
+        $ar_meta_kw    = (string) get_post_meta( (int) $source->ID, '_octowoo_metakw_ar',    true );
+
+        if ( $ar_meta_title === '' ) {
+            $ar_meta_title = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_title', true );
+        }
+        if ( $ar_meta_desc === '' ) {
+            $ar_meta_desc = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_metadesc', true );
+        }
+        if ( $ar_meta_kw === '' ) {
+            $ar_meta_kw = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_focuskw', true );
+        }
+
         if ( $ar_meta_title ) {
             update_post_meta( $new_id, '_yoast_wpseo_title',   $ar_meta_title );
         }
         if ( $ar_meta_desc ) {
             update_post_meta( $new_id, '_yoast_wpseo_metadesc', $ar_meta_desc );
+        }
+        if ( $ar_meta_kw ) {
+            update_post_meta( $new_id, '_yoast_wpseo_focuskw', $ar_meta_kw );
         }
 
         // Mark as a translation.
@@ -362,6 +382,45 @@ class WpmlIntegration extends AbstractMigrator {
         $wpdb->update( $wpdb->posts, [ 'post_name' => $desired_slug ], [ 'ID' => $post_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         clean_post_cache( $post_id );
         $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
+    }
+
+    // ── Yoast SEO meta helpers ─────────────────────────────────────────────────
+
+    /**
+     * Write Yoast SEO meta (title, metadesc, focuskw) to an Arabic translated post.
+     * Reads Arabic _octowoo_*_ar meta from the primary post; falls back to the
+     * English Yoast values so the translated post always has complete SEO data.
+     */
+    private function applyYoastPostMeta( int $primary_id, int $translated_id ): void {
+        $title = (string) get_post_meta( $primary_id, '_octowoo_metatitle_ar', true );
+        $desc  = (string) get_post_meta( $primary_id, '_octowoo_metadesc_ar',  true );
+        $kw    = (string) get_post_meta( $primary_id, '_octowoo_metakw_ar',    true );
+
+        if ( $title === '' ) { $title = (string) get_post_meta( $primary_id, '_yoast_wpseo_title',    true ); }
+        if ( $desc  === '' ) { $desc  = (string) get_post_meta( $primary_id, '_yoast_wpseo_metadesc', true ); }
+        if ( $kw    === '' ) { $kw    = (string) get_post_meta( $primary_id, '_yoast_wpseo_focuskw',  true ); }
+
+        if ( $title ) { update_post_meta( $translated_id, '_yoast_wpseo_title',   $title ); }
+        if ( $desc )  { update_post_meta( $translated_id, '_yoast_wpseo_metadesc', $desc ); }
+        if ( $kw )    { update_post_meta( $translated_id, '_yoast_wpseo_focuskw',  $kw ); }
+    }
+
+    /**
+     * Write Yoast SEO meta to an Arabic translated term.
+     * Reads Arabic _octowoo_*_ar meta from the primary term; falls back to English.
+     */
+    private function applyYoastTermMeta( int $primary_term_id, int $translated_term_id ): void {
+        $title = (string) get_term_meta( $primary_term_id, '_octowoo_metatitle_ar', true );
+        $desc  = (string) get_term_meta( $primary_term_id, '_octowoo_metadesc_ar',  true );
+        $kw    = (string) get_term_meta( $primary_term_id, '_octowoo_metakw_ar',    true );
+
+        if ( $title === '' ) { $title = (string) get_term_meta( $primary_term_id, '_yoast_wpseo_title',    true ); }
+        if ( $desc  === '' ) { $desc  = (string) get_term_meta( $primary_term_id, '_yoast_wpseo_metadesc', true ); }
+        if ( $kw    === '' ) { $kw    = (string) get_term_meta( $primary_term_id, '_yoast_wpseo_focuskw',  true ); }
+
+        if ( $title ) { update_term_meta( $translated_term_id, '_yoast_wpseo_title',   $title ); }
+        if ( $desc )  { update_term_meta( $translated_term_id, '_yoast_wpseo_metadesc', $desc ); }
+        if ( $kw )    { update_term_meta( $translated_term_id, '_yoast_wpseo_focuskw',  $kw ); }
     }
 
     // ── Secondary-language SEO redirects ──────────────────────────────────────
@@ -674,6 +733,9 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
+                // Sync Yoast SEO meta to the existing translated term.
+                $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
+
                 // Register old OC Arabic URL → new WC Arabic category URL.
                 if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
                     $this->queueSecondaryTermRedirect( $existing_translation_id, $taxonomy, $sec_seo_map[ $oc_id ] );
@@ -739,13 +801,29 @@ class WpmlIntegration extends AbstractMigrator {
         $translated_term_id = (int) $result['term_id'];
 
         // Copy Yoast SEO meta.
-        $ar_meta_title = get_term_meta( $source->term_id, '_octowoo_metatitle_ar', true );
-        $ar_meta_desc  = get_term_meta( $source->term_id, '_octowoo_metadesc_ar',  true );
+        // Fall back to English when Arabic meta is absent.
+        $ar_meta_title = (string) get_term_meta( $source->term_id, '_octowoo_metatitle_ar', true );
+        $ar_meta_desc  = (string) get_term_meta( $source->term_id, '_octowoo_metadesc_ar',  true );
+        $ar_meta_kw    = (string) get_term_meta( $source->term_id, '_octowoo_metakw_ar',    true );
+
+        if ( $ar_meta_title === '' ) {
+            $ar_meta_title = (string) get_term_meta( $source->term_id, '_yoast_wpseo_title', true );
+        }
+        if ( $ar_meta_desc === '' ) {
+            $ar_meta_desc = (string) get_term_meta( $source->term_id, '_yoast_wpseo_metadesc', true );
+        }
+        if ( $ar_meta_kw === '' ) {
+            $ar_meta_kw = (string) get_term_meta( $source->term_id, '_yoast_wpseo_focuskw', true );
+        }
+
         if ( $ar_meta_title ) {
             update_term_meta( $translated_term_id, '_yoast_wpseo_title',   $ar_meta_title );
         }
         if ( $ar_meta_desc ) {
             update_term_meta( $translated_term_id, '_yoast_wpseo_metadesc', $ar_meta_desc );
+        }
+        if ( $ar_meta_kw ) {
+            update_term_meta( $translated_term_id, '_yoast_wpseo_focuskw', $ar_meta_kw );
         }
 
         update_term_meta( $translated_term_id, '_octowoo_translation_of',   $source->term_id );
