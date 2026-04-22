@@ -135,6 +135,7 @@ class ProductMigrator extends AbstractMigrator {
         // Secondary language (Arabic) fields via Polylang / WPML meta or just stored as meta.
         $name_ar      = '';
         $desc_ar      = '';
+        $short_ar     = '';
         $metatitle_ar = '';
         $metadesc_ar  = '';
         $sec = null;
@@ -154,7 +155,8 @@ class ProductMigrator extends AbstractMigrator {
 
         if ( is_array( $sec ) ) {
             $name_ar      = $this->sanitizeName( $sec['name']             ?? '' );
-            $desc_ar      = $this->cleanDescription( $sec['description']      ?? '' );
+            $desc_ar      = $this->cleanDescription( $sec['description']  ?? '' );
+            $short_ar     = $this->sanitizeText( $sec['tag']              ?? '' );
             $metatitle_ar = $this->sanitizeText( $sec['meta_title']       ?? '' );
             $metadesc_ar  = $this->sanitizeText( $sec['meta_description'] ?? '' );
         }
@@ -183,7 +185,7 @@ class ProductMigrator extends AbstractMigrator {
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar );
+                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar );
             }
             $this->logger->debug( "[products] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;
@@ -194,7 +196,7 @@ class ProductMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar );
+        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar );
     }
 
     // ── Create product ────────────────────────────────────────────────────────
@@ -212,7 +214,8 @@ class ProductMigrator extends AbstractMigrator {
         string $name_ar      = '',
         string $desc_ar      = '',
         string $metatitle_ar = '',
-        string $metadesc_ar  = ''
+        string $metadesc_ar  = '',
+        string $short_ar     = ''
     ): bool {
         global $wpdb;
 
@@ -232,7 +235,7 @@ class ProductMigrator extends AbstractMigrator {
                 $wpdb, $oc_id, $product_type, $has_vars,
                 $row, $desc, $name, $description, $short_desc,
                 $oc_categories, $oc_images, $oc_options, $oc_specials,
-                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar
+                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar
             );
         } catch ( \Throwable $e ) {
             $wpdb->query( 'ROLLBACK' );
@@ -263,7 +266,8 @@ class ProductMigrator extends AbstractMigrator {
         string $name_ar      = '',
         string $desc_ar      = '',
         string $metatitle_ar = '',
-        string $metadesc_ar  = ''
+        string $metadesc_ar  = '',
+        string $short_ar     = ''
     ): bool {
 
         $post_id = wp_insert_post( [
@@ -325,6 +329,9 @@ class ProductMigrator extends AbstractMigrator {
         }
         if ( $desc_ar ) {
             update_post_meta( $post_id, '_octowoo_description_ar', $desc_ar );
+        }
+        if ( $short_ar ) {
+            update_post_meta( $post_id, '_octowoo_short_description_ar', $short_ar );
         }
         if ( $metatitle_ar ) {
             update_post_meta( $post_id, '_octowoo_metatitle_ar', $metatitle_ar );
@@ -391,7 +398,8 @@ class ProductMigrator extends AbstractMigrator {
         string $name_ar      = '',
         string $desc_ar      = '',
         string $metatitle_ar = '',
-        string $metadesc_ar  = ''
+        string $metadesc_ar  = '',
+        string $short_ar     = ''
     ): bool {
         $oc_id = (int) $row['product_id'];
 
@@ -419,6 +427,9 @@ class ProductMigrator extends AbstractMigrator {
         }
         if ( $desc_ar ) {
             update_post_meta( $wc_post_id, '_octowoo_description_ar', $desc_ar );
+        }
+        if ( $short_ar ) {
+            update_post_meta( $wc_post_id, '_octowoo_short_description_ar', $short_ar );
         }
         if ( $metatitle_ar ) {
             update_post_meta( $wc_post_id, '_octowoo_metatitle_ar', $metatitle_ar );

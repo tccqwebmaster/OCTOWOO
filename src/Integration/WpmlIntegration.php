@@ -145,6 +145,11 @@ class WpmlIntegration extends AbstractMigrator {
             $ar_title   = get_post_meta( $primary_id, $title_meta_key,   true );
             $ar_content = get_post_meta( $primary_id, $content_meta_key, true );
 
+            // Arabic short description — only relevant for products.
+            $ar_excerpt = $post_type === 'product'
+                ? (string) get_post_meta( $primary_id, '_octowoo_short_description_ar', true )
+                : '';
+
             if ( ! $ar_title ) {
                 $this->logger->debug( "[multilingual] No Arabic title meta for {$post_type} WC #{$primary_id} (meta key: {$title_meta_key}) – skipping." );
                 $skipped++;
@@ -162,17 +167,25 @@ class WpmlIntegration extends AbstractMigrator {
                 }
 
                 $primary_post_for_slug = get_post( $primary_id );
-                $updated = wp_update_post( [
+                $update_data = [
                     'ID'           => $existing_translation_id,
                     'post_title'   => $ar_title,
                     'post_content' => $ar_content,
+                    'post_excerpt' => $ar_excerpt,
                     'post_name'    => $primary_post_for_slug ? $primary_post_for_slug->post_name : '',
-                ], true );
+                ];
+                $updated = wp_update_post( $update_data, true );
 
                 if ( is_wp_error( $updated ) ) {
                     $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $updated->get_error_message() );
                     $failed++;
                     continue;
+                }
+
+                // For products, also sync WC meta + terms so SKU, price,
+                // stock, tags, and brands all appear on the Arabic version.
+                if ( $post_type === 'product' ) {
+                    $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
                 }
 
                 $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
@@ -192,11 +205,16 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            $translated_id = $this->createTranslatedPost( $primary_post, $ar_title, $ar_content, $post_type );
+            $translated_id = $this->createTranslatedPost( $primary_post, $ar_title, $ar_content, $post_type, $ar_excerpt );
 
             if ( ! $translated_id ) {
                 $failed++;
                 continue;
+            }
+
+            // For products, sync WC meta + terms after the post is linked.
+            if ( $post_type === 'product' ) {
+                $this->copyProductDataToTranslation( $primary_id, $translated_id );
             }
 
             $this->linkPostTranslation( $primary_id, $translated_id, $post_type );
@@ -211,7 +229,7 @@ class WpmlIntegration extends AbstractMigrator {
     /**
      * Create a translated WP post in the secondary language.
      */
-    private function createTranslatedPost( \WP_Post $source, string $title, string $content, string $post_type ): int {
+    private function createTranslatedPost( \WP_Post $source, string $title, string $content, string $post_type, string $excerpt = '' ): int {
         // Always use the primary (English) slug so Arabic URLs stay clean
         // (e.g. /ar/product/apple-cable/ instead of /ar/product/%d8%a7%d8%a8%d9%84-...).
         $slug = $source->post_name;
@@ -220,7 +238,7 @@ class WpmlIntegration extends AbstractMigrator {
         $insert_data = [
             'post_title'     => $title,
             'post_content'   => $content ?: $source->post_content,
-            'post_excerpt'   => '',
+            'post_excerpt'   => $excerpt,
             'post_status'    => $source->post_status,
             'post_type'      => $source->post_type,
             'post_name'      => $slug,
@@ -279,6 +297,69 @@ class WpmlIntegration extends AbstractMigrator {
     }
 
     // ── Term translation pass ─────────────────────────────────────────────────
+
+    /**
+     * Copy all WooCommerce-specific meta and taxonomy term assignments from the
+     * English primary product to its Arabic translation post.
+     *
+     * WPML does NOT automatically carry these over when we create the translated
+     * post manually, so we must copy them explicitly:
+     *   – Core WC product meta (SKU, price, stock, weight, attributes …)
+     *   – product_type term  (simple/variable)
+     *   – product_tag terms
+     *   – Brand taxonomy terms (whichever plugin is active)
+     */
+    private function copyProductDataToTranslation( int $source_id, int $target_id ): void {
+        // ── WooCommerce core product meta ──────────────────────────────────
+        $wc_meta_keys = [
+            '_sku', '_regular_price', '_price', '_sale_price',
+            '_stock', '_stock_status', '_manage_stock', '_backorders',
+            '_weight', '_length', '_width', '_height',
+            '_virtual', '_downloadable', '_sold_individually',
+            '_tax_status', '_tax_class', '_product_attributes',
+            '_octowoo_oc_id',
+        ];
+        foreach ( $wc_meta_keys as $key ) {
+            $value = get_post_meta( $source_id, $key, true );
+            // update_post_meta handles '' safely (clears the meta).
+            update_post_meta( $target_id, $key, $value );
+        }
+
+        // ── product_type term (simple / variable / …) ──────────────────────
+        $type_terms = wp_get_object_terms( $source_id, 'product_type', [ 'fields' => 'names' ] );
+        if ( ! is_wp_error( $type_terms ) && ! empty( $type_terms ) ) {
+            wp_set_object_terms( $target_id, $type_terms, 'product_type' );
+        }
+
+        // ── product_tag terms ──────────────────────────────────────────────
+        // Use tag IDs so the same term objects are shared (no duplicates).
+        $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
+        if ( ! is_wp_error( $tag_ids ) && ! empty( $tag_ids ) ) {
+            wp_set_object_terms( $target_id, array_map( 'intval', $tag_ids ), 'product_tag', true );
+        }
+
+        // ── Brand / manufacturer taxonomy ──────────────────────────────────
+        // Try each known brand taxonomy slug; use the first one that is registered.
+        $brand_taxonomies = [
+            'product_brand',      // WooCommerce Brands (official)
+            'pwb-brand',          // Perfect WooCommerce Brands
+            'yith_product_brand', // YITH WooCommerce Brands
+            'berocket_brand',     // Brands for WooCommerce by BeRocket
+            'pa_brand',           // Attribute-based brand
+            'brand',              // Generic / theme-based
+            'product_manufacturer', // OctoWoo fallback
+        ];
+        foreach ( $brand_taxonomies as $brand_tax ) {
+            if ( ! taxonomy_exists( $brand_tax ) ) {
+                continue;
+            }
+            $brand_ids = wp_get_object_terms( $source_id, $brand_tax, [ 'fields' => 'ids' ] );
+            if ( ! is_wp_error( $brand_ids ) && ! empty( $brand_ids ) ) {
+                wp_set_object_terms( $target_id, array_map( 'intval', $brand_ids ), $brand_tax );
+            }
+            break; // Only process the first registered brand taxonomy.
+        }
+    }
 
     /**
      * Iterate every product_cat term that was migrated and create secondary
