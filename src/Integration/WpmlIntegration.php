@@ -59,6 +59,14 @@ class WpmlIntegration extends AbstractMigrator {
     /** Secondary language code (e.g. 'ar'). */
     private string $secondary_lang = 'ar';
 
+    /**
+     * Collected secondary-language SEO redirects, flushed to wp_options at the
+     * end of each translatePosts() pass (keyed old-path => new-URL).
+     *
+     * @var array<string, string>
+     */
+    private array $pending_sec_redirects = [];
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
@@ -94,8 +102,12 @@ class WpmlIntegration extends AbstractMigrator {
         $skipped   = 0;
         $failed    = 0;
 
+        // Pre-fetch Arabic SEO keywords from oc_seo_url so we can register
+        // old-OC-path → new-WC-Arabic-URL redirects as each translation is linked.
+        $sec_seo_map = $this->fetchSecondaryLangSeoMap();
+
         // Translate products.
-        [ $p, $s, $f ] = $this->translatePosts( 'product', '_octowoo_name_ar', '_octowoo_description_ar' );
+        [ $p, $s, $f ] = $this->translatePosts( 'product', '_octowoo_name_ar', '_octowoo_description_ar', $sec_seo_map );
         $processed += $p; $skipped += $s; $failed += $f;
 
         // Translate pages (from InformationMigrator).
@@ -119,7 +131,7 @@ class WpmlIntegration extends AbstractMigrator {
      *
      * @return int[] [processed, skipped, failed]
      */
-    private function translatePosts( string $post_type, string $title_meta_key, string $content_meta_key ): array {
+    private function translatePosts( string $post_type, string $title_meta_key, string $content_meta_key, array $sec_seo_map = [] ): array {
         global $wpdb;
 
         // Determine entity_type string used in id_map.
@@ -140,6 +152,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         foreach ( $rows as $row ) {
             $primary_id = (int) $row['wc_id'];
+            $oc_id      = (int) $row['oc_id'];
 
             // Fetch secondary language data from post meta.
             $ar_title   = (string) get_post_meta( $primary_id, $title_meta_key,   true );
@@ -208,6 +221,12 @@ class WpmlIntegration extends AbstractMigrator {
                     $this->fixTranslationSlug( $existing_translation_id, $primary_post_for_slug->post_name );
                 }
 
+                // Register the secondary-language SEO redirect so the old OC
+                // Arabic URL (e.g. /ar/some-slug) points to the new WC URL.
+                if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                    $this->queueSecondaryLangRedirect( $existing_translation_id, $sec_seo_map[ $oc_id ] );
+                }
+
                 $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
                 $processed++;
                 continue;
@@ -240,9 +259,20 @@ class WpmlIntegration extends AbstractMigrator {
             //   Arabic:  /ar/product/zelda-switch/   (NOT /ar/product/zelda-switch-2/)
             $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
 
+            // Register the secondary-language SEO redirect so the old OC
+            // Arabic URL (e.g. /ar/some-slug) points to the new WC URL.
+            if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                $this->queueSecondaryLangRedirect( $translated_id, $sec_seo_map[ $oc_id ] );
+            }
+
             $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
             $processed++;
         }
+
+        // Persist any queued secondary-language redirects into the same
+        // octowoo_redirects option that SeoMigrator uses (served by
+        // SeoMigrator::handleWpRedirect() on every front-end request).
+        $this->flushSecondaryLangRedirects();
 
         return [ $processed, $skipped, $failed ];
     }
@@ -317,6 +347,114 @@ class WpmlIntegration extends AbstractMigrator {
         $wpdb->update( $wpdb->posts, [ 'post_name' => $desired_slug ], [ 'ID' => $post_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         clean_post_cache( $post_id );
         $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
+    }
+
+    private function fixTranslationSlug( int $post_id, string $desired_slug ): void {
+        if ( $desired_slug === '' ) {
+            return;
+        }
+        $current = get_post_field( 'post_name', $post_id );
+        if ( $current === $desired_slug ) {
+            return; // Already correct — nothing to do.
+        }
+        global $wpdb;
+        $wpdb->update( $wpdb->posts, [ 'post_name' => $desired_slug ], [ 'ID' => $post_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        clean_post_cache( $post_id );
+        $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
+    }
+
+    // ── Secondary-language SEO redirects ──────────────────────────────────────
+
+    /**
+     * Pre-fetch all secondary-language SEO keywords from oc_seo_url indexed by
+     * OC product_id.  Used to map old OpenCart Arabic product paths to new WC
+     * Arabic URLs.
+     *
+     * Returns an empty array when the secondary language is disabled, the
+     * oc_seo_url table does not exist, or no secondary-language rows are found.
+     *
+     * @return array<int, string>  [ oc_product_id => sanitised_slug ]
+     */
+    private function fetchSecondaryLangSeoMap(): array {
+        $lang_id_sec = $this->langIdSecondary();
+        if ( $lang_id_sec === 0 ) {
+            return [];
+        }
+
+        $pfx = $this->pfx();
+
+        // Guard: table may not exist on older OC installs.
+        $table_exists = $this->oc->fetchColumn(
+            'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+            [ $pfx . 'seo_url' ]
+        );
+        if ( ! $table_exists ) {
+            return [];
+        }
+
+        $rows = $this->oc->fetchAll(
+            "SELECT query, keyword
+             FROM `{$pfx}seo_url`
+             WHERE store_id = 0 AND language_id = ? AND keyword != ''",
+            [ $lang_id_sec ]
+        );
+
+        $map = [];
+        foreach ( $rows as $row ) {
+            if ( preg_match( '/^product_id=(\d+)$/', $row['query'], $m ) ) {
+                $map[ (int) $m[1] ] = sanitize_title( $row['keyword'] );
+            }
+        }
+
+        $this->logger->debug( '[multilingual] Fetched ' . count( $map ) . ' secondary-language SEO keywords for redirect mapping.' );
+
+        return $map;
+    }
+
+    /**
+     * Collect a secondary-language SEO redirect into the pending batch.
+     *
+     * Old path  = /{secondary_lang}/{oc_keyword}  (e.g. /ar/some-product-slug)
+     * New URL   = WPML-aware permalink of the translated post.
+     */
+    private function queueSecondaryLangRedirect( int $translated_id, string $oc_keyword ): void {
+        // Use WPML's permalink filter so the returned URL includes the correct
+        // language prefix (e.g. /ar/) even when called outside of a request context.
+        $new_url = apply_filters( 'wpml_permalink', get_permalink( $translated_id ), $this->secondary_lang );
+        if ( empty( $new_url ) ) {
+            return;
+        }
+
+        $old_path = '/' . $this->secondary_lang . '/' . $oc_keyword;
+        $this->pending_sec_redirects[ $old_path ] = $new_url;
+    }
+
+    /**
+     * Merge all pending secondary-language redirects into the octowoo_redirects
+     * WP option (the same store that SeoMigrator writes to, served by
+     * SeoMigrator::handleWpRedirect() on every front-end request).
+     */
+    private function flushSecondaryLangRedirects(): void {
+        if ( empty( $this->pending_sec_redirects ) ) {
+            return;
+        }
+
+        if ( $this->isDry() ) {
+            $this->logger->debug( '[DRY-RUN] Would register ' . count( $this->pending_sec_redirects ) . ' secondary-language SEO redirects.' );
+            $this->pending_sec_redirects = [];
+            return;
+        }
+
+        $existing = get_option( 'octowoo_redirects', [] );
+        if ( ! is_array( $existing ) ) {
+            $existing = [];
+        }
+
+        $merged = array_merge( $existing, $this->pending_sec_redirects );
+        update_option( 'octowoo_redirects', $merged, false );
+
+        $this->logger->info( '[multilingual] Registered ' . count( $this->pending_sec_redirects ) . ' secondary-language SEO redirects.' );
+        $this->pending_sec_redirects = [];
     }
 
     /**
