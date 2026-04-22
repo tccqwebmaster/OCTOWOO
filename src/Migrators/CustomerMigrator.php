@@ -12,7 +12,14 @@
  *  - Each imported user is given a random secure password.
  *  - If config.woocommerce.force_password_reset = true (default), the
  *    user is flagged so WP prompts them to set a new password on first login.
- *  - The original OC password hash is NOT stored anywhere.
+ *  - The original OC password hash is stored in user meta ONLY when
+ *    config.woocommerce.migrate_oc_passwords = true (default: false). This
+ *    is an advanced opt-in feature; leave it disabled unless you specifically
+ *    need first-login hash-upgrade support.
+ *
+ * Fields deliberately NOT migrated (sensitive / WooCommerce-irrelevant):
+ *   token, code, cart, wishlist, ip, safe, custom_field,
+ *   fax, customer_group, store_id
  *
  * OpenCart tables read:
  *   oc_customer, oc_address, oc_country, oc_zone
@@ -49,6 +56,8 @@ class CustomerMigrator extends AbstractMigrator {
         $total_callback = fn() => $this->oc->count( 'customer', 'status = 1' );
 
         $batch_callback = fn( int $offset, int $limit ) => $this->oc->fetchBatch(
+            /* Sensitive fields intentionally excluded: token, code, cart,
+             * wishlist, ip, safe, custom_field, fax, customer_group, store_id. */
             "SELECT customer_id, firstname, lastname, email, telephone,
                     newsletter, address_id, date_added, status,
                     `password` AS oc_password, salt AS oc_salt
@@ -168,9 +177,17 @@ class CustomerMigrator extends AbstractMigrator {
         }
 
         // Store OC password hash + salt for first-login upgrade when enabled.
+        // WARNING: storing a password hash (even a weak one) in WP usermeta
+        // makes it visible to any WP admin and any plugin that queries usermeta.
+        // Only enable migrate_oc_passwords when you fully control the hosting
+        // environment and understand the trade-off.
         if ( ! empty( $this->config['woocommerce']['migrate_oc_passwords'] )
             && ! empty( $row['oc_password'] )
         ) {
+            $this->logger->warning(
+                "[customers] migrate_oc_passwords is ON – storing OC password hash in WP usermeta for user #{$user_id}. " .
+                'Disable after first-login upgrade is complete.'
+            );
             update_user_meta( $user_id, '_octowoo_oc_password_hash', (string) $row['oc_password'] );
             update_user_meta( $user_id, '_octowoo_oc_password_salt', (string) ( $row['oc_salt'] ?? '' ) );
         }
@@ -218,6 +235,13 @@ class CustomerMigrator extends AbstractMigrator {
             update_user_meta( $user_id, 'billing_state',       sanitize_text_field( $state_code ) );
             update_user_meta( $user_id, 'billing_email',       sanitize_email( $row['email'] ) );
             update_user_meta( $user_id, 'billing_phone',       sanitize_text_field( $row['telephone'] ?? '' ) );
+
+        // Newsletter / marketing email opt-in.
+        // Stored so the store owner can honour the customer's original preference.
+        // 0 = opted out, 1 = opted in.
+        $newsletter_optin = ( (int) ( $row['newsletter'] ?? 0 ) ) === 1 ? 'yes' : 'no';
+        update_user_meta( $user_id, 'woocommerce_marketing_optin_status',  $newsletter_optin );
+        update_user_meta( $user_id, '_octowoo_newsletter_optin', $newsletter_optin );
 
             // Shipping (mirrors billing by default).
             update_user_meta( $user_id, 'shipping_first_name', $this->sanitizeText( $billing['firstname'] ?? $row['firstname'] ) );
