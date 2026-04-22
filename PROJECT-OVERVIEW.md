@@ -1,7 +1,7 @@
-# OCTOWOO – Project Overview
+﻿# OCTOWOO – Project Overview
 
-**Version:** 2.4.36  
-**Type:** WordPress / WooCommerce Plugin  
+**Version:** 2.4.41
+**Type:** WordPress / WooCommerce Plugin
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
 ---
@@ -21,7 +21,83 @@ The plugin is designed to be safe to run incrementally:
 
 ---
 
-## 2. Requirements
+## 2. Complete Feature List
+
+### Data Migration
+| Feature | Details |
+|---|---|
+| **Tax classes** | OC tax classes → WC tax classes |
+| **Order statuses** | OC statuses mapped to WC equivalents; custom WC statuses registered when no match |
+| **Product categories** | Full hierarchy (parent/child), SEO slugs, category images, Arabic meta |
+| **Manufacturers / Brands** | Brand taxonomy auto-detected (product_brand, pwb-brand, yith_product_brand, berocket_brand, pa_brand); brand images; product assignment |
+| **Images** | MD5-based deduplication; sideload to WP media library; fallback HTTP fetch; ZIP upload mode |
+| **Products – simple** | Title, description, short description, SKU, price, sale price, stock, weight, dimensions, tax class, categories, tags |
+| **Products – variable** | `select` / `radio` OC options → WC attributes + variations; price/stock per variation |
+| **Product specials** | OC `product_special` sale prices mapped to WC `_sale_price` |
+| **Product filters** | OC filter groups → WC `pa_*` attribute taxonomies; filter values → terms; assigned to products |
+| **Product tags** | Comma-delimited OC tags → WC `product_tag` terms |
+| **Product bundles** | OC4 `oc_product_bundle` → WooCommerce Product Bundles plugin items |
+| **Related products** | OC `product_related` → WC upsell links |
+| **Downloadable files** | File copy from OC download dir → WC protected uploads; `_downloadable`, `_download_*` meta |
+| **Customers** | WP user account (email, name, role); billing + shipping address from `oc_address`; newsletter opt-in stored as `woocommerce_marketing_optin_status` |
+| **OC password migration** | Optional: stores OC hash; on first login verifies `sha1(salt . sha1(salt . sha1(plaintext)))`, upgrades to WP phpass, deletes OC hash |
+| **Orders** | Line items, quantities, prices, subtotal, shipping, totals; status mapping; billing/shipping name + address |
+| **Coupons** | Percent-off and fixed-cart coupons; usage limits; expiry date; restricted products |
+| **SEO slugs** | Reads `oc_seo_url`; updates WC slug for products, categories, pages |
+| **301 redirects** | Old OC URLs → new WC URLs via `.htaccess` block and/or WP `template_redirect` option |
+| **Information pages** | OC `oc_information` → WP pages; SEO slug; Arabic meta |
+| **Product reviews** | WP comments with `rating` meta; comment author, email, date |
+
+### Multilingual (WPML / Polylang)
+| Feature | Details |
+|---|---|
+| **Secondary-language products** | Arabic title, content, excerpt; English fallback when Arabic absent |
+| **Arabic short description** | `oc_product.tag` field (secondary lang) → `_octowoo_short_description_ar` |
+| **Arabic SKU / price / stock** | `copyProductDataToTranslation()` copies all WC meta + product_type + product_tag + brand terms |
+| **Correct Arabic slugs** | `fixTranslationSlug()` forces `post_name` to match English slug — no `-2` suffix |
+| **Secondary-language categories** | Arabic name, description; English name fallback |
+| **Yoast SEO – English products** | `_yoast_wpseo_title`, `_yoast_wpseo_metadesc`, `_yoast_wpseo_focuskw` written from OC `meta_title`, `meta_description`, `meta_keyword` |
+| **Yoast SEO – Arabic products** | Reads `_octowoo_metatitle_ar`, `_octowoo_metadesc_ar`, `_octowoo_metakw_ar`; falls back to English Yoast values; writes all three Yoast keys to translated post |
+| **Yoast SEO – English categories** | Same three keys written from OC category `meta_title`, `meta_description`, `meta_keyword` |
+| **Yoast SEO – Arabic categories** | Same pattern; English Yoast fallback |
+| **Arabic product SEO redirects** | Old `/ar/oc-slug` → new `/ar/product/wc-slug/` |
+| **Arabic category SEO redirects** | Old `/ar/oc-slug` → new `/ar/product-category/wc-slug/` |
+| **Update-existing translations** | Re-runs update title/content/excerpt/SKU/meta/SEO on already-linked translations |
+
+### Infrastructure
+| Feature | Details |
+|---|---|
+| **Batch processing** | Configurable `batch_size`; paginated over any OC table |
+| **Checkpoint / resume** | Per-migrator `last_oc_id`; resume after crash or timeout |
+| **Dry-run mode** | Full simulation; no writes; logged as `[DRY-RUN]` |
+| **Demo limit** | Cap each migrator at N items for a quick sanity check |
+| **Duplicate handling** | `skip` or `update` on re-run |
+| **ID map** | `octowoo_id_map` table: `oc_id → wc_id` per entity type; two-pass lookup (id_map + postmeta fallback) |
+| **Pause / Resume** | Runtime pause and resume controls in the admin UI |
+| **Skip migrator** | Skip the currently stuck migrator and continue with the next |
+| **Abort** | Cancels AS jobs + marks all running/pending checkpoints as aborted |
+| **Stale lock auto-clear** | Active-run lock auto-cleared when all checkpoint rows are terminal or last update > 2 hours |
+| **Background processing** | Action Scheduler (WC bundled) for non-blocking browser-independent runs |
+| **WP-CLI** | Full command-line migration, status, logs, reset, test-connection |
+| **Cron auto-import** | Scheduled delta sync via WP-Cron (`on_duplicate=update`) |
+| **SQL dump mode** | Upload `.sql` / `.gz`; importer rewrites `oc_*` prefixes; runs against WP DB |
+| **ZIP image mode** | Upload a ZIP of OC images; extracted and used as local image source |
+| **Pre-migration scan** | Counts all source entities; flags missing images, oversized variation sets, no-description products |
+| **Migration report** | Per-migrator processed/skipped/failed counts; persisted to `wp_options` |
+| **Bulk SQL purge** | Single-statement DELETE for customers, orders, reviews, pages, coupons — seconds not minutes |
+| **Force vs tagged purge** | Tagged: only removes `_octowoo_oc_*`-tagged items. Force: removes all WC items of that type |
+| **Purge diagnostics** | Warns when items exist but have no tag (id_map reset); suggests Force Purge |
+| **Meta repair** | `repairMetaFromIdMap()` backfills missing `_octowoo_oc_id` meta before purge |
+| **AUTO_INCREMENT reset** | Resets MySQL AUTO_INCREMENT on 6 core WP tables after a full purge |
+| **Credential encryption** | AES-256-CBC encryption of OC DB password in `wp_options` (key from `OCTOWOO_CRYPT_KEY` or `AUTH_KEY`) |
+| **Add-on hooks** | 11 filters + 7 actions for third-party customisation |
+| **Version detection** | Auto-detects OC 1/2/3/4 from DB; adapts SQL per version |
+| **Logger** | 5-level (DEBUG/INFO/WARNING/ERROR/SUCCESS); file (10 MB rotation) + DB; buffered writes |
+| **Validation** | Pre-flight config validation with warnings |
+
+---
+
+## 3. Requirements
 
 | Dependency | Minimum Version |
 |---|---|
@@ -32,14 +108,14 @@ The plugin is designed to be safe to run incrementally:
 
 **Optional integrations:**
 - WPML or Polylang (multilingual translation pass)
-- Yoast SEO / Rank Math (SEO meta migration)
+- Yoast SEO (SEO meta migration)
 - WooCommerce Product Bundles (OC4 bundle migration)
 - Any WooCommerce-compatible brand plugin (product_brand, pwb-brand, yith_product_brand, berocket_brand)
 - WP-CLI (command-line migration)
 
 ---
 
-## 3. Directory Structure
+## 4. Directory Structure
 
 ```
 OCTOWOO/
@@ -66,7 +142,7 @@ OCTOWOO/
 └── src/                         ← PSR-4 namespace OctoWoo\
     ├── Admin/
     │   ├── AdminPage.php         ← Admin menu, settings save, asset enqueue
-    │   └── AjaxHandler.php       ← All 12 wp_ajax_* action handlers
+    │   └── AjaxHandler.php       ← All wp_ajax_* action handlers
     │
     ├── Core/
     │   ├── MigrationManager.php  ← Orchestrator: runs migrators in order
@@ -77,7 +153,12 @@ OCTOWOO/
     │   ├── Logger.php            ← Structured logging (file + DB, buffered)
     │   ├── CronManager.php       ← Scheduled auto-import via WP-Cron
     │   ├── DataPurger.php        ← Reverse migration / cleanup
-    │   └── SqlImporter.php       ← SQL dump parser & importer
+    │   ├── SqlImporter.php       ← SQL dump parser & importer
+    │   ├── Encryptor.php         ← AES-256-CBC credential encryption
+    │   ├── MigrationReport.php   ← Post-run summary report
+    │   ├── PreMigrationScanner.php ← Pre-flight entity counts & issue detection
+    │   ├── BackgroundProcessor.php ← Action Scheduler integration
+    │   └── Validator.php         ← Pre-flight config validation
     │
     ├── Integration/
     │   ├── AddonManager.php      ← Hook/filter extension points for add-ons
@@ -106,7 +187,7 @@ OCTOWOO/
 
 ---
 
-## 4. Database Tables Created
+## 5. Database Tables Created
 
 | Table | Purpose |
 |---|---|
@@ -116,7 +197,7 @@ OCTOWOO/
 
 ---
 
-## 5. WordPress Options Used
+## 6. WordPress Options Used
 
 | Option | Purpose |
 |---|---|
@@ -129,30 +210,34 @@ OCTOWOO/
 | `octowoo_order_status_map` | `[oc_order_status_id => wc_status_slug]` |
 | `octowoo_cron_last_run` | Last cron run result |
 | `octowoo_sql_import_meta` | Metadata about the last imported SQL dump |
+| `octowoo_redirects` | `[old_path => new_url]` map served by `SeoMigrator::handleWpRedirect()` |
+| `octowoo_last_report` | Per-migrator stats from last completed run |
 
 ---
 
-## 6. Configuration Reference
+## 7. Configuration Reference
 
 All settings live under `octowoo_config` and are merged over `config/default-config.php`.
 
 | Section | Key | Default | Description |
 |---|---|---|---|
 | source | `source` | `remote` | `remote` (live DB) or `local` (SQL dump) |
-| db | `host`, `port`, `database`, `username`, `password`, `prefix` | — | OpenCart DB credentials |
-| opencart | `image_path`, `download_path`, `shop_url`, `language_ids`, `version` | — | OC install paths & language config |
+| db | `host`, `port`, `database`, `username`, `password`, `prefix`, `socket` | — | OpenCart DB credentials |
+| opencart | `image_path`, `download_path`, `shop_url`, `language_id`, `language_id_secondary`, `version` | — | OC install paths & language config |
 | migration | `batch_size` | `20` | Items per batch |
 | migration | `dry_run` | `false` | Simulate without writing |
+| migration | `demo_limit` | `0` | Cap migrators at N items (0 = unlimited) |
 | migration | `on_duplicate` | `skip` | `skip` or `update` on re-run |
 | migration | `run_*` flags | `true` per entity | Toggle individual migrators on/off |
 | seo | `write_htaccess`, `use_wp_redirects` | — | Redirect strategy |
-| multilingual | `enabled`, `use_wpml`, `use_polylang`, `locales` | — | Translation settings |
+| multilingual | `enabled`, `use_wpml`, `use_polylang`, `primary_locale`, `secondary_locale` | — | Translation settings |
 | cron | `enabled`, `interval`, `migrators` | — | Scheduled auto-import |
-| woocommerce | `force_password_reset`, `migrate_oc_passwords` | — | Password migration options |
+| woocommerce | `force_password_reset`, `migrate_oc_passwords`, `customer_role`, `default_order_status` | — | WC behaviour options |
+| logging | `file_enabled`, `db_enabled`, `min_level`, `max_file_size` | — | Logging configuration |
 
 ---
 
-## 7. Migration Execution Order
+## 8. Migration Execution Order
 
 MigrationManager runs migrators in this fixed sequence (dependencies first):
 
@@ -179,121 +264,109 @@ MigrationManager runs migrators in this fixed sequence (dependencies first):
 
 ---
 
-## 8. Core Services – What They Do
-
-### MigrationManager
-The top-level orchestrator. Receives a merged config, generates a `run_id` (UUID), bootstraps all shared services, and dispatches to each migrator. Supports two modes:
-- **`run()`** — Full synchronous migration (CLI / direct PHP).
-- **`runNextChunk()`** — Single-batch mode for AJAX chunked calls from the browser.
-
-### BatchProcessor
-Handles paginated iteration over any data source. Given a `total_callback`, `batch_callback`, and `item_callback`, it loops in pages of `batch_size`, calls the checkpoint after each page, and stops early if the abort signal is set. Supports resume via `resume_after_id` (last processed OC ID) and `demo_limit` (cap total for demos).
-
-### CheckpointManager
-Writes to `octowoo_checkpoints`. Each migrator has one checkpoint row per run. The manager:
-- Records status (`pending` → `running` → `completed` / `failed`).
-- Persists `last_oc_id` so a resumed migration can start exactly where it left off.
-- Writes to `octowoo_id_map` to link every OC entity ID to its WC counterpart.
-- Provides `getWcId()` with a two-pass lookup (id_map first, then postmeta fallback).
-
-### DatabaseConnector
-A thin PDO wrapper that connects to the OpenCart database. When `source=local`, it re-points to the WordPress database using the `octowoo_oc_` prefixed tables that SqlImporter created. Provides `fetchBatch()` for paginated reads and `scanSourceCounts()` for the pre-migration entity count scan.
-
-### VersionDetector
-Detects OC major version (1–4) from `oc_setting.config_version` or from structural markers (table/column existence). Provides adapter methods like `seoUrlJoin()`, `quantityColumn()` so migrators write a single SQL query that works across all OC versions.
-
-### Logger
-PSR-inspired five-level logger (DEBUG/INFO/WARNING/ERROR/SUCCESS). Writes to a date-stamped log file (with rotation at 10 MB) and buffers DB inserts (flushed every 25 entries or at migrator end). File and DB logging can each be independently disabled.
-
-### SqlImporter
-Parses a `.sql` or `.gz` SQL dump line by line, rewriting all table names from `oc_*` → `octowoo_oc_*` and stripping incompatible clauses. Imports into the WordPress database so a "local" migration reads from the same MySQL server as WordPress. Also handles `dropImportedTables()` for cleanup.
-
-### DataPurger
-Allows selective rollback. For each entity type it either:
-- **Force mode**: deletes all WC entities of that type.
-- **Tagged mode**: deletes only items that carry `_octowoo_oc_id` postmeta (safe — only removes plugin-created data).
-
-All purge methods use **direct bulk SQL** (single DELETE statements) rather than per-item PHP loops. This makes purging thousands of customers, orders, or products finish in seconds instead of minutes. Each purge method also calls `clearIdMapEntity()` to wipe the `octowoo_id_map` rows for that entity type and `resetAutoIncrements()` to reset MySQL AUTO_INCREMENT on the affected tables after a full purge.
-
-### CronManager
-Registers WP-Cron schedules (`every30min`, `every6hours` plus standard intervals). When enabled, fires a full migration on schedule using `on_duplicate=update`, so recurring cron runs act as delta syncs updating existing records.
-
-### AddonManager
-Provides eight filters and six actions that third-party add-on plugins can hook into to modify migrated data or skip specific records. Data filters: `octowoo_product_data`, `octowoo_category_data`, `octowoo_customer_data`, `octowoo_order_data`, etc. Skip filters: `octowoo_should_skip_product`, `octowoo_should_skip_customer`, `octowoo_should_skip_order`.
-
----
-
 ## 9. Admin Interface (AJAX Actions)
 
-All 12 actions are registered under `wp_ajax_octowoo_*` (admin-only, nonce-verified, capability `manage_woocommerce`):
+All actions are registered under `wp_ajax_octowoo_*` (admin-only, nonce-verified, capability `manage_woocommerce`):
 
 | Action | What it does |
 |---|---|
 | `octowoo_start_migration` | Starts a full synchronous migration |
 | `octowoo_run_chunk` | Runs a single batch (chunked AJAX mode) |
+| `octowoo_start_background` | Dispatches run to Action Scheduler (background) |
+| `octowoo_cancel_background` | Cancels queued AS jobs |
 | `octowoo_abort_migration` | Sets abort transient + marks checkpoints aborted |
+| `octowoo_pause_migration` | Pauses the active run |
+| `octowoo_resume_migration` | Resumes a paused run |
+| `octowoo_skip_migrator` | Skips the currently running migrator |
 | `octowoo_get_progress` | Returns snapshot of all checkpoint rows for polling |
+| `octowoo_get_report` | Returns the last migration report (processed/skipped/failed) |
 | `octowoo_get_logs` | Returns recent log entries (filterable by level/migrator) |
 | `octowoo_reset_migration` | Truncates checkpoints/id_map/logs tables |
 | `octowoo_test_connection` | Tests OC DB credentials |
 | `octowoo_import_sql` | Handles SQL/GZ file upload and import |
+| `octowoo_drop_sql` | Drops imported `octowoo_oc_*` tables |
 | `octowoo_import_images` | Handles ZIP archive upload and extracts images |
 | `octowoo_purge_imported` | Runs DataPurger for selected entities |
 | `octowoo_scan_counts` | Returns row counts from OC database |
-| `octowoo_drop_sql` | Drops imported `octowoo_oc_*` tables |
+| `octowoo_prescan` | Runs PreMigrationScanner (counts + issues) |
+| `octowoo_validate` | Runs Validator (config pre-flight) |
 
 ---
 
 ## 10. WP-CLI Commands
 
 ```bash
-wp octowoo migrate                        # Full migration
-wp octowoo migrate --dry-run              # Simulate (no DB writes)
-wp octowoo migrate --resume               # Resume from last checkpoint
+wp octowoo migrate                              # Full migration
+wp octowoo migrate --dry-run                    # Simulate (no DB writes)
+wp octowoo migrate --resume                     # Resume from last checkpoint
 wp octowoo migrate --migrators=products,orders  # Run specific migrators only
 
-wp octowoo status                         # Show checkpoint progress
-wp octowoo logs --level=error --limit=50  # View logs
-wp octowoo reset --yes                    # Clear all checkpoints/logs
-wp octowoo test_connection                # Test OC DB connection
+wp octowoo status                               # Show checkpoint progress
+wp octowoo logs --level=error --limit=50        # View logs
+wp octowoo reset --yes                          # Clear all checkpoints/logs
+wp octowoo test_connection                      # Test OC DB connection
 ```
 
 ---
 
-## 11. Password Migration
+## 11. Customer Migration – Field Reference
+
+| OC Field | Migrated? | Where |
+|---|---|---|
+| `firstname`, `lastname` | Yes | WP user + billing/shipping meta |
+| `email` | Yes | WP user login/email + billing_email |
+| `telephone` | Yes | `billing_phone` |
+| `date_added` | Yes | `user_registered` |
+| `newsletter` | Yes | `woocommerce_marketing_optin_status` (yes/no) + `_octowoo_newsletter_optin` |
+| `password`, `salt` | Opt-in only | `_octowoo_oc_password_hash/salt` (deleted after first login upgrade) |
+| `status` | Filter only | Only `status=1` customers are imported |
+| `address_id` → `oc_address` | Yes | Full billing + shipping address |
+| `token`, `code`, `cart`, `wishlist`, `ip`, `safe`, `custom_field`, `fax`, `customer_group`, `store_id` | Never fetched | Sensitive/irrelevant — not imported |
+
+---
+
+## 12. Password Migration
 
 When `woocommerce.migrate_oc_passwords = true`:
-1. OC password hash (`sha1(md5(salt + password))`) and salt are stored in user meta during `CustomerMigrator`.
-2. A `authenticate` filter (`octowoo_oc_password_compat`, priority 30) is registered.
-3. On the customer's first WP login, the filter validates the OC hash, accepts the login, and immediately upgrades the stored hash to WP's phpass format.
-4. After upgrade, subsequent logins use the native WP authentication path — OC hash is no longer used.
+1. OC hash and salt are stored in `_octowoo_oc_password_hash` / `_octowoo_oc_password_salt` user meta during `CustomerMigrator`. A WARNING log is written every run as a reminder.
+2. Filter `octowoo_oc_password_compat` (priority 30) is registered on `wp_authenticate_user`.
+3. On the customer's first login, the filter verifies: `sha1( $salt . sha1( $salt . sha1( $plaintext ) ) )`.
+4. On success: calls `wp_set_password()`, refreshes `$user->user_pass` from DB (so WP's own `wp_check_password` succeeds in the same request), deletes OC hash/salt meta and `default_password_nag`.
+5. All subsequent logins use native WP phpass — the OC hash is gone.
+
+**Default: disabled** (`migrate_oc_passwords = false`). Customers receive a random WP password and are prompted to reset on first login.
 
 ---
 
-## 12. Multilingual Support
+## 13. Multilingual Support (WPML / Polylang)
 
 When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIntegration` runs a translation pass:
-- Reads secondary-language meta stored by migrators (e.g. `_octowoo_name_ar`, `_octowoo_description_ar`, `_octowoo_short_description_ar`).
+
+- Reads secondary-language meta stored by migrators (`_octowoo_name_ar`, `_octowoo_description_ar`, `_octowoo_short_description_ar`, `_octowoo_metatitle_ar`, `_octowoo_metadesc_ar`, `_octowoo_metakw_ar`).
 - Creates translated post/term copies via `wp_insert_post()` / `wp_insert_term()`.
-- Links them to the primary entity using **WPML** actions (`wpml_set_element_language_details`) or **Polylang** functions (`pll_set_post_language`, `pll_link_post_translations`).
-- **English fallback**: if a product or page has no Arabic title/content/excerpt in OpenCart, the English text is used instead of skipping the item entirely. Every product gets an Arabic URL and its own WPML-linked post regardless of whether Arabic copy exists.
-- **Slug fix**: after linking a post as a translation, `fixTranslationSlug()` forces the Arabic post `post_name` to match the English slug. This prevents WordPress's uniqueness check from appending `-2`, so Arabic URLs are identical to English URLs under the `/ar/` prefix (e.g. `/ar/product/zelda-switch/` not `/ar/product/zelda-switch-2/`).
-- **Full WC meta copy**: for product translations, `copyProductDataToTranslation()` copies all WooCommerce meta (SKU, price, stock, `_manage_stock`, gallery IDs, etc.) plus `product_type` term and all `product_tag` / brand taxonomy terms from the English post to the Arabic post.
+- Links to primary via WPML (`wpml_set_element_language_details`) or Polylang (`pll_set_post_language`, `pll_link_post_translations`).
+- **English fallback**: when Arabic title/content/excerpt is absent, English values are used — every product gets an Arabic WPML post.
+- **Slug fix**: `fixTranslationSlug()` forces `post_name` to match the English slug, preventing `-2` suffix.
+- **Full WC meta copy**: `copyProductDataToTranslation()` copies SKU, price, stock, gallery, product_type, product_tag, brand terms to the Arabic post.
+- **Yoast SEO**: writes `_yoast_wpseo_title`, `_yoast_wpseo_metadesc`, `_yoast_wpseo_focuskw` to translated post/term; falls back to English Yoast values when Arabic meta is absent.
+- **Arabic redirects**: old OC Arabic product and category URLs → new WC Arabic URLs.
+- **Update-existing path**: re-runs update title/content/WC meta/Yoast SEO on already-linked translations.
 
 ---
 
-## 13. SEO & Redirects
+## 14. SEO & Redirects
 
-`SeoMigrator` reads the `oc_seo_url` table and:
+`SeoMigrator` reads `oc_seo_url` and:
 1. Updates the WC entity's slug to match the OC SEO keyword.
-2. Builds a redirect map from old OC URL → new WC URL.
-3. Persists redirects via either:
-   - **Apache `.htaccess`**: writes a managed block of `RedirectPermanent` lines.
-   - **WordPress option**: stores rules; an early `template_redirect` hook fires 301 responses.
+2. Builds a redirect map: old OC URL → new WC URL (for products, categories, pages).
+3. Arabic redirects: `WpmlIntegration` builds `/ar/old-slug` → `/ar/product/new-slug/` and `/ar/product-category/new-slug/` maps.
+4. Persists redirects via:
+   - **Apache `.htaccess`**: managed block of `RedirectPermanent` lines.
+   - **WordPress option** (`octowoo_redirects`): served by an early `template_redirect` hook firing 301 responses.
 
 ---
 
-## 14. What Has Been Completed
+## 15. What Has Been Completed
 
 | Area | Status |
 |---|---|
@@ -303,27 +376,32 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 | Uninstall (full data removal) | Done |
 | Admin menu & dashboard UI | Done |
 | Admin settings form (DB credentials, paths, toggles) | Done |
-| All 12 AJAX action handlers | Done |
+| All AJAX action handlers (20+) | Done |
 | Admin CSS & JS (tabs, progress, polling) | Done |
 | Logger (file + DB, rotation, buffered) | Done |
 | DatabaseConnector (PDO, all query helpers, socket support) | Done |
 | VersionDetector (OC 1–4, structural detection) | Done |
-| CheckpointManager (resume, id_map, two-pass getWcId) | Done |
+| CheckpointManager (resume, id_map, two-pass getWcId, static cache) | Done |
 | BatchProcessor (pagination, resume, demo limit, dry-run) | Done |
-| MigrationManager (orchestrator, full + chunked modes) | Done |
+| MigrationManager (orchestrator, full + chunked + background modes) | Done |
 | CronManager (schedules, delta sync) | Done |
-| DataPurger (force + tagged rollback for all entities) | Done |
+| DataPurger (force + tagged rollback, bulk SQL, diagnostics, AUTO_INCREMENT reset) | Done |
 | SqlImporter (SQL/GZ parser, prefix rewrite, generator) | Done |
-| AddonManager (8 filters + 6 actions) | Done |
+| Encryptor (AES-256-CBC credential encryption) | Done |
+| MigrationReport (per-migrator stats, persisted) | Done |
+| PreMigrationScanner (counts, missing images, oversized variations) | Done |
+| Validator (pre-flight config checks) | Done |
+| BackgroundProcessor (Action Scheduler integration) | Done |
+| AddonManager (11 filters + 7 actions) | Done |
 | TaxMigrator | Done |
 | OrderStatusMigrator (+ custom WC status registration) | Done |
-| CategoryMigrator (hierarchy, SEO, images, Arabic meta) | Done |
+| CategoryMigrator (hierarchy, SEO, images, Arabic meta, Yoast meta) | Done |
 | ManufacturerMigrator (brand taxonomy detection, images, product assignment) | Done |
-| ImageMigrator (MD5 deduplication, sideload, OC path caching) | Done |
-| ProductMigrator (simple + variable, attributes, variations, specials) | Done |
+| ImageMigrator (MD5 deduplication, sideload, batched, OC path caching) | Done |
+| ProductMigrator (simple + variable, attributes, variations, specials, Yoast EN + AR meta) | Done |
 | RelatedProductsMigrator (upsells) | Done |
 | BundleMigrator (OC4, WC Product Bundles plugin) | Done |
-| CustomerMigrator (addresses, OC password hash migration) | Done |
+| CustomerMigrator (addresses, newsletter consent, OC password hash migration) | Done |
 | OrderMigrator (line items, totals, status mapping) | Done |
 | CouponMigrator (percent + fixed, limits, expiry, products) | Done |
 | SeoMigrator (.htaccess + WP redirects, products/categories/pages) | Done |
@@ -332,217 +410,218 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 | FilterMigrator (groups → attributes, filters → terms, product assignment) | Done |
 | DownloadMigrator (file copy, meta, downloadable flag) | Done |
 | ReviewMigrator (WP comments, rating meta, cache flush) | Done |
-| WpmlIntegration (WPML + Polylang, posts + terms) | Done |
+| WpmlIntegration (WPML + Polylang, posts + terms, full Yoast SEO, EN fallback, Arabic redirects) | Done |
 | WP-CLI command class | Done |
-| OC password compat filter (sha1/md5 → phpass upgrade) | Done |
+| OC password compat filter (correct sha1 formula, phpass upgrade, user_pass refresh) | Done |
 
 ---
 
-## 15. Changelog Summary (v2.4.x)
+## 16. Step-by-Step Customer Guide
 
-All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+### Phase 1 – Install the Plugin
 
-### v2.4.36 – English fallback when Arabic data is missing
-- **Bug fix:** `WpmlIntegration::translatePosts()` previously hard-skipped any product or page with no Arabic title meta (`_octowoo_name_ar`), leaving those items with no Arabic translation at all.
-- **Change:** When Arabic title, content, or excerpt is absent, the corresponding English value from the primary post is used instead of skipping. Every product now gets an Arabic WPML-linked post regardless of whether Arabic copy exists in OpenCart.
-- **Cleanup:** Removed two redundant `get_post()` calls inside the translation loop; both the update-existing and create-new paths now reuse `$primary_post_raw` fetched once at the top of each iteration.
+1. Download the OctoWoo ZIP from your purchase.
+2. In WordPress Admin go to **Plugins → Add New → Upload Plugin**.
+3. Upload the ZIP and click **Install Now**, then **Activate Plugin**.
+4. Verify the **OctoWoo** menu appears in the left sidebar.
 
-### v2.4.35 – Arabic URL slug fix (no more `-2` suffix)
-- **Bug fix:** After WPML linked an Arabic product post as a translation, WordPress's `wp_unique_post_slug()` ran without WPML's per-language scoping and appended `-2` to the slug (e.g. `/ar/product/zelda-switch-2/` instead of `/ar/product/zelda-switch/`).
-- **Fix:** Added `WpmlIntegration::fixTranslationSlug()`, called immediately after `linkPostTranslation()`. It force-writes the Arabic post `post_name` to match the English primary slug using a direct `wp_update_post()` call once WPML language context is established.
+### Phase 2 – Connect to Your OpenCart Database
 
-### v2.4.34 – Arabic product meta: SKU, short description, tags, brands
-- **Bug fix:** Arabic product translations were created as bare WooCommerce posts (no SKU, no price, no stock, no tags, no brands). Added `WpmlIntegration::copyProductDataToTranslation()`, which copies all WC postmeta (SKU, price, stock, manage_stock, gallery, etc.), `product_type` term, `product_tag` terms, and brand taxonomy terms from the English post to the Arabic translation post.
-- **Bug fix:** OpenCart's `tag` field (short description) was never extracted for the secondary language. Added `$short_ar` extraction from `$sec['tag']` in `ProductMigrator::processProduct()` and threaded the value through `createProduct()` / `doCreateProduct()` / `updateProduct()` where it is stored as `_octowoo_short_description_ar` post meta for the WPML pass.
+> You have two options: **Remote** (direct DB connection to your OC server) or **Local** (upload an SQL dump).
 
-### v2.4.33 – Bulk SQL purge (massive speed improvement)
-- **Performance:** Replaced all PHP-loop-based purge methods in `DataPurger` with direct bulk SQL.
-  - `purgeCustomers()`: single bulk DELETE on `wp_usermeta` + `wp_users`, with admin exclusion via capabilities meta; orphaned posts are reassigned to the first admin.
-  - `purgeOrders()` (tagged mode): bulk DELETE on `wc_orders` (HPOS) and `wp_posts` (`shop_order` type) in one statement each.
-  - `purgeReviews()`: bulk DELETE on `wp_commentmeta` + `wp_comments`.
-  - `purgeInformation()`: bulk DELETE on `wp_postmeta` + `wp_posts` for `page` type.
-  - `purgeCoupons()` (tagged mode): bulk DELETE on `wp_postmeta` + `wp_posts` for `shop_coupon` type.
-- **New:** `clearIdMapEntity()` helper wipes `octowoo_id_map` rows for a given entity type; called at the start of every purge method.
-- **New:** `resetAutoIncrements()` resets MySQL `AUTO_INCREMENT` on 6 core WP tables after a full purge.
-- Result: purging 7,400 customers and 53,000 orders now completes in seconds instead of timing out.
+**Option A – Remote connection (recommended if OC is on the same server or accessible)**
+1. Go to **OctoWoo → Settings** tab.
+2. Enter your OpenCart database credentials: Host, Port, Database name, Username, Password, Table prefix (default: `oc_`).
+3. If MySQL uses a Unix socket (e.g. Cloudways), enter the socket path and leave Host blank.
+4. Click **Test Connection**. Green = ready.
 
-### v2.4.25 – Description + Arabic import robustness
-- **Bug fix:** Escaped OpenCart HTML in descriptions is now decoded before sanitization, so frontend content renders correctly instead of showing raw tags.
-- **Bug fix:** Product secondary-language extraction now falls back to the first non-primary language row when configured secondary language ID is missing.
-- **Improvement:** Product and category names now enforce plain-text normalization to prevent HTML fragments in titles.
+**Option B – SQL dump (OC on a different server)**
+1. Export your OpenCart database as a `.sql` or `.sql.gz` file using phpMyAdmin or mysqldump.
+2. In **OctoWoo → Settings**, set Source to **Local (SQL Dump)**.
+3. Use the **Import SQL** button to upload the dump. OctoWoo rewrites table prefixes automatically.
+4. After import, click **Test Connection** to confirm tables are available.
 
-### v2.4.24 – Brand/manufacturer mapping reliability
-- **Bug fix:** Manufacturer/brand mapping now uses a stable singular ID-map key with backward compatibility to older plural-key runs.
-- **Bug fix:** Manufacturer migrator now assigns brands after products are present, improving product-brand linking accuracy.
-- **Improvement:** Added `pa_brand` taxonomy support and deterministic manufacturer ordering to keep resume behavior stable.
+### Phase 3 – Configure Migration Settings
 
-### v2.4.23 – Category hierarchy reliability
-- **Bug fix:** Category batch ordering is now `category_id`-first to keep resume pagination deterministic and avoid skipped categories.
-- **Bug fix:** Added deferred parent resolution for categories; children imported before parents are automatically re-parented once parent mapping is available.
-- **Bug fix:** Manufacturer/brand mapping now uses a stable ID-map key (`manufacturer`) with backward compatibility, improving brand lookup on re-runs and repairs.
-- **Bug fix:** Manufacturer brand assignment now runs after products are migrated, so brand terms are correctly applied to products in the same run.
+In **OctoWoo → Settings**:
 
-### v2.4.22 – Recovery controls + image-path resilience
-- **Feature:** Added runtime controls for long migrations: pause/resume and skip-current entity.
-- **Feature:** Added targeted recovery actions in admin UI: Images-only, Products+Images, and Categories+Manufacturers.
-- **Bug fix:** Local image-source mode now short-circuits cleanly when filesystem path is unavailable, avoiding repeated per-image fallback noise.
-- **Improvement:** Manufacturer brand logo import now honors global `run_images` toggle for faster non-image runs.
-- **Improvement:** Validator now returns warning (not hard fail) when image migration is intentionally disabled, supporting migrate-now/images-later workflow.
+| Setting | Recommended value |
+|---|---|
+| Image path | Absolute path to your OC `/image/` folder (e.g. `/home/user/public_html/image`) |
+| Download path | Absolute path to OC `/system/storage/download/` |
+| Old shop URL | Full URL of the OC store (e.g. `https://old-shop.com`) — used for redirect rules |
+| Primary language ID | `1` (English) |
+| Secondary language ID | `3` (Arabic) — or `0` to skip multilingual |
+| Batch size | `20` (safe default); increase to `50` on a powerful server |
+| On duplicate | `skip` for first run; `update` for re-runs |
+| Force password reset | Keep ON — customers must set a new password on first login |
+| Run migrators | Enable/disable individual migrators as needed |
 
-### v2.4.21 – Backend image-toggle safeguard
-- **Bug fix:** When image import is disabled (`run_images=false`), `ImageMigrator` now no-ops completely, and nested image imports are skipped to prevent unexpected image fallback warnings.
+### Phase 4 – Run a Dry Run (optional but recommended)
 
-### v2.4.20 – Local prefix autodetect + SEO loop guard
-- **Bug fix:** In local mode, DB connector now auto-detects available OpenCart table prefix (`octowoo_oc_` or `oc_`) so manual SQL imports work without table-not-found failures.
-- **Bug fix:** `SeoMigrator` now completes its checkpoint when `seo_url` table is missing, preventing repeated dispatch of `seo` chunks.
+1. In **Settings**, enable **Dry Run**.
+2. Go to the **Migration** tab and click **Start Migration**.
+3. Watch the progress table — all steps will say `[DRY-RUN]` in logs.
+4. Review the **Logs** tab for any warnings (missing images, no descriptions, etc.).
+5. Disable Dry Run when satisfied.
 
-### v2.4.19 – Related migrator demo-limit fix
-- **Bug fix:** `RelatedProductsMigrator` now honors `demo_limit`, so demo runs do not process the full related dataset.
-- **Improvement:** Related-link source query is scoped to selected product IDs for faster demo execution.
+### Phase 5 – Pre-Migration Scan
 
-### v2.4.18 – SEO checkpoint stats + review schema compatibility
-- **Bug fix:** `SeoMigrator` now updates checkpoint progress counters (`processed_count`) and honors `demo_limit`, preventing misleading `completed` rows with `0 / total`.
-- **Bug fix:** `ReviewMigrator` no longer queries the optional `author_email` column from OpenCart `review`, avoiding hard failures on schemas where that column does not exist.
+1. Click **Scan Source** in the Migration tab.
+2. Review the counts: products, categories, customers, orders, etc.
+3. Check for warnings: missing images, products with too many variations (will be imported as simple), products with no description.
+4. Fix any blocking issues in your OC store or adjust settings.
 
-### v2.4.17 – Cloudways image path normalization
-- **Bug fix:** Added automatic normalization for equivalent path roots (`/home/...` and `/mnt/data/home/...`) in image-path validation and image import path resolution.
-- **Improvement:** Pre-migration image scanner now uses the same normalization to avoid false "missing image" counts.
+### Phase 6 – Run the Migration
 
-### v2.4.16 – Image chunking + progress fix
-- **Bug fix:** `ImageMigrator` previously processed the full image list in one pass, which could monopolize the run and keep the UI at `0/x` for long periods when local files were missing.
-- **Change:** Image import now runs in batches/chunks with checkpoint updates per batch.
-- **Change:** Demo runs now cap images by `demo_limit` so later migrators can be reached during demos.
+1. Click **Start Migration** in the Migration tab.
+2. The progress table shows each migrator moving from `pending` → `running` → `completed`.
+3. Keep the browser tab open (or use WP-CLI / Background mode for large stores).
+4. If the run is interrupted, click **Resume** — it continues exactly from the last saved ID.
+5. When finished, a completion banner shows total processed/skipped/failed.
 
-### v2.4.15 – False-complete guard + demo limit consistency
-- **Bug fix:** Prevented premature "Migration completed" UI state while checkpoint rows are still `pending`/`running`.
-- **Bug fix:** `OrderStatusMigrator` now respects `demo_limit`, so demo runs cap order status import too.
+**For large stores (5,000+ products / 10,000+ orders), use WP-CLI:**
+```bash
+wp octowoo migrate --resume
+```
 
-### v2.4.14 – Checkpoint key alignment (stuck migration fix)
-- **Bug fix:** Several migrators wrote checkpoint status under singular keys (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`). This mismatch could leave many entities permanently `pending` and make the migration appear stuck.
-- **Change:** Checkpoint keys are now aligned to plural names for Category/Product/Customer/Order/Coupon migrators.
-- **Compatibility:** ID-map entity keys remain singular to preserve existing OC->WC mapping behavior and dependent lookups.
+### Phase 7 – Upload Images (if OC images are not accessible by path)
 
-### v2.4.13 – Poll/chunk race condition fix
-- **Bug fix:** `startPolling()` was called in `startMigration()` immediately with an empty `currentRunId`. The poll hit `actionGetProgress()` before `markRunActive()` ran, the server returned `active: false` for the OLD finished run, and the poll callback set `isRunning = false` + showed "Migration completed!" banner — killing the chunk loop before the first chunk finished. Polling now starts only after the first chunk response provides a valid `currentRunId`. Additionally, the poll completion guard now requires `data.run_id === currentRunId` to prevent stale/mismatched responses from triggering false completion.
+1. Create a ZIP of your OC `/image/` directory.
+2. In the Migration tab, use **Upload Images ZIP** to import them.
+3. Re-run the **Images** migrator only (enable `run_images`, disable all others, click Start).
 
-### v2.4.12 – Brand image download_url timeout fix
-- **Bug fix:** `ManufacturerMigrator::importBrandImage()` used `download_url()` to HTTP-fetch local image files via the OpenCart shop URL. When the OC URL was unreachable (common during migration), the HTTP call hung for 60–300 s per image, causing a PHP fatal timeout on every chunk after the first batch of 20 manufacturers. Replaced with direct `copy()` to temp file + `media_handle_sideload()`, matching `ImageMigrator`'s proven approach.
-- **Improvement:** Chunk dispatcher now logs migrator key + current offset on every request for easier stuck-migration diagnosis.
-- **Improvement:** JS auto-scrolls the progress table into view after completion; done banner includes progress table hint.
+### Phase 8 – Multilingual (WPML / Polylang)
 
-### v2.4.11 – FilterMigrator taxonomy fix + CheckpointManager cache
-- **Bug fix:** `FilterMigrator::assignProductFilters()` used the non-existent taxonomy `product_attr_filter`. Filter terms were created in correct per-group `pa_filter-xxx` taxonomies but never assigned to products. Phase 3 now passes `group_map` through and assigns per correct taxonomy.
-- **Bug fix:** `CheckpointManager` had duplicate `case 'order':` making HPOS fallback unreachable. Merged.
-- **Bug fix:** `CheckpointManager::getWcId()` N+1 DB query problem — added static in-memory cache primed by `saveIdMap()` with null-caching for misses.
-- **Improvement:** `TagMigrator` logs diagnostic warning when all OC products have empty tag fields.
+*Skip this phase if you only have one language.*
 
-### v2.4.10 – Manufacturer migration stuck fix
-- **Bug fix:** `ManufacturerMigrator::assignManufacturersToProducts()` was called after every 20-item chunk. On stores with 4,000+ products this scanned the entire product table on each chunk, causing PHP timeouts and leaving the background migration permanently stuck at the first batch (e.g. 20/117). The product-assignment phase is now deferred to run only once, after the final manufacturer chunk completes (`is_done = true`).
+1. Ensure WPML or Polylang is installed and configured with both English and Arabic languages.
+2. In **Settings → Multilingual**, enable multilingual, set primary locale (`en`), secondary locale (`ar`).
+3. Set secondary language ID to the OC Arabic language ID (usually `3`).
+4. Run the migration (or re-run with `on_duplicate=update`).
+5. The WPML pass runs automatically as the last step — it creates Arabic product/category posts and links them.
 
-### v2.4.10 – Admin version display
-- **New feature:** Plugin version (`OCTOWOO_VERSION`) is now displayed in two places in the admin UI: right-aligned in the page header next to the plugin title, and in a small footer line below the entire panel. Both read directly from the constant, so they always stay current with the deployed code.
+### Phase 9 – Verify SEO Redirects
 
-### v2.4.9 – Purge diagnostic hint when id_map is empty
-- **Bug fix / UX:** When `purge()` deletes 0 items in tagged mode but WooCommerce items of that type do exist, the UI now shows a yellow warning: *"N item(s) exist in WooCommerce but have no OctoWoo tag (id-map was reset or meta was never saved). Enable ☢ Force Purge to remove them."*
-- **New:** `DataPurger::countEntityItems()` — returns `{total, tagged}` counts per entity type.
-- **New:** `DataPurger::purge()` return shape changed to `{results, diagnostics}` (BC-safe; AJAX handler unwraps it).
-- **New:** `hints` array added to the AJAX success response; JS renders each hint as a paragraph below the result line.
-- **Improved:** Detailed warning also written to the migration log (visible in the Logs tab).
+1. After migration, visit one of your old OC URLs (e.g. `https://new-site.com/some-product-slug`).
+2. It should 301-redirect to the new WC URL (e.g. `/product/some-product-slug/`).
+3. If redirects are not working:
+   - Check that `.htaccess` is writable if using the Apache option.
+   - Or enable **WP Redirects** option in Settings (uses WordPress `template_redirect`).
 
-### v2.4.8 – Repair missing `_octowoo_oc_id` meta before purge
-- **Bug fix:** Items imported by pre-v2.4.5 code could exist in the `octowoo_id_map` table but have no `_octowoo_oc_id` termmeta/postmeta (the old `term_exists` slug-lookup bug skipped `addTermMeta()`). The tagged purge therefore found nothing to delete.
-- **New:** `DataPurger::repairMetaFromIdMap()` — walks every `octowoo_id_map` row and backfills missing meta using `update_term_meta` (term entities) or `update_post_meta` (post entities) before the deletion sweep. Idempotent.
-- Called automatically at the start of every non-force `purge()` invocation.
+### Phase 10 – Review & Clean Up
 
-### v2.4.7 – Time-based stale run detection
-- **Bug fix:** `CheckpointManager::getActiveRunId()` added a third self-healing condition: if any checkpoint row's `MAX(updated_at)` is older than 2 hours, the active-run lock is auto-cleared regardless of row status. This handles runs whose `running`/`pending` rows were never closed by old abort code.
-- Condition C also handles the case where no rows exist but `octowoo_run_started_at` is more than 2 hours old.
+1. Spot-check products, categories, orders, and customers in WooCommerce.
+2. Review the **Logs** tab for any ERROR entries and address them.
+3. Test customer login with a known OC password (if `migrate_oc_passwords` is enabled).
+4. Test checkout to confirm tax, shipping, and order flow.
+5. When satisfied, go to **Settings** and disable **migrate_oc_passwords** (if enabled).
+6. Optionally run **Purge** on specific entity types if a clean re-migration is needed.
 
-### v2.4.6 – Abort / Reset / stale lock chain fixed
-- **Bug fix:** `actionAbortMigration` now calls `BackgroundProcessor::abort()` first (cancels AS jobs), then marks both `running` and `pending` checkpoint rows as `aborted`. Previously AS would re-queue the next batch 5 s later and call `markRunActive()` again, making the banner reappear on refresh.
-- **Bug fix:** `actionResetMigration` no longer hard-blocks when `getActiveRunId()` returns a value. It force-aborts the active run first, then deletes all checkpoint and id_map rows for both active and last run IDs. Also deletes `octowoo_run_started_at` and `octowoo_db_lock` options.
-- **Bug fix:** `CheckpointManager::getActiveRunId()` is self-healing: if all checkpoint rows for the stored run are in terminal states (`completed`, `failed`, `aborted`), the lock is cleared automatically (no manual intervention needed).
-- **Bug fix:** `actionPurgeImported` no longer hard-blocks; it benefits from the self-healing `getActiveRunId()`.
+### Phase 11 – Ongoing Delta Sync (optional)
 
-### v2.4.5 – Duplicate category prevention
-- **Bug fix (createCategory):** The `term_exists` WP_Error handler now resolves the colliding term via `$result->get_error_data('term_exists')` (correct existing term_id) instead of `get_term_by('slug', $uniquified_slug)` (which returned null because the existing term had the original slug, not the suffixed one).
-- **Bug fix (processCategory):** Added a `term_exists(name, 'product_cat', parent)` guard before any `wp_insert_term` attempt. If a matching term is found by name+parent, the id_map is backfilled and the item is counted as a skip — preventing creation of duplicate terms on large re-runs.
-- These two fixes together eliminate the "1 Year Warranty (0) × 3" class of duplicates.
-
-### v2.4.5 – Dispatch log noise suppression
-- **Bug fix:** `AjaxHandler::dispatch()` was logging every AJAX action including the high-frequency polling calls (`octowoo_get_progress`, `octowoo_get_logs` every ~3 s). Added a `$skip_log_actions` guard to suppress these, eliminating the flood of `[INFO] dispatch: octowoo_get_progress` entries in logs and unnecessary DB writes.
+To keep WooCommerce in sync with OpenCart while both stores are live:
+1. In Settings → Cron, enable **Cron Auto-Import**.
+2. Set interval (e.g. every 6 hours).
+3. Set `on_duplicate=update`.
+4. OctoWoo will run automatically on schedule, updating existing records and adding new ones.
+5. Note: items deleted in OC are not deleted from WC — only additions and updates are synced.
 
 ---
 
-## 16. Known Issues & Limitations
+## 17. Core Services – What They Do
 
-### 15.1 Variable Products / Variations
-- OC "options" map to WC attribute/variation combinations. Complex OC option configurations (e.g. options linked to images, file-upload options, date options) are **not migrated** — only `select` and `radio` type options are converted to variations.
-- If an OC product has many option combinations (e.g. 10 colours × 10 sizes = 100 variations), WooCommerce's default 50-variation limit can block saving unless the user increases the WC limit.
+### MigrationManager
+Top-level orchestrator. Receives a merged config, generates a `run_id` (UUID), bootstraps all shared services, and dispatches to each migrator. Supports: full synchronous run, chunked AJAX mode, and Action Scheduler background mode.
 
-### 15.2 Image Migration
-- Images are resolved via the OpenCart `image_path` configured in settings. If that path is wrong or the OC files are not accessible, all image migrations will silently fail (logged as warnings but migration continues).
-- Remote image copy (OC shop on different server) requires the OC `image_path` to be an accessible URL or mounted path.
-- No lazy image download from the OC shop_url — images must be physically accessible.
+### BatchProcessor
+Handles paginated iteration over any data source. Given `total_callback`, `batch_callback`, `item_callback`, it loops in pages of `batch_size`, saves checkpoint after each page, stops on abort signal. Supports resume via `resume_after_id` and `demo_limit`.
 
-### 15.3 Batch Size & Timeouts
-- `batch_size` defaults to 20. Stores with very large product catalogues (10,000+) will benefit from increasing to 50–100, but too large a batch can exhaust PHP memory.
-- In chunked AJAX mode, the browser must keep the tab open throughout; if it times out or the browser closes, the run stops at the last checkpoint and must be manually resumed.
+### CheckpointManager
+Writes to `octowoo_checkpoints`. Records `pending → running → completed/failed`. Persists `last_oc_id` for resume. Writes `octowoo_id_map`. Provides `getWcId()` with two-pass lookup (id_map first, then postmeta fallback) with in-memory static cache.
 
-### 15.4 Order Taxes
-- OC stores order-level tax totals in `oc_order_total`. The migrator creates a fee/tax line item from those totals, but does **not** recreate per-line-item tax data — WC's own recalculate  feature would produce different numbers on edit.
+### DatabaseConnector
+Thin PDO wrapper for the OpenCart database. In `source=local` mode re-points to the WP database with `octowoo_oc_` prefixed tables. Provides `fetchBatch()` for paginated reads, `scanSourceCounts()` for pre-scan.
 
-### 15.5 Bundle Migration
-- Requires the paid **WooCommerce Product Bundles** plugin to be active. Without it, bundles are skipped with a warning.
-- Only OC 4.x bundles are supported (requires `oc_product_bundle` table).
+### VersionDetector
+Detects OC major version (1–4) from `oc_setting.config_version` or structural markers. Provides adapter methods (`seoUrlJoin()`, `quantityColumn()`) so migrators write one SQL query that works across all OC versions.
 
-### 15.6 Multilingual / WPML
-- A secondary language must be configured in `multilingual.locales` and WC product descriptions for the secondary language must already exist in OC (stored under a second `language_id`).
-- The WPML/Polylang pass only handles products, categories, and pages — other entities (orders, customers, coupons) are not translated.
-- When a product has no Arabic data in OC, the English title/content/excerpt is used for the Arabic translation (fallback added in v2.4.36). The Arabic post is still created and linked.
+### Logger
+PSR-inspired five-level logger. Writes to a date-stamped file (10 MB rotation) and buffers DB inserts (flushed every 25 entries). File and DB logging independently configurable.
 
-### 15.7 SEO Redirects (.htaccess)
-- Writing to `.htaccess` requires the file to be writable by the web server. On hardened servers this will silently fail (error is logged).
-- Only Apache is supported for `.htaccess` redirects; Nginx users must use the WP-redirect option.
+### DataPurger
+Selective rollback using bulk SQL DELETE statements. Force mode: removes all WC entities of a type. Tagged mode: removes only `_octowoo_oc_id`-tagged items. Auto-repairs missing meta via `repairMetaFromIdMap()`. Resets MySQL `AUTO_INCREMENT` after full purge. Returns `{results, diagnostics}` with hints for the UI.
 
-### 15.8 SQL Dump Import (Local Mode)
-- The SQL importer re-prefixes tables server-side. If the dump contains stored procedures, views, or triggers, those are **not** migrated.
-- Very large dumps (>500 MB) can exhaust PHP upload limits and execution time. The generator-based importer helps but is still subject to PHP configuration.
+### SqlImporter
+Parses `.sql` / `.gz` dumps line by line. Rewrites `oc_*` → `octowoo_oc_*`. Strips incompatible clauses (`SET`, `USE`, `LOCK TABLE`, etc.). Imports into the WP database. Handles `dropImportedTables()` for cleanup.
 
-### 15.9 OC Password Compatibility
-- Password hashing support is for OC's legacy `sha1(md5(salt + password))` scheme only. OC installations using bcrypt or other non-standard hashing are **not** covered.
-- The compat filter runs at priority 30 so it fires after WP's native authenticator. If a customer hasn't logged in since migration, their WP password is the random one set during migration — they must use the OC password or request a reset.
+### Encryptor
+AES-256-CBC encryption for the OC DB password stored in `wp_options`. Key priority: `OCTOWOO_CRYPT_KEY` constant → `AUTH_KEY` → fallback. Prefixed ciphertext (`octowoo_enc1::`) allows transparent migration from plain-text configs.
 
-### 15.10 Reviews
-- All imported reviews get `verified = 0` (unverified purchase). WooCommerce treats unverified reviews differently if "only allow verified reviews" is enabled in WC settings — those reviews will not display.
-
-### 15.11 Duplicate OCTOWOO Folder
-- The workspace contains a nested `OCTOWOO/` folder that duplicates all source files. This is a workspace/copy artifact. Only one copy (the root-level files) should be deployed.
-
-### 15.12 Cron Delta Sync Gaps
-- Cron auto-import uses `on_duplicate=update`, which keeps existing WC products/orders current. However, records that were **deleted** in OC after the initial migration are **not deleted** from WC — there is no deletion delta.
-
-### 15.13 No Rollback Transaction
-- Each migrator processes items individually without a wrapping database transaction. A failure mid-migration leaves partially migrated data in WC. The DataPurger must be used to clean up before a retry.
+### AddonManager
+Provides 11 filters and 7 actions for third-party add-on plugins to modify migrated data or skip specific records.
 
 ---
 
-## 17. Security Measures Already Implemented
+## 18. Known Issues & Limitations
 
-- All AJAX handlers verify a nonce (`octowoo_ajax`) before executing.
-- All AJAX handlers check capability (`manage_woocommerce`).
-- File uploads (SQL, images ZIP) validate file extension and MIME type.
-- ZIP extraction rejects path-traversal filenames.
-- SQL dump importer strips `SET`, `USE`, `LOCK TABLE` statements.
+### 18.1 Variable Products / Variations
+- Only `select` and `radio` OC option types are converted to variations. File-upload, date, image-linked options are not migrated.
+- Products with >50 variation combinations are imported as simple products with informational attributes.
+
+### 18.2 Image Migration
+- Images must be physically accessible via `image_path`. Remote HTTP fetch is not supported (use ZIP upload for cross-server migrations).
+
+### 18.3 Batch Size & Timeouts
+- Default `batch_size=20`. Increase to 50–100 on powerful hosting. Keep the browser tab open in chunked AJAX mode, or use WP-CLI / Background mode.
+
+### 18.4 Order Taxes
+- Order-level tax totals are migrated as a fee line item. Per-line-item tax data is not recreated.
+
+### 18.5 Bundle Migration
+- Requires the paid **WooCommerce Product Bundles** plugin. Only OC 4.x bundles supported.
+
+### 18.6 Multilingual
+- Only products, categories, and pages are translated. Orders, customers, and coupons are not.
+- No support for 3+ languages in a single run — primary + one secondary only.
+
+### 18.7 SEO Redirects
+- `.htaccess` writes require Apache and a writable file. Use WP-redirect option for Nginx.
+
+### 18.8 SQL Dump Import
+- Stored procedures, views, and triggers in the dump are not imported.
+- Very large dumps (>500 MB) may require PHP upload/execution time increases.
+
+### 18.9 OC Password Compatibility
+- Only covers OC's standard `sha1(salt . sha1(salt . sha1(plaintext)))` scheme. Non-standard hashing is not covered.
+- When disabled (default), customers use a random migration password and must reset it.
+
+### 18.10 Reviews
+- All imported reviews get `verified = 0`. If WC "only allow verified reviews" is on, they won't display.
+
+### 18.11 Cron Delta Sync
+- Deletions in OC after initial migration are NOT synced to WC. Only additions and updates are handled.
+
+### 18.12 No Transaction Rollback
+- Each item is written individually. A mid-migration failure leaves partial data. Use DataPurger to clean up before a retry.
+
+---
+
+## 19. Security Measures
+
+- All AJAX handlers verify nonce (`octowoo_ajax`) and capability (`manage_woocommerce`).
+- File uploads validate extension and MIME type; ZIP extraction rejects path-traversal filenames.
+- SQL importer strips `SET`, `USE`, `LOCK TABLE` statements.
 - Log directory is protected by `.htaccess` (deny all) and `index.html`.
-- OC DB passwords are never logged.
-- OC password hashes are stored only in user meta, never logged or displayed.
-- `uninstall.php` verifies `WP_UNINSTALL_PLUGIN` constant.
-- `DataPurger` in tagged mode only touches items with `_octowoo_oc_*` meta — cannot accidentally delete unrelated WC content.
+- OC DB password is never logged; stored encrypted (AES-256-CBC) in `wp_options`.
+- OC password hashes stored only in user meta, never logged or displayed; deleted after first-login upgrade.
+- `DataPurger` tagged mode only touches `_octowoo_oc_*` meta items — cannot delete unrelated WC content.
+- `uninstall.php` verifies `WP_UNINSTALL_PLUGIN` constant before removing any data.
+- AJAX request logger masks `db_pass`, `password`, and `db_password` fields.
 
 ---
 
-## 18. Extension Points for Add-on Developers
+## 20. Extension Points for Add-on Developers
 
 ```php
 // Modify product data before insert/update
@@ -559,13 +638,54 @@ add_action('octowoo_after_migrate_product', function($wc_id, $oc_id) { ... }, 10
 
 // React when the full migration completes
 add_action('octowoo_migration_finished', function($report) { ... });
-
-// Register your add-on when OctoWoo initialises
-add_action('octowoo_register_addons', function() {
-    // register your hooks here
-});
 ```
 
-Available filters: `octowoo_product_data`, `octowoo_category_data`, `octowoo_customer_data`, `octowoo_order_data`, `octowoo_coupon_data`, `octowoo_information_data`, `octowoo_manufacturer_data`, `octowoo_should_skip_product`, `octowoo_should_skip_customer`, `octowoo_should_skip_order`, `octowoo_brand_taxonomy`.
+**Available filters:**
+`octowoo_product_data`, `octowoo_category_data`, `octowoo_customer_data`, `octowoo_order_data`, `octowoo_coupon_data`, `octowoo_information_data`, `octowoo_manufacturer_data`, `octowoo_should_skip_product`, `octowoo_should_skip_customer`, `octowoo_should_skip_order`, `octowoo_brand_taxonomy`
 
-Available actions: `octowoo_migration_started`, `octowoo_migration_finished`, `octowoo_after_migrate_product`, `octowoo_after_migrate_category`, `octowoo_after_migrate_manufacturer`, `octowoo_after_migrate_order`, `octowoo_register_addons`.
+**Available actions:**
+`octowoo_migration_started`, `octowoo_migration_finished`, `octowoo_after_migrate_product`, `octowoo_after_migrate_category`, `octowoo_after_migrate_manufacturer`, `octowoo_after_migrate_order`, `octowoo_register_addons`
+
+---
+
+## 21. Changelog Summary (v2.4.x)
+
+### v2.4.41 – Fix OpenCart password hash formula and login upgrade bug
+- **Bug fix:** Hash formula was `sha1(md5(salt . plaintext))` — wrong. Correct OC 2.x/3.x formula is `sha1(salt . sha1(salt . sha1(plaintext)))`. Every customer was getting "incorrect password" even when entering the right one.
+- **Bug fix:** After `wp_set_password()`, the in-memory `$user->user_pass` was not refreshed, so WP's own `wp_check_password()` (called immediately after the filter) failed. Fixed with `clean_user_cache()` + `get_userdata()` to reload the fresh phpass hash.
+- Added `delete_user_meta` for `default_password_nag` on successful upgrade.
+
+### v2.4.40 – Customer security audit and newsletter consent
+- **Security:** Audited all `oc_customer` fields. Sensitive fields (`token`, `code`, `cart`, `wishlist`, `ip`, `safe`, `custom_field`, `fax`, `customer_group`, `store_id`) confirmed as never fetched.
+- **Bug fix:** `newsletter` field was fetched but silently discarded. Now stored as `woocommerce_marketing_optin_status` (yes/no) and `_octowoo_newsletter_optin`.
+- **Improvement:** `migrate_oc_passwords` now writes a WARNING log every run as a reminder to disable after first-login upgrade.
+
+### v2.4.39 – Full Yoast SEO meta for products and categories (EN + AR)
+- **Bug fix:** Products had no `_yoast_wpseo_focuskw` (OC `meta_keyword` was read but never written to WP). Fixed in `doCreateProduct()` and `updateProduct()`.
+- **New:** `_octowoo_metakw_ar` stored for Arabic `meta_keyword` in ProductMigrator and CategoryMigrator.
+- **New:** `createTranslatedPost()` and `createTranslatedTerm()` now write all three Yoast keys (`title`, `metadesc`, `focuskw`) with English fallback when Arabic is absent.
+- **New:** Update-existing paths in `translatePosts()` and `translateTerms()` now call `applyYoastPostMeta()` / `applyYoastTermMeta()` helpers.
+
+### v2.4.38 – Arabic category SEO redirects + English category fallback
+- Arabic category SEO redirects (`/ar/old-slug` → `/ar/product-category/new-slug/`).
+- English name fallback for categories with no Arabic name meta.
+
+### v2.4.37 – Arabic product SEO redirects
+- Arabic product SEO redirects (`/ar/old-slug` → `/ar/product/new-slug/`).
+
+### v2.4.36 – English fallback when Arabic data is missing
+- Products/pages with no Arabic title/content use English values instead of being skipped.
+
+### v2.4.35 – Arabic URL slug fix (no more `-2` suffix)
+- `fixTranslationSlug()` forces Arabic `post_name` to match the English slug after WPML linking.
+
+### v2.4.34 – Arabic product meta: SKU, short description, tags, brands
+- `copyProductDataToTranslation()` copies all WC meta + product_type + product_tag + brand terms.
+- `$short_ar` from OC `tag` field threaded through create/update chain.
+
+### v2.4.33 – Bulk SQL purge (massive speed improvement)
+- All purge methods replaced with single-statement bulk SQL DELETE.
+- `clearIdMapEntity()` and `resetAutoIncrements()` helpers added.
+- Purging 7,400 customers + 53,000 orders now takes seconds.
+
+*(Earlier v2.4.x entries available in git history and readme.txt)*
