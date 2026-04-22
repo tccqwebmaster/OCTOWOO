@@ -16,6 +16,8 @@
  *    config.woocommerce.migrate_oc_passwords = true (default: false). This
  *    is an advanced opt-in feature; leave it disabled unless you specifically
  *    need first-login hash-upgrade support.
+ *  - OC 2.x/3.x hash formula: sha1($salt . sha1($salt . sha1($plaintext)))
+ *    Verified against system/library/customer.php in all OC 2.x / 3.x releases.
  *
  * Fields deliberately NOT migrated (sensitive / WooCommerce-irrelevant):
  *   token, code, cart, wishlist, ip, safe, custom_field,

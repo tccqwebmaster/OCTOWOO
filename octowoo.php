@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Plugin Name:       OctoWoo – OpenCart to WooCommerce Migrator
  * Plugin URI:        https://github.com/octowoo/octowoo
@@ -8,7 +8,7 @@
  *                    reviews, information pages, SEO URLs, WPML/Polylang, Yoast SEO, and more)
  *                    into WooCommerce. Supports batch processing, resume, dry-run, cron
  *                    auto-import, WP-CLI, and an add-on hook system.
- * Version:           2.4.40
+ * Version:           2.4.41
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            OctoWoo Team
@@ -22,7 +22,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // ── Plugin constants ──────────────────────────────────────────────────────────
-define( 'OCTOWOO_VERSION',    '2.4.40' );
+define( 'OCTOWOO_VERSION',    '2.4.41' );
 define( 'OCTOWOO_FILE',       __FILE__ );
 define( 'OCTOWOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'OCTOWOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -116,10 +116,12 @@ add_action( 'plugins_loaded', function (): void {
 /**
  * OpenCart password compatibility filter.
  *
- * OpenCart stores passwords as sha1( md5( $salt . $password ) ).  On the
- * customer’s first login after migration we check this hash, re-hash it
- * using WP’s phpass, and clear the migration-specific meta so this expensive
- * check only runs once per customer.
+ * OpenCart 2.x / 3.x stores passwords as:
+ *   sha1( $salt . sha1( $salt . sha1( $plaintext ) ) )
+ * (see system/library/customer.php in all OC 2.x / 3.x releases)
+ *
+ * On the customer's first login after migration we verify against this formula,
+ * upgrade to WP phpass, and delete the migration meta so this hook runs only once.
  *
  * This filter is only registered when woocommerce.migrate_oc_passwords = true.
  *
@@ -133,29 +135,41 @@ function octowoo_oc_password_compat( $user, string $password ) {
     }
 
     // Only act when the account still has an OC hash stored.
-    $oc_hash = get_user_meta( $user->ID, '_octowoo_oc_password_hash', true );
-    $oc_salt = get_user_meta( $user->ID, '_octowoo_oc_password_salt', true );
+    $oc_hash = (string) get_user_meta( $user->ID, '_octowoo_oc_password_hash', true );
+    $oc_salt = (string) get_user_meta( $user->ID, '_octowoo_oc_password_salt', true );
 
     if ( ! $oc_hash ) {
         return $user;
     }
 
-    // Compare OC hash: sha1( md5( $salt . $password ) ).
-    $candidate = sha1( md5( $oc_salt . $password ) );
+    // OC 2.x / 3.x formula: sha1( $salt . sha1( $salt . sha1( $plaintext ) ) )
+    $candidate = sha1( $oc_salt . sha1( $oc_salt . sha1( $password ) ) );
 
     if ( ! hash_equals( $oc_hash, $candidate ) ) {
-        // Hashes don’t match – return a standard authentication error.
         return new \WP_Error(
             'incorrect_password',
             __( 'The password you entered is incorrect.', 'octowoo' )
         );
     }
 
-    // Correct password – upgrade to WP phpass so this filter won’t run again.
+    // Correct OC password - upgrade to WP phpass so this filter won't run again.
     wp_set_password( $password, $user->ID );
+
+    // wp_set_password() updates the DB but NOT the in-memory $user object.
+    // wp_authenticate_username_password() calls wp_check_password( $password,
+    // $user->user_pass ) immediately after this filter returns, so we must
+    // refresh the property - otherwise the login fails even on a correct password.
+    clean_user_cache( $user->ID );
+    $refreshed = get_userdata( $user->ID );
+    if ( $refreshed ) {
+        $user->user_pass = $refreshed->user_pass;
+    }
+
+    // Clean up all migration meta - account is now a normal WP account.
     delete_user_meta( $user->ID, '_octowoo_oc_password_hash' );
     delete_user_meta( $user->ID, '_octowoo_oc_password_salt' );
     delete_user_meta( $user->ID, '_octowoo_password_reset_required' );
+    delete_user_meta( $user->ID, 'default_password_nag' );
 
     return $user;
 }
