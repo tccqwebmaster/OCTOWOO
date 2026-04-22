@@ -106,17 +106,30 @@ class WpmlIntegration extends AbstractMigrator {
         // old-OC-path → new-WC-Arabic-URL redirects as each translation is linked.
         $sec_seo_map = $this->fetchSecondaryLangSeoMap();
 
+        // ── 1. Translate taxonomy terms FIRST ────────────────────────────────
+        // Arabic category and brand terms must exist before products are
+        // translated so copyProductDataToTranslation() can resolve them.
+
+        // Translate product categories.
+        $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
+        [ $p, $s, $f ] = $this->translateTerms( 'product_cat', $cat_seo_map, 'category' );
+        $processed += $p; $skipped += $s; $failed += $f;
+
+        // Translate brand terms so Arabic products can be linked to Arabic brand term IDs.
+        $brand_tax = $this->detectActiveBrandTaxonomy();
+        if ( $brand_tax !== '' ) {
+            [ $p, $s, $f ] = $this->translateTerms( $brand_tax, [], 'manufacturer' );
+            $processed += $p; $skipped += $s; $failed += $f;
+        }
+
+        // ── 2. Translate posts (now that terms exist) ────────────────────────
+
         // Translate products.
         [ $p, $s, $f ] = $this->translatePosts( 'product', '_octowoo_name_ar', '_octowoo_description_ar', $sec_seo_map );
         $processed += $p; $skipped += $s; $failed += $f;
 
         // Translate pages (from InformationMigrator).
         [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title_ar', '_octowoo_desc_ar' );
-        $processed += $p; $skipped += $s; $failed += $f;
-
-        // Translate product categories.
-        $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
-        [ $p, $s, $f ] = $this->translateTerms( 'product_cat', $cat_seo_map );
         $processed += $p; $skipped += $s; $failed += $f;
 
         $this->logger->info( "[multilingual] Done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
@@ -621,6 +634,20 @@ class WpmlIntegration extends AbstractMigrator {
             wp_set_object_terms( $target_id, $type_terms, 'product_type' );
         }
 
+        // ── product_cat terms → resolve to Arabic translated category terms ─
+        // Without this the Arabic product has no category at all, so the
+        // breadcrumb shows "Home › Shop › Product" with no category segment.
+        $cat_ids = wp_get_object_terms( $source_id, 'product_cat', [ 'fields' => 'ids' ] );
+        if ( ! is_wp_error( $cat_ids ) && ! empty( $cat_ids ) ) {
+            $translated_cat_ids = [];
+            foreach ( array_map( 'intval', $cat_ids ) as $cat_id ) {
+                $ar_cat_id = $this->getExistingTranslationId( $cat_id, 'tax_product_cat' );
+                // Fall back to the English term ID if no Arabic translation exists yet.
+                $translated_cat_ids[] = $ar_cat_id > 0 ? $ar_cat_id : $cat_id;
+            }
+            wp_set_object_terms( $target_id, $translated_cat_ids, 'product_cat' );
+        }
+
         // ── product_tag terms ──────────────────────────────────────────────
         // Use tag IDs so the same term objects are shared (no duplicates).
         $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
@@ -629,38 +656,53 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // ── Brand / manufacturer taxonomy ──────────────────────────────────
-        // Try each known brand taxonomy slug; use the first one that is registered.
-        $brand_taxonomies = [
-            'product_brand',      // WooCommerce Brands (official)
-            'pwb-brand',          // Perfect WooCommerce Brands
-            'yith_product_brand', // YITH WooCommerce Brands
-            'berocket_brand',     // Brands for WooCommerce by BeRocket
-            'pa_brand',           // Attribute-based brand
-            'brand',              // Generic / theme-based
-            'product_manufacturer', // OctoWoo fallback
-        ];
-        foreach ( $brand_taxonomies as $brand_tax ) {
-            if ( ! taxonomy_exists( $brand_tax ) ) {
-                continue;
-            }
+        // Resolve English brand term IDs → Arabic translated term IDs.
+        // Falls back to the English term ID when no Arabic translation exists.
+        $brand_tax = $this->detectActiveBrandTaxonomy();
+        if ( $brand_tax !== '' ) {
             $brand_ids = wp_get_object_terms( $source_id, $brand_tax, [ 'fields' => 'ids' ] );
             if ( ! is_wp_error( $brand_ids ) && ! empty( $brand_ids ) ) {
-                wp_set_object_terms( $target_id, array_map( 'intval', $brand_ids ), $brand_tax );
+                $translated_brand_ids = [];
+                foreach ( array_map( 'intval', $brand_ids ) as $bid ) {
+                    $ar_bid = $this->getExistingTranslationId( $bid, "tax_{$brand_tax}" );
+                    $translated_brand_ids[] = $ar_bid > 0 ? $ar_bid : $bid;
+                }
+                wp_set_object_terms( $target_id, $translated_brand_ids, $brand_tax );
             }
-            break; // Only process the first registered brand taxonomy.
         }
     }
 
     /**
-     * Iterate every product_cat term that was migrated and create secondary
-     * language counterparts.
+     * Return the first registered brand taxonomy slug on this site, or ''.
+     */
+    private function detectActiveBrandTaxonomy(): string {
+        $candidates = [
+            'product_brand',        // WooCommerce Brands (official) · Ultimate WooCommerce Brands
+            'pwb-brand',            // Perfect WooCommerce Brands
+            'yith_product_brand',   // YITH WooCommerce Brands
+            'berocket_brand',       // Brands for WooCommerce by BeRocket
+            'pa_brand',             // Attribute-based brand
+            'brand',                // Generic / theme-based
+            'product_manufacturer', // OctoWoo fallback
+        ];
+        foreach ( $candidates as $tax ) {
+            if ( taxonomy_exists( $tax ) ) {
+                return $tax;
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Iterate every migrated taxonomy term and create secondary language counterparts.
      *
+     * @param string $taxonomy      WP taxonomy slug (e.g. 'product_cat', 'product_brand').
+     * @param array  $sec_seo_map   OC-ID → SEO-slug map for redirect registration.
+     * @param string $entity_type   Value used in octowoo_id_map (default 'category').
      * @return int[] [processed, skipped, failed]
      */
-    private function translateTerms( string $taxonomy, array $sec_seo_map = [] ): array {
+    private function translateTerms( string $taxonomy, array $sec_seo_map = [], string $entity_type = 'category' ): array {
         global $wpdb;
-
-        $entity_type = 'category';
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
