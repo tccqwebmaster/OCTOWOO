@@ -494,6 +494,39 @@ class AjaxHandler {
     // ── Action: run one chunk ─────────────────────────────────────────────────
 
     private function actionRunChunk(): void {
+        // Extend resource limits for chunk processing. A single chunk may sideload
+        // media, run complex SQL joins, or process large product/order datasets.
+        @ini_set( 'memory_limit', '512M' );
+
+        // Override WP's AJAX wp_die handler so that if WP's own fatal-error shutdown
+        // handler fires (e.g. on execution timeout or OOM), it returns parseable JSON
+        // (HTTP 200) instead of an HTML error page. Without this, the JS chunk loop
+        // receives an HTML 500 response it cannot parse and retries 3× before aborting.
+        add_filter(
+            'wp_die_ajax_handler',
+            static function ( $default_handler ) {
+                return static function ( $message, $title, $args ) use ( $default_handler ) {
+                    $status = isset( $args['response'] ) ? (int) $args['response'] : 200;
+                    if ( $status >= 500 ) {
+                        $text = is_string( $message ) ? wp_strip_all_tags( (string) $message ) : 'Server error';
+                        if ( ! headers_sent() ) {
+                            header( 'Content-Type: application/json; charset=utf-8' );
+                        }
+                        echo wp_json_encode( [
+                            'success' => false,
+                            'data'    => [
+                                'message' => $text,
+                                'fatal'   => true,
+                            ],
+                        ] );
+                        die();
+                    }
+                    call_user_func( $default_handler, $message, $title, $args );
+                };
+            },
+            PHP_INT_MAX
+        );
+
         // Register a shutdown handler to capture fatal errors that bypass try/catch
         // (e.g. memory exhaustion, class-not-found, parse errors in loaded files).
         register_shutdown_function( function (): void {
@@ -598,7 +631,7 @@ class AjaxHandler {
         }
 
         try {
-            set_time_limit( 60 ); // One chunk = at most 60 s.
+            set_time_limit( 300 ); // One chunk = at most 5 min (image sideloads can be slow).
             $manager = new MigrationManager( $overrides, $run_id ?: null );
             $result  = $manager->runNextChunk();
 
