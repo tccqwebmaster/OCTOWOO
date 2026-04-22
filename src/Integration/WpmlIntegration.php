@@ -370,20 +370,6 @@ class WpmlIntegration extends AbstractMigrator {
         $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
     }
 
-    private function fixTranslationSlug( int $post_id, string $desired_slug ): void {
-        if ( $desired_slug === '' ) {
-            return;
-        }
-        $current = get_post_field( 'post_name', $post_id );
-        if ( $current === $desired_slug ) {
-            return; // Already correct — nothing to do.
-        }
-        global $wpdb;
-        $wpdb->update( $wpdb->posts, [ 'post_name' => $desired_slug ], [ 'ID' => $post_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        clean_post_cache( $post_id );
-        $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
-    }
-
     // ── Yoast SEO meta helpers ─────────────────────────────────────────────────
 
     /**
