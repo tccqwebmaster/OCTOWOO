@@ -188,6 +188,12 @@ class WpmlIntegration extends AbstractMigrator {
                     $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
                 }
 
+                // After wp_update_post() the slug uniqueness check may have
+                // appended -2 again. Force the correct slug now.
+                if ( $primary_post_for_slug ) {
+                    $this->fixTranslationSlug( $existing_translation_id, $primary_post_for_slug->post_name );
+                }
+
                 $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
                 $processed++;
                 continue;
@@ -218,6 +224,13 @@ class WpmlIntegration extends AbstractMigrator {
             }
 
             $this->linkPostTranslation( $primary_id, $translated_id, $post_type );
+
+            // Now that WPML knows this post is the secondary-language translation,
+            // its slug uniqueness is scoped per-language. Force the slug to match
+            // the primary so Arabic URLs look identical (just with the /ar/ prefix):
+            //   English: /product/zelda-switch/
+            //   Arabic:  /ar/product/zelda-switch/   (NOT /ar/product/zelda-switch-2/)
+            $this->fixTranslationSlug( $translated_id, $primary_post->post_name );
 
             $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
             $processed++;
@@ -268,6 +281,34 @@ class WpmlIntegration extends AbstractMigrator {
         update_post_meta( $new_id, '_octowoo_translation_lang', $this->secondary_lang );
 
         return (int) $new_id;
+    }
+
+    /**
+     * Force a post's slug (post_name) to exactly $desired_slug, bypassing
+     * WordPress's wp_unique_post_slug() uniqueness check.
+     *
+     * Why this is needed: when wp_insert_post() runs for the Arabic translation,
+     * WordPress sees the English post already has the same slug and appends "-2",
+     * producing ugly URLs like /ar/product/zelda-switch-2/.
+     *
+     * This must be called AFTER linkPostTranslation() so WPML already knows the
+     * post is in the secondary language. WPML then routes it under /ar/ making
+     * the full URL unique — we just need the post_name to be identical.
+     *
+     * We write directly to wp_posts and bust the object cache; no hooks fire.
+     */
+    private function fixTranslationSlug( int $post_id, string $desired_slug ): void {
+        if ( $desired_slug === '' ) {
+            return;
+        }
+        $current = get_post_field( 'post_name', $post_id );
+        if ( $current === $desired_slug ) {
+            return; // Already correct — nothing to do.
+        }
+        global $wpdb;
+        $wpdb->update( $wpdb->posts, [ 'post_name' => $desired_slug ], [ 'ID' => $post_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        clean_post_cache( $post_id );
+        $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
     }
 
     /**
