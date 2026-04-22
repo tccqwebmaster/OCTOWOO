@@ -1,6 +1,6 @@
 # OCTOWOO – Project Overview
 
-**Version:** 2.4.30  
+**Version:** 2.4.36  
 **Type:** WordPress / WooCommerce Plugin  
 **Purpose:** Migrate an OpenCart store (v1/2/3/4) into WooCommerce with full data parity.
 
@@ -213,6 +213,8 @@ Allows selective rollback. For each entity type it either:
 - **Force mode**: deletes all WC entities of that type.
 - **Tagged mode**: deletes only items that carry `_octowoo_oc_id` postmeta (safe — only removes plugin-created data).
 
+All purge methods use **direct bulk SQL** (single DELETE statements) rather than per-item PHP loops. This makes purging thousands of customers, orders, or products finish in seconds instead of minutes. Each purge method also calls `clearIdMapEntity()` to wipe the `octowoo_id_map` rows for that entity type and `resetAutoIncrements()` to reset MySQL AUTO_INCREMENT on the affected tables after a full purge.
+
 ### CronManager
 Registers WP-Cron schedules (`every30min`, `every6hours` plus standard intervals). When enabled, fires a full migration on schedule using `on_duplicate=update`, so recurring cron runs act as delta syncs updating existing records.
 
@@ -271,9 +273,12 @@ When `woocommerce.migrate_oc_passwords = true`:
 ## 12. Multilingual Support
 
 When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIntegration` runs a translation pass:
-- Reads secondary-language meta stored by migrators (e.g. `_octowoo_name_ar`, `_octowoo_description_ar`).
+- Reads secondary-language meta stored by migrators (e.g. `_octowoo_name_ar`, `_octowoo_description_ar`, `_octowoo_short_description_ar`).
 - Creates translated post/term copies via `wp_insert_post()` / `wp_insert_term()`.
 - Links them to the primary entity using **WPML** actions (`wpml_set_element_language_details`) or **Polylang** functions (`pll_set_post_language`, `pll_link_post_translations`).
+- **English fallback**: if a product or page has no Arabic title/content/excerpt in OpenCart, the English text is used instead of skipping the item entirely. Every product gets an Arabic URL and its own WPML-linked post regardless of whether Arabic copy exists.
+- **Slug fix**: after linking a post as a translation, `fixTranslationSlug()` forces the Arabic post `post_name` to match the English slug. This prevents WordPress's uniqueness check from appending `-2`, so Arabic URLs are identical to English URLs under the `/ar/` prefix (e.g. `/ar/product/zelda-switch/` not `/ar/product/zelda-switch-2/`).
+- **Full WC meta copy**: for product translations, `copyProductDataToTranslation()` copies all WooCommerce meta (SKU, price, stock, `_manage_stock`, gallery IDs, etc.) plus `product_type` term and all `product_tag` / brand taxonomy terms from the English post to the Arabic post.
 
 ---
 
@@ -336,6 +341,30 @@ When `multilingual.enabled = true`, after all entity migrators complete, `WpmlIn
 ## 15. Changelog Summary (v2.4.x)
 
 All changes are tracked in `readme.txt`. Summary of every fix and feature added during the v2.4.x series:
+
+### v2.4.36 – English fallback when Arabic data is missing
+- **Bug fix:** `WpmlIntegration::translatePosts()` previously hard-skipped any product or page with no Arabic title meta (`_octowoo_name_ar`), leaving those items with no Arabic translation at all.
+- **Change:** When Arabic title, content, or excerpt is absent, the corresponding English value from the primary post is used instead of skipping. Every product now gets an Arabic WPML-linked post regardless of whether Arabic copy exists in OpenCart.
+- **Cleanup:** Removed two redundant `get_post()` calls inside the translation loop; both the update-existing and create-new paths now reuse `$primary_post_raw` fetched once at the top of each iteration.
+
+### v2.4.35 – Arabic URL slug fix (no more `-2` suffix)
+- **Bug fix:** After WPML linked an Arabic product post as a translation, WordPress's `wp_unique_post_slug()` ran without WPML's per-language scoping and appended `-2` to the slug (e.g. `/ar/product/zelda-switch-2/` instead of `/ar/product/zelda-switch/`).
+- **Fix:** Added `WpmlIntegration::fixTranslationSlug()`, called immediately after `linkPostTranslation()`. It force-writes the Arabic post `post_name` to match the English primary slug using a direct `wp_update_post()` call once WPML language context is established.
+
+### v2.4.34 – Arabic product meta: SKU, short description, tags, brands
+- **Bug fix:** Arabic product translations were created as bare WooCommerce posts (no SKU, no price, no stock, no tags, no brands). Added `WpmlIntegration::copyProductDataToTranslation()`, which copies all WC postmeta (SKU, price, stock, manage_stock, gallery, etc.), `product_type` term, `product_tag` terms, and brand taxonomy terms from the English post to the Arabic translation post.
+- **Bug fix:** OpenCart's `tag` field (short description) was never extracted for the secondary language. Added `$short_ar` extraction from `$sec['tag']` in `ProductMigrator::processProduct()` and threaded the value through `createProduct()` / `doCreateProduct()` / `updateProduct()` where it is stored as `_octowoo_short_description_ar` post meta for the WPML pass.
+
+### v2.4.33 – Bulk SQL purge (massive speed improvement)
+- **Performance:** Replaced all PHP-loop-based purge methods in `DataPurger` with direct bulk SQL.
+  - `purgeCustomers()`: single bulk DELETE on `wp_usermeta` + `wp_users`, with admin exclusion via capabilities meta; orphaned posts are reassigned to the first admin.
+  - `purgeOrders()` (tagged mode): bulk DELETE on `wc_orders` (HPOS) and `wp_posts` (`shop_order` type) in one statement each.
+  - `purgeReviews()`: bulk DELETE on `wp_commentmeta` + `wp_comments`.
+  - `purgeInformation()`: bulk DELETE on `wp_postmeta` + `wp_posts` for `page` type.
+  - `purgeCoupons()` (tagged mode): bulk DELETE on `wp_postmeta` + `wp_posts` for `shop_coupon` type.
+- **New:** `clearIdMapEntity()` helper wipes `octowoo_id_map` rows for a given entity type; called at the start of every purge method.
+- **New:** `resetAutoIncrements()` resets MySQL `AUTO_INCREMENT` on 6 core WP tables after a full purge.
+- Result: purging 7,400 customers and 53,000 orders now completes in seconds instead of timing out.
 
 ### v2.4.25 – Description + Arabic import robustness
 - **Bug fix:** Escaped OpenCart HTML in descriptions is now decoded before sanitization, so frontend content renders correctly instead of showing raw tags.
@@ -470,6 +499,7 @@ All changes are tracked in `readme.txt`. Summary of every fix and feature added 
 ### 15.6 Multilingual / WPML
 - A secondary language must be configured in `multilingual.locales` and WC product descriptions for the secondary language must already exist in OC (stored under a second `language_id`).
 - The WPML/Polylang pass only handles products, categories, and pages — other entities (orders, customers, coupons) are not translated.
+- When a product has no Arabic data in OC, the English title/content/excerpt is used for the Arabic translation (fallback added in v2.4.36). The Arabic post is still created and linked.
 
 ### 15.7 SEO Redirects (.htaccess)
 - Writing to `.htaccess` requires the file to be writable by the web server. On hardened servers this will silently fail (error is logged).
