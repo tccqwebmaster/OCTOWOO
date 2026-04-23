@@ -162,7 +162,7 @@ class WpmlIntegration extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
                 $entity_type
             ),
             ARRAY_A
@@ -266,6 +266,7 @@ class WpmlIntegration extends AbstractMigrator {
             $translated_id = $this->createTranslatedPost( $primary_post_raw, $ar_title, $ar_content, $post_type, $ar_excerpt );
 
             if ( ! $translated_id ) {
+                $this->logger->error( "[multilingual] Failed to create {$this->secondary_lang} translation for {$post_type} #{$primary_id} – wp_insert_post returned 0." );
                 $failed++;
                 continue;
             }
@@ -750,15 +751,18 @@ class WpmlIntegration extends AbstractMigrator {
 
                             // Register Arabic tag with WPML (idempotent).
                             if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
-                                $ar_tt_id = (int) get_term( $ar_tid, 'product_tag' )->term_taxonomy_id;
-                                if ( $ar_tt_id > 0 ) {
-                                    do_action( 'wpml_set_element_language_details', [
-                                        'element_id'           => $ar_tt_id,
-                                        'element_type'         => 'tax_product_tag',
-                                        'trid'                 => null,
-                                        'language_code'        => $this->secondary_lang,
-                                        'source_language_code' => null,
-                                    ] );
+                                $ar_term_obj = get_term( $ar_tid, 'product_tag' );
+                                if ( $ar_term_obj && ! is_wp_error( $ar_term_obj ) ) {
+                                    $ar_tt_id = (int) $ar_term_obj->term_taxonomy_id;
+                                    if ( $ar_tt_id > 0 ) {
+                                        do_action( 'wpml_set_element_language_details', [
+                                            'element_id'           => $ar_tt_id,
+                                            'element_type'         => 'tax_product_tag',
+                                            'trid'                 => null,
+                                            'language_code'        => $this->secondary_lang,
+                                            'source_language_code' => null,
+                                        ] );
+                                    }
                                 }
                             }
 
@@ -773,11 +777,18 @@ class WpmlIntegration extends AbstractMigrator {
                 }
             }
         }
-        // Fall back: copy English tag IDs when OpenCart has no Arabic tags.
+        // Fall back: no Arabic OC tags — resolve English tag IDs to their Arabic
+        // translated counterparts so Arabic products get Arabic-language tag terms
+        // (not English tag IDs, which would make them visible on English tag archives).
         if ( ! $ar_tags_assigned ) {
             $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
             if ( ! is_wp_error( $tag_ids ) && ! empty( $tag_ids ) ) {
-                wp_set_object_terms( $target_id, array_map( 'intval', $tag_ids ), 'product_tag', false );
+                $translated_tag_ids = [];
+                foreach ( array_map( 'intval', $tag_ids ) as $en_tag_id ) {
+                    $ar_tag_id            = $this->getExistingTranslationId( $en_tag_id, 'tax_product_tag' );
+                    $translated_tag_ids[] = $ar_tag_id > 0 ? $ar_tag_id : $en_tag_id;
+                }
+                wp_set_object_terms( $target_id, $translated_tag_ids, 'product_tag', false );
             }
         }
 

@@ -270,14 +270,65 @@ class ManufacturerMigrator extends AbstractMigrator {
             )
         );
 
-        if ( $tt_id > 0 ) {
-            do_action( 'wpml_set_element_language_details', [
-                'element_id'           => $tt_id,
-                'element_type'         => 'tax_' . $this->taxonomy,
-                'trid'                 => null,
-                'language_code'        => $this->primaryLocale(),
-                'source_language_code' => null,
-            ] );
+        if ( $tt_id <= 0 ) {
+            return;
+        }
+
+        // Try WPML API first (the proper way).
+        do_action( 'wpml_set_element_language_details', [
+            'element_id'           => $tt_id,
+            'element_type'         => 'tax_' . $this->taxonomy,
+            'trid'                 => null,
+            'language_code'        => $this->primaryLocale(),
+            'source_language_code' => null,
+        ] );
+
+        // Direct DB fallback: if WPML's API hook didn't write the row (e.g. the
+        // taxonomy is marked "do not translate" in WPML settings, or WPML's
+        // hook fired before the taxonomy was registered), write it ourselves.
+        // Without this row the English admin "Brands" list shows "No Brands Found".
+        $icl_table = $wpdb->prefix . 'icl_translations';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$icl_table}'" );
+        if ( ! $table_exists ) {
+            return;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $existing_lang = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT language_code FROM {$icl_table} WHERE element_type = %s AND element_id = %d",
+                'tax_' . $this->taxonomy,
+                $tt_id
+            )
+        );
+
+        if ( $existing_lang === null ) {
+            // No row at all — insert one with a new trid.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $max_trid = (int) $wpdb->get_var( "SELECT MAX(trid) FROM {$icl_table}" );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert(
+                $icl_table,
+                [
+                    'element_type'         => 'tax_' . $this->taxonomy,
+                    'element_id'           => $tt_id,
+                    'trid'                 => $max_trid + 1,
+                    'language_code'        => $this->primaryLocale(),
+                    'source_language_code' => null,
+                ],
+                [ '%s', '%d', '%d', '%s', '%s' ]
+            );
+        } elseif ( $existing_lang !== $this->primaryLocale() ) {
+            // Row exists but has wrong language — correct it.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->update(
+                $icl_table,
+                [ 'language_code' => $this->primaryLocale(), 'source_language_code' => null ],
+                [ 'element_type'  => 'tax_' . $this->taxonomy, 'element_id' => $tt_id ],
+                [ '%s', '%s' ],
+                [ '%s', '%d' ]
+            );
         }
     }
 
