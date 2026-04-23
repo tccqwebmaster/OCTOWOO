@@ -45,8 +45,10 @@ class CategoryMigrator extends AbstractMigrator {
 
         $pfx         = $this->pfx();
         $lang_id     = $this->langId();
-        $resume_id   = $this->checkpoint->getLastId( self::KEY );
 
+        // Guard: if the migrator was already completed (last_id = PHP_INT_MAX),
+        // bail early so the MigrationManager can advance to the next migrator.
+        $resume_id = $this->checkpoint->getLastId( self::KEY );
         if ( $resume_id === PHP_INT_MAX ) {
             $this->logger->info( '[categories] Already completed – skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
@@ -56,20 +58,20 @@ class CategoryMigrator extends AbstractMigrator {
         $descriptions = $this->fetchAllDescriptions();
         $seo_urls     = $this->fetchSeoUrls();
 
-        $total_callback = function () use ( $pfx ): int {
-            return $this->oc->count( 'category', 'status = 1' );
+        // Pre-fetch and topologically sort all categories (parents before children,
+        // siblings ordered by sort_order) so that parent terms always exist in WC
+        // before their children are processed — eliminating the need for the
+        // pending-parent fallback in the common case.
+        $sorted_rows = $this->fetchAllCategoriesTopological();
+
+        $total_callback = function () use ( $sorted_rows ): int {
+            return count( $sorted_rows );
         };
 
-        $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
-            return $this->oc->fetchBatch(
-                "SELECT category_id, parent_id, sort_order, image
-                 FROM `{$pfx}category`
-                 WHERE status = 1
-                 ORDER BY category_id ASC, parent_id ASC, sort_order ASC",
-                [],
-                $limit,
-                $offset
-            );
+        // Slice the pre-sorted in-memory array; avoids per-batch SQL and keeps
+        // the parent-before-child ordering stable across chunk boundaries.
+        $batch_callback = function ( int $offset, int $limit ) use ( $sorted_rows ): array {
+            return array_slice( $sorted_rows, $offset, $limit );
         };
 
         $item_callback = function ( array $row ) use ( $descriptions, $seo_urls, $lang_id ): bool {
@@ -80,13 +82,16 @@ class CategoryMigrator extends AbstractMigrator {
         // calls during this batch are auto-assigned to the correct language by WPML.
         $this->wpmlSwitchToPrimary();
 
+        // resume_after_id is intentionally 0: we use OFFSET-based slicing on the
+        // stable pre-sorted array, so ID-based skipping would be incorrect here.
+        // In chunk mode BatchProcessor already uses processed_count as the offset.
         $result = $this->batch->run(
             total_callback:   $total_callback,
             batch_callback:   $batch_callback,
             item_callback:    $item_callback,
             migrator:         self::KEY,
             checkpoint:       $this->checkpoint,
-            resume_after_id:  $resume_id,
+            resume_after_id:  0,
             id_field:         'category_id'
         );
 
@@ -464,6 +469,81 @@ class CategoryMigrator extends AbstractMigrator {
             $indexed[ (int) $row['category_id'] ][ (int) $row['language_id'] ] = $row;
         }
         return $indexed;
+    }
+
+    /**
+     * Fetch all active categories from OpenCart and return them sorted so that
+     * every parent category appears before all of its children (topological /
+     * BFS order). Within each sibling group, items are ordered by sort_order ASC
+     * then category_id ASC for a deterministic, store-consistent sequence.
+     *
+     * This pre-sort is done in PHP once so that BatchProcessor's OFFSET-based
+     * slicing always hands a parent to processCategory() before its children,
+     * regardless of how the IDs were assigned in the source database.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetchAllCategoriesTopological(): array {
+        $pfx  = $this->pfx();
+        $rows = $this->oc->fetchAll(
+            "SELECT category_id, parent_id, sort_order, image
+             FROM `{$pfx}category`
+             WHERE status = 1"
+        );
+
+        // Index rows and build a parent→children map.
+        $by_id    = [];
+        $children = []; // parent_id (int) → list of child category_ids (int[])
+        foreach ( $rows as $row ) {
+            $id  = (int) $row['category_id'];
+            $pid = (int) $row['parent_id'];
+            $by_id[ $id ]       = $row;
+            $children[ $pid ][] = $id;
+        }
+
+        // Sort each sibling group: sort_order ASC, then category_id ASC.
+        foreach ( $children as &$sibling_ids ) {
+            usort( $sibling_ids, function ( int $a, int $b ) use ( $by_id ): int {
+                $diff = (int) ( $by_id[ $a ]['sort_order'] ?? 0 ) - (int) ( $by_id[ $b ]['sort_order'] ?? 0 );
+                return $diff !== 0 ? $diff : ( $a - $b );
+            } );
+        }
+        unset( $sibling_ids );
+
+        // BFS from root categories (parent_id = 0) to guarantee parent-before-child.
+        $sorted  = [];
+        $visited = [];
+        $queue   = $children[0] ?? [];
+
+        while ( ! empty( $queue ) ) {
+            $id = array_shift( $queue );
+
+            if ( isset( $visited[ $id ] ) ) {
+                continue; // Guard against circular references.
+            }
+            $visited[ $id ] = true;
+
+            if ( isset( $by_id[ $id ] ) ) {
+                $sorted[] = $by_id[ $id ];
+            }
+
+            // Append this category's children (already sort-ordered) to the queue.
+            foreach ( $children[ $id ] ?? [] as $child_id ) {
+                if ( ! isset( $visited[ $child_id ] ) ) {
+                    $queue[] = $child_id;
+                }
+            }
+        }
+
+        // Safety: append any orphans (parent_id references a missing category).
+        foreach ( $by_id as $id => $row ) {
+            if ( ! isset( $visited[ $id ] ) ) {
+                $sorted[] = $row;
+                $this->logger->warning( "[categories] Orphan category OC #{$id} (parent_id={$row['parent_id']} not found) – appended at end." );
+            }
+        }
+
+        return $sorted;
     }
 
     /**
