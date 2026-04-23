@@ -647,12 +647,19 @@ class AjaxHandler {
         // phpcs:ignore WordPress.Security.NonceVerification
         $demo_limit_chunk = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
 
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $on_duplicate_raw = filter_input( INPUT_POST, 'on_duplicate', FILTER_SANITIZE_SPECIAL_CHARS );
+
         $overrides = [];
         if ( $dry_run_raw !== null ) {
             $overrides['migration']['dry_run'] = filter_var( $dry_run_raw, FILTER_VALIDATE_BOOLEAN );
         }
         if ( $demo_limit_chunk !== null && $demo_limit_chunk !== false ) {
             $overrides['migration']['demo_limit'] = max( 0, (int) $demo_limit_chunk );
+        }
+        // on_duplicate sent live from the UI dropdown — takes precedence over saved settings.
+        if ( $on_duplicate_raw !== null && in_array( $on_duplicate_raw, [ 'skip', 'update' ], true ) ) {
+            $overrides['migration']['on_duplicate'] = $on_duplicate_raw;
         }
         if ( $migrators_raw !== '' ) {
             $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];

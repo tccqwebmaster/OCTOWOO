@@ -26,8 +26,11 @@ class TagMigrator extends AbstractMigrator {
         $resume_id = $this->checkpoint->getLastId( self::KEY );
 
         if ( $resume_id === PHP_INT_MAX ) {
-            $this->logger->info( '[tags] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            if ( $this->onDuplicate() !== 'update' ) {
+                $this->logger->info( '[tags] Already completed – skipping.' );
+                return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            }
+            $resume_id = 0; // Update mode: re-process all tags from the start.
         }
 
         $pfx     = $this->pfx();

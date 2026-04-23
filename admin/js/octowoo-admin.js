@@ -617,10 +617,11 @@
     }
 
     /* ── Migration start / resume ────────────────────────────────────────── */
-    let chunkMigrators = '';
-    let chunkDryRun    = 0;
-    let chunkDemoLimit = 0;
-    let chunkFailCount = 0;
+    let chunkMigrators    = '';
+    let chunkDryRun        = 0;
+    let chunkDemoLimit     = 0;
+    let chunkFailCount     = 0;
+    let chunkOnDuplicate   = 'skip'; // 'skip' | 'update'
     let chunkClearOrdersPending = false;
 
     /**
@@ -687,9 +688,12 @@
             if (!confirm('Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.')) { return; }
         }
 
-        chunkMigrators = forcedMigrators || buildMigrators();
-        chunkDryRun    = 0;
-        chunkDemoLimit = demoLimitVal;
+        chunkMigrators  = forcedMigrators || buildMigrators();
+        chunkDryRun     = 0;
+        chunkDemoLimit  = demoLimitVal;
+        // Read the on_duplicate selection live from the DOM so the user's
+        // current choice always applies without needing to save settings first.
+        chunkOnDuplicate = $('select[name="octowoo[migration][on_duplicate]"]').val() || 'skip';
         chunkClearOrdersPending = !resume;
 
         setButtonState('running');
@@ -736,14 +740,15 @@
         chunkClearOrdersPending = false;
 
         $.post(octoWoo.ajaxUrl, {
-            action:      'octowoo_run_chunk',
-            nonce:       octoWoo.nonce,
-            run_id:      currentRunId,
-            resume:      currentRunId ? 1 : 0,
-            dry_run:     chunkDryRun,
-            demo_limit:  chunkDemoLimit,
+            action:       'octowoo_run_chunk',
+            nonce:        octoWoo.nonce,
+            run_id:       currentRunId,
+            resume:       currentRunId ? 1 : 0,
+            dry_run:      chunkDryRun,
+            demo_limit:   chunkDemoLimit,
+            on_duplicate: chunkOnDuplicate,
             clear_orders: shouldClearOrders,
-            migrators:   chunkMigrators,
+            migrators:    chunkMigrators,
         })
         .done(function (res) {
             if (!res.success) {

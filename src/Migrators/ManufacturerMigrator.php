@@ -69,8 +69,11 @@ class ManufacturerMigrator extends AbstractMigrator {
         $resume_id = $this->checkpoint->getLastId( self::KEY );
 
         if ( $resume_id === PHP_INT_MAX ) {
-            $this->logger->info( '[manufacturers] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            if ( $this->onDuplicate() !== 'update' ) {
+                $this->logger->info( '[manufacturers] Already completed – skipping.' );
+                return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            }
+            $resume_id = 0; // Update mode: re-process all manufacturer terms + re-assign brands.
         }
 
         // Resolve taxonomy (create fallback if none found).

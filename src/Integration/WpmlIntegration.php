@@ -79,7 +79,9 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // Guard against re-execution when a prior chunk already completed this step.
-        if ( $this->checkpoint->isCompleted( self::KEY ) ) {
+        // In update mode we always re-run so images, Arabic tags, and brands are
+        // re-copied to existing Arabic translations without requiring Reset Progress.
+        if ( $this->onDuplicate() !== 'update' && $this->checkpoint->isCompleted( self::KEY ) ) {
             $this->logger->info( '[multilingual] Already completed – skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }
