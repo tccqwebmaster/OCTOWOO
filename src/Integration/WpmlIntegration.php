@@ -653,10 +653,43 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // ── product_tag terms ──────────────────────────────────────────────
-        // Use tag IDs so the same term objects are shared (no duplicates).
-        $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
-        if ( ! is_wp_error( $tag_ids ) && ! empty( $tag_ids ) ) {
-            wp_set_object_terms( $target_id, array_map( 'intval', $tag_ids ), 'product_tag', true );
+        // Prefer secondary-language (Arabic) tag strings from OpenCart so the
+        // Arabic product gets Arabic tag terms instead of the shared English ones.
+        // OpenCart stores per-language comma-separated tags in
+        // oc_product_description.tag (one row per language per product).
+        $ar_tags_assigned = false;
+        $oc_product_id    = (int) get_post_meta( $source_id, '_octowoo_oc_id', true );
+        if ( $oc_product_id > 0 ) {
+            $sec_lang_id = $this->langIdSecondary();
+            if ( $sec_lang_id > 0 ) {
+                $pfx        = $this->pfx();
+                $ar_tag_raw = $this->oc->fetchColumn(
+                    "SELECT `tag` FROM `{$pfx}product_description`
+                     WHERE product_id = ? AND language_id = ?",
+                    [ $oc_product_id, $sec_lang_id ]
+                );
+                if ( is_string( $ar_tag_raw ) && $ar_tag_raw !== '' ) {
+                    $ar_tags = array_values(
+                        array_filter(
+                            array_map( 'sanitize_text_field', explode( ',', $ar_tag_raw ) ),
+                            fn( string $t ) => $t !== ''
+                        )
+                    );
+                    if ( ! empty( $ar_tags ) ) {
+                        // wp_set_object_terms accepts string names and auto-creates
+                        // any term that does not yet exist.
+                        wp_set_object_terms( $target_id, $ar_tags, 'product_tag', false );
+                        $ar_tags_assigned = true;
+                    }
+                }
+            }
+        }
+        // Fall back: copy English tag IDs when OpenCart has no Arabic tags.
+        if ( ! $ar_tags_assigned ) {
+            $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
+            if ( ! is_wp_error( $tag_ids ) && ! empty( $tag_ids ) ) {
+                wp_set_object_terms( $target_id, array_map( 'intval', $tag_ids ), 'product_tag', false );
+            }
         }
 
         // ── Brand / manufacturer taxonomy ──────────────────────────────────
