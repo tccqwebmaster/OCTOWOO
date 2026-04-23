@@ -136,6 +136,12 @@ class WpmlIntegration extends AbstractMigrator {
 
         $this->logger->info( "[multilingual] Done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
 
+        // Flush WordPress rewrite rules so all newly created/updated term slugs
+        // (Arabic categories, tags, brands) are immediately routable. Without this,
+        // Arabic category and tag archive URLs return 404 until an admin visits
+        // Settings → Permalinks.
+        flush_rewrite_rules( false );
+
         return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed ];
     }
 
@@ -703,9 +709,27 @@ class WpmlIntegration extends AbstractMigrator {
                     );
                     if ( ! empty( $ar_tags ) ) {
                         // wp_set_object_terms accepts string names and auto-creates
-                        // any term that does not yet exist.
-                        wp_set_object_terms( $target_id, $ar_tags, 'product_tag', false );
+                        // any term that does not yet exist. It returns the array of
+                        // term_taxonomy_ids that were set.
+                        $set_result = wp_set_object_terms( $target_id, $ar_tags, 'product_tag', false );
                         $ar_tags_assigned = true;
+
+                        // Register every Arabic tag term with WPML so the tag
+                        // archive page (/product-tag/arabic-tag/) runs its query
+                        // scoped to the Arabic language and shows Arabic products.
+                        // Without an icl_translations row, WPML doesn't know these
+                        // are Arabic terms → the archive page returns 0 products.
+                        if ( defined( 'ICL_SITEPRESS_VERSION' ) && is_array( $set_result ) ) {
+                            foreach ( $set_result as $tt_id ) {
+                                do_action( 'wpml_set_element_language_details', [
+                                    'element_id'           => (int) $tt_id,
+                                    'element_type'         => 'tax_product_tag',
+                                    'trid'                 => null,
+                                    'language_code'        => $this->secondary_lang,
+                                    'source_language_code' => null,
+                                ] );
+                            }
+                        }
                     }
                 }
             }
@@ -839,6 +863,11 @@ class WpmlIntegration extends AbstractMigrator {
 
                 // Force the slug to match the primary term (bypasses WP uniqueness).
                 $this->fixTranslationTermSlug( $existing_translation_id, $primary_term->slug );
+
+                // Re-register the WPML translation link on every update run.
+                // This is idempotent and repairs any stale or missing
+                // icl_translations rows that cause Arabic category 404 errors.
+                $this->linkTermTranslation( $primary_term_id, $existing_translation_id, $taxonomy );
 
                 // Sync Yoast SEO meta to the existing translated term.
                 $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
