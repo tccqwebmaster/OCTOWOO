@@ -61,6 +61,7 @@
         $('#ow-btn-images-only').on('click', startImagesOnlyRecovery);
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
+        $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -732,6 +733,12 @@
         startMigration(false, false, 'categories,manufacturers', 'Categories + Manufacturers Recovery');
     }
 
+    function startMultilingualRecovery() {
+        // Re-run only the WPML/Polylang translation pass without re-migrating
+        // primary entities. Useful after fixing Arabic/multilingual issues.
+        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery');
+    }
+
     function runNextChunk() {
         if (!isRunning) { return; }
 
@@ -1223,11 +1230,13 @@
 
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
-        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers');
+        const $btnDemo     = $('#ow-btn-demo');
+        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual');
 
         if (state === 'running') {
             $btnStart.prop('disabled', true)
                 .html('<span class="ow-spinner"></span>&nbsp; Running…');
+            $btnDemo.prop('disabled', true);
             $btnRecovery.prop('disabled', true);
             $btnResume.prop('disabled', true);
             $btnAbort.prop('disabled', false);
@@ -1235,6 +1244,7 @@
             $btnSkip.prop('disabled', false);
         } else if (state === 'paused') {
             $btnStart.prop('disabled', true).text('▶ Start Full Migration');
+            $btnDemo.prop('disabled', true);
             $btnRecovery.prop('disabled', true);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', false);
@@ -1242,6 +1252,7 @@
             $btnSkip.prop('disabled', false);
         } else {
             $btnStart.prop('disabled', false).text('▶ Start Full Migration');
+            $btnDemo.prop('disabled', false);
             $btnRecovery.prop('disabled', false);
             $btnResume.prop('disabled', false);
             $btnAbort.prop('disabled', true);
