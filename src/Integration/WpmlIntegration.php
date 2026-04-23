@@ -621,6 +621,10 @@ class WpmlIntegration extends AbstractMigrator {
             '_virtual', '_downloadable', '_sold_individually',
             '_tax_status', '_tax_class', '_product_attributes',
             '_octowoo_oc_id',
+            // Featured image and gallery — without these the Arabic product
+            // has no images even though the English product has them.
+            '_thumbnail_id',
+            '_product_image_gallery',
         ];
         foreach ( $wc_meta_keys as $key ) {
             $value = get_post_meta( $source_id, $key, true );
