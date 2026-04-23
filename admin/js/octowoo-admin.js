@@ -716,9 +716,9 @@
     }
 
     function startImagesOnlyRecovery() {
-        // Intentionally force only the images migrator so admins can recover
-        // media attachments after uploading source files later.
-        startMigration(false, false, 'images', 'Images-Only Recovery');
+        // Re-import all images: product images (ImageMigrator), category thumbnails
+        // (CategoryMigrator), and brand/manufacturer logos (ManufacturerMigrator).
+        startMigration(false, false, 'images,categories,manufacturers', 'Images-Only Recovery');
     }
 
     function startProductsImagesRecovery() {
