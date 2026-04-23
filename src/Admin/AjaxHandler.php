@@ -1024,6 +1024,12 @@ class AjaxHandler {
         delete_option( 'octowoo_run_started_at' );
         delete_option( 'octowoo_db_lock' );
 
+        // Invalidate the category topological-sort transient so the next run
+        // re-builds the sorted list from scratch.
+        $reset_config = AdminPage::getConfig();
+        $oc_pfx       = $reset_config['oc_db']['prefix'] ?? 'oc_';
+        delete_transient( 'octowoo_cat_topo_' . md5( $oc_pfx ) );
+
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
         ] );

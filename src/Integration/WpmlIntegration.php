@@ -878,6 +878,14 @@ class WpmlIntegration extends AbstractMigrator {
                 $ar_description = $primary_term->description;
             }
 
+            // Resolve the Arabic parent term ID so the secondary-language term
+            // sits at the correct depth in the taxonomy hierarchy.
+            // Only applicable for hierarchical taxonomies (product_cat).
+            $ar_parent = 0;
+            if ( $primary_term->parent > 0 ) {
+                $ar_parent = $this->getExistingTranslationId( $primary_term->parent, "tax_{$taxonomy}" );
+            }
+
             $existing_translation_id = $this->getExistingTranslationId( $primary_term_id, "tax_{$taxonomy}" );
             if ( $existing_translation_id > 0 ) {
                 if ( $this->isDry() ) {
@@ -903,6 +911,7 @@ class WpmlIntegration extends AbstractMigrator {
                     'name'        => $ar_name,
                     'description' => $ar_description,
                     'slug'        => $temp_slug,
+                    'parent'      => $ar_parent,
                 ] );
 
                 if ( is_wp_error( $updated ) ) {
@@ -938,7 +947,7 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            $translated_term_id = $this->createTranslatedTerm( $primary_term, $ar_name, $ar_description, $taxonomy );
+            $translated_term_id = $this->createTranslatedTerm( $primary_term, $ar_name, $ar_description, $taxonomy, $ar_parent );
 
             if ( ! $translated_term_id ) {
                 $failed++;
@@ -959,13 +968,72 @@ class WpmlIntegration extends AbstractMigrator {
         // Persist any queued secondary-language category redirects.
         $this->flushSecondaryLangRedirects();
 
+        // Post-sweep: ensure every secondary-language category term has the
+        // correct Arabic parent. The per-item $ar_parent lookup above can return 0
+        // when the Arabic parent was not yet created at the time the child was
+        // processed (ordering is not guaranteed in the id_map SELECT). This sweep
+        // runs after all Arabic terms exist, so every parent is resolvable.
+        if ( $taxonomy === 'product_cat' ) {
+            $this->fixArabicTermParents( $taxonomy );
+        }
+
         return [ $processed, $skipped, $failed ];
+    }
+
+    /**
+     * Post-sweep: walk all migrated category terms and set the correct Arabic
+     * parent on each Arabic translation term.
+     *
+     * Called once at the end of translateTerms('product_cat', ...) after every
+     * Arabic term has been created/updated, so all parents are resolvable.
+     */
+    private function fixArabicTermParents( string $taxonomy ): void {
+        global $wpdb;
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                'category'
+            ),
+            ARRAY_A
+        );
+
+        foreach ( $rows as $row ) {
+            $en_term_id = (int) $row['wc_id'];
+            $en_term    = get_term( $en_term_id, $taxonomy );
+
+            if ( ! $en_term || is_wp_error( $en_term ) || (int) $en_term->parent === 0 ) {
+                continue; // Root-level or invalid – nothing to fix.
+            }
+
+            $ar_term_id = $this->getExistingTranslationId( $en_term_id, "tax_{$taxonomy}" );
+            if ( $ar_term_id <= 0 ) {
+                continue;
+            }
+
+            $ar_parent_id = $this->getExistingTranslationId( $en_term->parent, "tax_{$taxonomy}" );
+            if ( $ar_parent_id <= 0 ) {
+                continue; // Arabic parent does not exist yet – skip.
+            }
+
+            $ar_term = get_term( $ar_term_id, $taxonomy );
+            if ( $ar_term && ! is_wp_error( $ar_term ) && (int) $ar_term->parent === $ar_parent_id ) {
+                continue; // Already correct.
+            }
+
+            $result = wp_update_term( $ar_term_id, $taxonomy, [ 'parent' => $ar_parent_id ] );
+            if ( is_wp_error( $result ) ) {
+                $this->logger->warning( "[multilingual] Could not fix Arabic parent for {$taxonomy} term #{$ar_term_id}: " . $result->get_error_message() );
+            } else {
+                $this->logger->debug( "[multilingual] Fixed Arabic parent for {$taxonomy} term #{$ar_term_id} → parent #{$ar_parent_id}." );
+            }
+        }
     }
 
     /**
      * Create a translated taxonomy term in the secondary language.
      */
-    private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy ): int {
+    private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy, int $ar_parent = 0 ): int {
         // Do NOT pass 'slug' to wp_insert_term — WordPress rejects the primary-
         // language slug because another term (the English one) already owns it.
         // Let WordPress generate a temporary slug, then force the correct one
@@ -982,7 +1050,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         $result = wp_insert_term( $name, $taxonomy, [
             'description' => $description ?: $source->description,
-            'parent'      => 0, // WPML/Polylang manage their own parent hierarchy.
+            'parent'      => $ar_parent,
         ] );
 
         if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {

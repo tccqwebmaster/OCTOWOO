@@ -211,6 +211,9 @@ class DataPurger {
 
     private function purgeCategories( bool $force = false ): int {
         $this->clearIdMapEntity( 'category' );
+        // Invalidate the topological-sort transient so the next migration run
+        // re-builds the sorted category list from a clean OC database state.
+        delete_transient( 'octowoo_cat_topo_' . md5( $this->config['oc_db']['prefix'] ?? 'oc_' ) );
         return $this->purgeTermsByTaxonomy( 'product_cat', $force );
     }
 

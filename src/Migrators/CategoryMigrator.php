@@ -484,6 +484,16 @@ class CategoryMigrator extends AbstractMigrator {
      * @return array<int, array<string, mixed>>
      */
     private function fetchAllCategoriesTopological(): array {
+        // Cache the sorted result in a short-lived transient so that repeated
+        // calls within a chunked AJAX migration (one call per HTTP request) do
+        // not re-query the OC database and do not repeat orphan warnings on
+        // every chunk.  TTL of 2 hours is well beyond any realistic migration run.
+        $transient_key = 'octowoo_cat_topo_' . md5( $this->pfx() );
+        $cached = get_transient( $transient_key );
+        if ( is_array( $cached ) && ! empty( $cached ) ) {
+            return $cached;
+        }
+
         $pfx  = $this->pfx();
         $rows = $this->oc->fetchAll(
             "SELECT category_id, parent_id, sort_order, image
@@ -535,13 +545,17 @@ class CategoryMigrator extends AbstractMigrator {
             }
         }
 
-        // Safety: append any orphans (parent_id references a missing category).
+        // Safety: append any orphans (parent_id references a missing/disabled category).
         foreach ( $by_id as $id => $row ) {
             if ( ! isset( $visited[ $id ] ) ) {
                 $sorted[] = $row;
                 $this->logger->warning( "[categories] Orphan category OC #{$id} (parent_id={$row['parent_id']} not found) – appended at end." );
             }
         }
+
+        // Store in transient so subsequent chunks skip the re-sort and the
+        // orphan warnings are emitted only once per migration run.
+        set_transient( $transient_key, $sorted, 2 * HOUR_IN_SECONDS );
 
         return $sorted;
     }
