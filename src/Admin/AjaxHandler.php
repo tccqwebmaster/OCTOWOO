@@ -1002,17 +1002,20 @@ class AjaxHandler {
             MigrationManager::clearRuntimeSignals( $active_run );
         }
 
-        // Delete ALL checkpoint and ID-map rows for every known run.
-        // Using both active_run and last_run handles the edge case where they differ.
+        // Delete ALL checkpoint rows for every known run.
         $run_ids = array_filter( array_unique( [
             $active_run ?? '',
             get_option( 'octowoo_last_run_id', '' ),
         ] ) );
 
         foreach ( $run_ids as $rid ) {
-            $wpdb->delete( $cp_table,  [ 'run_id' => $rid ], [ '%s' ] );
-            $wpdb->delete( $map_table, [ 'run_id' => $rid ], [ '%s' ] );
+            $wpdb->delete( $cp_table, [ 'run_id' => $rid ], [ '%s' ] );
         }
+
+        // Truncate the entire id_map — it only stores OC→WC ID cross-references
+        // and the run_id filter would miss rows from older runs with different IDs.
+        // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "TRUNCATE TABLE `{$map_table}`" );
 
         // Clean up all migration state options.
         delete_option( 'octowoo_last_run_id' );

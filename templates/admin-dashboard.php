@@ -840,10 +840,10 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
 
             <div style="margin-bottom:14px; font-size:13px;">
                 <button type="button" id="ow-btn-select-all" class="ow-btn" style="padding:4px 12px; font-size:12px;">
-                    <?php esc_html_e( '\u2611 Select All', 'octowoo' ); ?>
+                    &#9745; <?php esc_html_e( 'Select All', 'octowoo' ); ?>
                 </button>
                 <button type="button" id="ow-btn-deselect-all" class="ow-btn" style="padding:4px 12px; font-size:12px; margin-left:6px;">
-                    <?php esc_html_e( '\u2610 Deselect All', 'octowoo' ); ?>
+                    &#9744; <?php esc_html_e( 'Deselect All', 'octowoo' ); ?>
                 </button>
             </div>
 

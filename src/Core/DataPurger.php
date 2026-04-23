@@ -135,6 +135,7 @@ class DataPurger {
 
         $this->clearIdMapEntity( 'product' );
         $this->clearIdMapEntity( 'variation' );
+        $this->clearIdMapEntity( 'product_image' );
 
         if ( $force ) {
             // for stores with thousands of products.
@@ -161,6 +162,17 @@ class DataPurger {
             }
 
             $csv = implode( ',', $all_ids );
+
+            // Delete attached media (product images + gallery attachments).
+            $attachment_ids = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT ID FROM {$wpdb->posts}
+                  WHERE post_type = 'attachment' AND post_parent IN ({$csv})"
+            ) );
+            if ( ! empty( $attachment_ids ) ) {
+                $att_csv = implode( ',', $attachment_ids );
+                $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            }
 
             // Delete child data first, then the posts themselves.
             $wpdb->query( "DELETE FROM {$wpdb->postmeta}          WHERE post_id  IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
@@ -220,6 +232,7 @@ class DataPurger {
     }
 
     private function purgeFilters( bool $force = false ): int {
+        $this->clearIdMapEntity( 'filter' );
         $deleted = 0;
         foreach ( [ 'product_filter', 'pa_filter' ] as $tax ) {
             if ( taxonomy_exists( $tax ) ) {
@@ -251,6 +264,9 @@ class DataPurger {
                 $taxonomy
             ) );
         } else {
+            // Include both primary OC terms (_octowoo_oc_id) and WPML translation
+            // terms (_octowoo_translation_lang), so Arabic/secondary terms are also
+            // purged even when they have no OC id of their own.
             $term_ids = $wpdb->get_col( $wpdb->prepare(
                 "SELECT DISTINCT tm.term_id
                    FROM {$wpdb->termmeta} tm
@@ -261,11 +277,30 @@ class DataPurger {
             ) );
         }
 
+        if ( empty( $term_ids ) ) {
+            return 0;
+        }
+
         $deleted = 0;
         foreach ( array_map( 'intval', $term_ids ) as $term_id ) {
             $result = wp_delete_term( $term_id, $taxonomy );
             if ( $result && ! is_wp_error( $result ) ) {
                 $deleted++;
+            }
+        }
+
+        // Clean up orphaned WPML icl_translations rows for deleted terms.
+        // wp_delete_term() does not remove these rows, leaving stale WPML data.
+        if ( $deleted > 0 ) {
+            $icl_table = $wpdb->prefix . 'icl_translations';
+            $has_icl   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $icl_table ) );
+            if ( $has_icl ) {
+                $type = 'tax_' . $taxonomy;
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL
+                    "DELETE FROM `{$icl_table}` WHERE element_type = %s AND element_id NOT IN (SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s)", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $type,
+                    $taxonomy
+                ) );
             }
         }
 
@@ -430,6 +465,7 @@ class DataPurger {
         global $wpdb;
 
         $this->clearIdMapEntity( 'coupon' );
+        $this->clearIdMapEntity( 'coupon_code' );
 
         if ( $force ) {
             $count = (int) $wpdb->get_var(
@@ -472,6 +508,8 @@ class DataPurger {
     private function purgeReviews( bool $force = false ): int {
         global $wpdb;
 
+        $this->clearIdMapEntity( 'review' );
+
         if ( $force ) {
             // Delete all comments of type 'review' on product posts.
             $comment_ids = $wpdb->get_col(
@@ -505,6 +543,8 @@ class DataPurger {
     private function purgeInformation( bool $force = false ): int {
         global $wpdb;
 
+        $this->clearIdMapEntity( 'information' );
+
         // Both tagged and force modes only delete OctoWoo-created pages.
         // Manually-created pages (theme templates, custom pages) are NEVER touched.
         $ids = $wpdb->get_col(
@@ -533,6 +573,8 @@ class DataPurger {
         // OctoWoo stores downloads as WP posts with post_type 'octowoo_download'
         // or attaches them to products. Just clear any post type that carries the meta.
         global $wpdb;
+
+        $this->clearIdMapEntity( 'download' );
 
         if ( $force ) {
             $ids = $wpdb->get_col(
