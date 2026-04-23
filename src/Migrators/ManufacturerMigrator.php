@@ -101,6 +101,12 @@ class ManufacturerMigrator extends AbstractMigrator {
             return $this->processManufacturer( $row );
         };
 
+        // If WPML is active, switch to the primary language so that wp_insert_term()
+        // calls during this batch are auto-assigned to the correct language by WPML.
+        // Without this, brand terms are created without any WPML language metadata and
+        // the English admin shows "No Brands Found" even though the terms exist in DB.
+        $this->wpmlSwitchToPrimary();
+
         $result = $this->batch->run(
             total_callback:  $total_callback,
             batch_callback:  $batch_callback,
@@ -110,6 +116,8 @@ class ManufacturerMigrator extends AbstractMigrator {
             resume_after_id: $resume_id,
             id_field:        'manufacturer_id'
         );
+
+        $this->wpmlRestoreLanguage();
 
         // Phase 2: assign brand terms to products.
         // Run on the final chunk only (is_done = true) so we don't scan all
