@@ -383,6 +383,30 @@ class WpmlIntegration extends AbstractMigrator {
         $this->logger->debug( "[multilingual] Slug fixed for post #{$post_id}: '{$current}' → '{$desired_slug}'" );
     }
 
+    /**
+     * Force a term's slug to $desired_slug, bypassing WordPress's uniqueness check.
+     *
+     * wp_update_term() / wp_insert_term() reject a slug already used by another
+     * term in the same taxonomy — even if the other term is in a different WPML
+     * language. We write directly to wp_terms and bust the term cache so WPML
+     * can route both terms under their respective language prefixes using the
+     * same slug (e.g. /product-category/electronics-in-qatar/ vs
+     * /ar/product-category/electronics-in-qatar/).
+     */
+    private function fixTranslationTermSlug( int $term_id, string $desired_slug ): void {
+        if ( $desired_slug === '' || $term_id <= 0 ) {
+            return;
+        }
+        $term = get_term( $term_id );
+        if ( ! $term || is_wp_error( $term ) || $term->slug === $desired_slug ) {
+            return; // Already correct — nothing to do.
+        }
+        global $wpdb;
+        $wpdb->update( $wpdb->terms, [ 'slug' => $desired_slug ], [ 'term_id' => $term_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        clean_term_cache( $term_id );
+        $this->logger->debug( "[multilingual] Term slug fixed for term #{$term_id}: '{$term->slug}' → '{$desired_slug}'" );
+    }
+
     // ── Yoast SEO meta helpers ─────────────────────────────────────────────────
 
     /**
@@ -786,10 +810,12 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
+                // Do NOT pass 'slug' to wp_update_term — WordPress rejects it
+                // when the primary-language term already owns that slug globally.
+                // We force the slug via a direct DB write after the update succeeds.
                 $updated = wp_update_term( $existing_translation_id, $taxonomy, [
                     'name'        => $ar_name,
                     'description' => $ar_description,
-                    'slug'        => $primary_term->slug,
                 ] );
 
                 if ( is_wp_error( $updated ) ) {
@@ -797,6 +823,9 @@ class WpmlIntegration extends AbstractMigrator {
                     $failed++;
                     continue;
                 }
+
+                // Force the slug to match the primary term (bypasses WP uniqueness).
+                $this->fixTranslationTermSlug( $existing_translation_id, $primary_term->slug );
 
                 // Sync Yoast SEO meta to the existing translated term.
                 $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
@@ -845,12 +874,12 @@ class WpmlIntegration extends AbstractMigrator {
      * Create a translated taxonomy term in the secondary language.
      */
     private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy ): int {
-        // Always use the primary (English) slug so Arabic URLs stay clean.
-        $slug = $source->slug;
-
+        // Do NOT pass 'slug' to wp_insert_term — WordPress rejects the primary-
+        // language slug because another term (the English one) already owns it.
+        // Let WordPress generate a temporary slug, then force the correct one
+        // via direct DB write after the term is created and WPML-linked.
         $result = wp_insert_term( $name, $taxonomy, [
             'description' => $description ?: $source->description,
-            'slug'        => $slug,
             'parent'      => 0, // WPML/Polylang manage their own parent hierarchy.
         ] );
 
@@ -864,6 +893,10 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         $translated_term_id = (int) $result['term_id'];
+
+        // Force the slug to match the English term (bypasses WP uniqueness check).
+        // WPML scopes URLs by language prefix so both terms can share the same slug.
+        $this->fixTranslationTermSlug( $translated_term_id, $source->slug );
 
         // Copy Yoast SEO meta.
         // Fall back to English when Arabic meta is absent.
