@@ -204,6 +204,13 @@ class ManufacturerMigrator extends AbstractMigrator {
         // Save ID mapping.
         $this->saveManufacturerMap( $oc_id, $term_id );
 
+        // Explicitly register this term with WPML in the primary language.
+        // wpmlSwitchToPrimary() is called before the batch, but WPML's auto-
+        // registration via wp_insert_term hooks is not always reliable for
+        // custom taxonomies. This guarantees the icl_translations row exists
+        // so the brand appears in the English WP admin "Brands" list.
+        $this->registerBrandTermWithWpml( $term_id );
+
         $this->logger->info( "[manufacturers] Created brand term #{$term_id} ← OC #{$oc_id}: '{$name}' ({$this->taxonomy})" );
 
         /**
@@ -229,8 +236,47 @@ class ManufacturerMigrator extends AbstractMigrator {
             $this->importBrandImage( $term_id, (string) $row['image'] );
         }
 
+        // Re-register with WPML on every update. Existing brand terms created
+        // before v2.4.52 may lack an icl_translations row (causing "No Brands
+        // Found" in the English admin). This is idempotent – WPML updates the
+        // row if it already exists, creates it if missing.
+        $this->registerBrandTermWithWpml( $term_id );
+
         $this->logger->debug( "[manufacturers] Updated brand term #{$term_id}." );
         return true;
+    }
+
+    /**
+     * Ensure a brand term is registered with WPML in the primary language.
+     *
+     * Without an icl_translations row (element_type = 'tax_{taxonomy}',
+     * language_code = primary locale), WPML hides the term from the English
+     * admin "Brands" list even though it exists in wp_terms.
+     */
+    private function registerBrandTermWithWpml( int $term_id ): void {
+        if ( ! defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            return;
+        }
+
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $tt_id = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+                $term_id,
+                $this->taxonomy
+            )
+        );
+
+        if ( $tt_id > 0 ) {
+            do_action( 'wpml_set_element_language_details', [
+                'element_id'           => $tt_id,
+                'element_type'         => 'tax_' . $this->taxonomy,
+                'trid'                 => null,
+                'language_code'        => $this->primaryLocale(),
+                'source_language_code' => null,
+            ] );
+        }
     }
 
     // ── Product assignment ────────────────────────────────────────────────────
