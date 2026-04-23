@@ -812,12 +812,25 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
-                // Do NOT pass 'slug' to wp_update_term — WordPress rejects it
-                // when the primary-language term already owns that slug globally.
-                // We force the slug via a direct DB write after the update succeeds.
+                // Do NOT let wp_update_term regenerate the slug from the term name.
+                // When no slug is passed, WP generates one from $ar_name. If $ar_name
+                // is the English fallback (e.g. "Electronics In Qatar"), WP generates
+                // "electronics-in-qatar", finds the English primary term already owns it,
+                // appends "-2" → "electronics-in-qatar-2", and on a second run that too
+                // already exists — causing "slug already in use by another term" errors.
+                //
+                // Passing the Arabic term's CURRENT slug triggers wp_unique_term_slug's
+                // shortcut: "if new slug === current slug → return unchanged, skip all
+                // uniqueness checks". The name/description still update correctly.
+                $existing_ar_term = get_term( $existing_translation_id, $taxonomy );
+                $current_ar_slug  = ( $existing_ar_term && ! is_wp_error( $existing_ar_term ) )
+                    ? $existing_ar_term->slug
+                    : '';
+
                 $updated = wp_update_term( $existing_translation_id, $taxonomy, [
                     'name'        => $ar_name,
                     'description' => $ar_description,
+                    'slug'        => $current_ar_slug, // Keep slug unchanged → no WP uniqueness error
                 ] );
 
                 if ( is_wp_error( $updated ) ) {
