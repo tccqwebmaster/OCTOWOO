@@ -920,13 +920,16 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
-                // Force the slug to match the primary term (bypasses WP uniqueness).
-                $this->fixTranslationTermSlug( $existing_translation_id, $primary_term->slug );
-
                 // Re-register the WPML translation link on every update run.
                 // This is idempotent and repairs any stale or missing
                 // icl_translations rows that cause Arabic category 404 errors.
                 $this->linkTermTranslation( $primary_term_id, $existing_translation_id, $taxonomy );
+
+                // Force the slug to match the primary term AFTER WPML linking.
+                // WPML's wpml_set_element_language_details action may call
+                // wp_update_term internally which resets the slug — so this must
+                // come last.
+                $this->fixTranslationTermSlug( $existing_translation_id, $primary_term->slug );
 
                 // Sync Yoast SEO meta to the existing translated term.
                 $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
@@ -955,6 +958,10 @@ class WpmlIntegration extends AbstractMigrator {
             }
 
             $this->linkTermTranslation( $primary_term_id, $translated_term_id, $taxonomy );
+
+            // Force slug to match the primary AFTER WPML linking so WPML cannot
+            // clobber it with a uniqueness-suffixed version.
+            $this->fixTranslationTermSlug( $translated_term_id, $primary_term->slug );
 
             // Register old OC Arabic URL → new WC Arabic category URL.
             if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
@@ -1025,6 +1032,11 @@ class WpmlIntegration extends AbstractMigrator {
             if ( is_wp_error( $result ) ) {
                 $this->logger->warning( "[multilingual] Could not fix Arabic parent for {$taxonomy} term #{$ar_term_id}: " . $result->get_error_message() );
             } else {
+                // wp_update_term may suffix the slug for uniqueness; restore it.
+                $en_term_for_slug = get_term( $en_term_id, $taxonomy );
+                if ( $en_term_for_slug && ! is_wp_error( $en_term_for_slug ) ) {
+                    $this->fixTranslationTermSlug( $ar_term_id, $en_term_for_slug->slug );
+                }
                 $this->logger->debug( "[multilingual] Fixed Arabic parent for {$taxonomy} term #{$ar_term_id} → parent #{$ar_parent_id}." );
             }
         }
@@ -1067,10 +1079,6 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         $translated_term_id = (int) $result['term_id'];
-
-        // Force the slug to match the English term (bypasses WP uniqueness check).
-        // WPML scopes URLs by language prefix so both terms can share the same slug.
-        $this->fixTranslationTermSlug( $translated_term_id, $source->slug );
 
         // Copy Yoast SEO meta.
         // Fall back to English when Arabic meta is absent.
