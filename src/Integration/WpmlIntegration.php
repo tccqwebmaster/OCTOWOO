@@ -693,6 +693,7 @@ class WpmlIntegration extends AbstractMigrator {
         $oc_product_id    = (int) get_post_meta( $source_id, '_octowoo_oc_id', true );
         if ( $oc_product_id > 0 ) {
             $sec_lang_id = $this->langIdSecondary();
+            $pri_lang_id = $this->langId();
             if ( $sec_lang_id > 0 ) {
                 $pfx        = $this->pfx();
                 $ar_tag_raw = $this->oc->fetchColumn(
@@ -701,34 +702,72 @@ class WpmlIntegration extends AbstractMigrator {
                     [ $oc_product_id, $sec_lang_id ]
                 );
                 if ( is_string( $ar_tag_raw ) && $ar_tag_raw !== '' ) {
-                    $ar_tags = array_values(
+                    $ar_tag_names = array_values(
                         array_filter(
                             array_map( 'sanitize_text_field', explode( ',', $ar_tag_raw ) ),
                             fn( string $t ) => $t !== ''
                         )
                     );
-                    if ( ! empty( $ar_tags ) ) {
-                        // wp_set_object_terms accepts string names and auto-creates
-                        // any term that does not yet exist. It returns the array of
-                        // term_taxonomy_ids that were set.
-                        $set_result = wp_set_object_terms( $target_id, $ar_tags, 'product_tag', false );
-                        $ar_tags_assigned = true;
 
-                        // Register every Arabic tag term with WPML so the tag
-                        // archive page (/product-tag/arabic-tag/) runs its query
-                        // scoped to the Arabic language and shows Arabic products.
-                        // Without an icl_translations row, WPML doesn't know these
-                        // are Arabic terms → the archive page returns 0 products.
-                        if ( defined( 'ICL_SITEPRESS_VERSION' ) && is_array( $set_result ) ) {
-                            foreach ( $set_result as $tt_id ) {
-                                do_action( 'wpml_set_element_language_details', [
-                                    'element_id'           => (int) $tt_id,
-                                    'element_type'         => 'tax_product_tag',
-                                    'trid'                 => null,
-                                    'language_code'        => $this->secondary_lang,
-                                    'source_language_code' => null,
-                                ] );
+                    if ( ! empty( $ar_tag_names ) ) {
+                        // Fetch English tag names from OC (same product, primary language)
+                        // so we can match Arabic ↔ English by position and share slugs.
+                        $en_tag_raw   = $this->oc->fetchColumn(
+                            "SELECT `tag` FROM `{$pfx}product_description`
+                             WHERE product_id = ? AND language_id = ?",
+                            [ $oc_product_id, $pri_lang_id ]
+                        );
+                        $en_tag_names = is_string( $en_tag_raw ) && $en_tag_raw !== ''
+                            ? array_values( array_filter(
+                                array_map( 'sanitize_text_field', explode( ',', $en_tag_raw ) ),
+                                fn( string $t ) => $t !== ''
+                            ) )
+                            : [];
+
+                        $ar_term_ids = [];
+                        foreach ( $ar_tag_names as $idx => $ar_tag_name ) {
+                            // Create (or find existing) Arabic tag term.
+                            $result = wp_insert_term( $ar_tag_name, 'product_tag' );
+                            if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
+                                $ar_tid = (int) $result->get_error_data( 'term_exists' );
+                            } elseif ( ! is_wp_error( $result ) ) {
+                                $ar_tid = (int) $result['term_id'];
+                            } else {
+                                continue;
                             }
+
+                            // Find the matching English WC tag term by position.
+                            // If found, force the Arabic term to share the same slug
+                            // so URLs use clean English text instead of %d8%... encoding.
+                            if ( isset( $en_tag_names[ $idx ] ) ) {
+                                $en_term = get_term_by( 'name', $en_tag_names[ $idx ], 'product_tag' );
+                                if ( $en_term && ! is_wp_error( $en_term ) ) {
+                                    $this->fixTranslationTermSlug( $ar_tid, $en_term->slug );
+                                    // Register WPML translation link between English and Arabic tag terms.
+                                    $this->linkTermTranslation( $en_term->term_id, $ar_tid, 'product_tag' );
+                                }
+                            }
+
+                            // Register Arabic tag with WPML (idempotent).
+                            if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+                                $ar_tt_id = (int) get_term( $ar_tid, 'product_tag' )->term_taxonomy_id;
+                                if ( $ar_tt_id > 0 ) {
+                                    do_action( 'wpml_set_element_language_details', [
+                                        'element_id'           => $ar_tt_id,
+                                        'element_type'         => 'tax_product_tag',
+                                        'trid'                 => null,
+                                        'language_code'        => $this->secondary_lang,
+                                        'source_language_code' => null,
+                                    ] );
+                                }
+                            }
+
+                            $ar_term_ids[] = $ar_tid;
+                        }
+
+                        if ( ! empty( $ar_term_ids ) ) {
+                            wp_set_object_terms( $target_id, $ar_term_ids, 'product_tag', false );
+                            $ar_tags_assigned = true;
                         }
                     }
                 }
@@ -920,10 +959,24 @@ class WpmlIntegration extends AbstractMigrator {
         // language slug because another term (the English one) already owns it.
         // Let WordPress generate a temporary slug, then force the correct one
         // via direct DB write after the term is created and WPML-linked.
+        //
+        // Switch to the secondary language BEFORE wp_insert_term so WPML's
+        // hook auto-registers the new term as 'ar' immediately during creation.
+        // Without this, WPML sees the current language as 'en' (the default) and
+        // registers the Arabic term as English — causing it to appear in the
+        // English category widget and breaking language filtering.
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', $this->secondary_lang );
+        }
+
         $result = wp_insert_term( $name, $taxonomy, [
             'description' => $description ?: $source->description,
             'parent'      => 0, // WPML/Polylang manage their own parent hierarchy.
         ] );
+
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', null ); // Restore default language.
+        }
 
         if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
             return (int) $result->get_error_data( 'term_exists' );

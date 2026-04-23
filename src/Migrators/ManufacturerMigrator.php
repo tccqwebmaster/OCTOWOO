@@ -178,6 +178,8 @@ class ManufacturerMigrator extends AbstractMigrator {
             $this->saveManufacturerMap( $oc_id, $term_id );
             update_term_meta( $term_id, '_octowoo_oc_manufacturer_id', $oc_id );
             update_term_meta( $term_id, '_octowoo_oc_id', $oc_id );
+            // Existing brand terms from previous runs may have no WPML row — register them.
+            $this->registerBrandTermWithWpml( $term_id );
             $this->logger->debug( "[manufacturers] OC #{$oc_id} matched existing brand term #{$term_id}: '{$name}'" );
             return false; // Counted as skipped.
         }
