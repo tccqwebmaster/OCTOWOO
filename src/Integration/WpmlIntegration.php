@@ -43,6 +43,7 @@ use OctoWoo\Core\Logger;
 use OctoWoo\Core\CheckpointManager;
 use OctoWoo\Core\BatchProcessor;
 use OctoWoo\Migrators\AbstractMigrator;
+use OctoWoo\Migrators\ImageMigrator;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -66,6 +67,9 @@ class WpmlIntegration extends AbstractMigrator {
      * @var array<string, string>
      */
     private array $pending_sec_redirects = [];
+
+    /** Lazy-initialised ImageMigrator used for image re-import fallback. */
+    private ?ImageMigrator $image_migrator = null;
 
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
@@ -665,6 +669,24 @@ class WpmlIntegration extends AbstractMigrator {
             update_post_meta( $target_id, $key, $value );
         }
 
+        // ── Image fallback: re-attempt import when English product has no thumbnail ──
+        // This covers the case where images were unavailable during the primary
+        // migration pass (e.g. source server temporarily down, local path not mounted).
+        // ProductMigrator stores '_octowoo_oc_image_path' on every product so we
+        // can always retry the import here without any extra DB queries.
+        $thumb_id = (int) get_post_meta( $source_id, '_thumbnail_id', true );
+        if ( $thumb_id <= 0 ) {
+            $oc_image_path = (string) get_post_meta( $source_id, '_octowoo_oc_image_path', true );
+            if ( $oc_image_path !== '' && $this->imageMigratorInstance() !== null ) {
+                $new_thumb = $this->imageMigratorInstance()->importByOcPath( $oc_image_path );
+                if ( $new_thumb && $new_thumb > 0 ) {
+                    // Apply to English product as well so it is not missing next time.
+                    set_post_thumbnail( $source_id, $new_thumb );
+                    set_post_thumbnail( $target_id, $new_thumb );
+                }
+            }
+        }
+
         // ── product_type term (simple / variable / …) ──────────────────────
         $type_terms = wp_get_object_terms( $source_id, 'product_type', [ 'fields' => 'names' ] );
         if ( ! is_wp_error( $type_terms ) && ! empty( $type_terms ) ) {
@@ -1077,7 +1099,34 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
-            return (int) $result->get_error_data( 'term_exists' );
+            $existing_id = (int) $result->get_error_data( 'term_exists' );
+
+            // Guard: if the "existing" term is actually the English primary term
+            // (same name in both languages — e.g. brand names like "Apple", "Nintendo"),
+            // using that ID as the Arabic translation would create a self-link in
+            // icl_translations, which WPML rejects. Instead, insert a throwaway
+            // placeholder name that is guaranteed unique, then rename it via direct DB.
+            if ( $existing_id === $source->term_id ) {
+                $placeholder = 'octowoo-ar-new-' . $source->term_id . '-' . time();
+                if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+                    do_action( 'wpml_switch_language', $this->secondary_lang );
+                }
+                $retry = wp_insert_term( $placeholder, $taxonomy, [
+                    'description' => $description ?: $source->description,
+                    'parent'      => $ar_parent,
+                ] );
+                if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+                    do_action( 'wpml_switch_language', null );
+                }
+                if ( is_wp_error( $retry ) ) {
+                    $this->logger->error( "[multilingual] Failed creating placeholder term for same-name category ({$name}): " . $retry->get_error_message() );
+                    return 0;
+                }
+                $existing_id = (int) $retry['term_id'];
+                // fixTranslationTermSlug (called by the caller) will set the correct slug afterwards.
+            }
+
+            return $existing_id;
         }
 
         if ( is_wp_error( $result ) ) {
@@ -1317,6 +1366,34 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         return 'none';
+    }
+
+    /**
+     * Lazy-initialise and return an ImageMigrator instance.
+     * Returns null when the OpenCart DB connection is not available (e.g. the
+     * migration was reset and no connection params are stored).
+     */
+    private function imageMigratorInstance(): ?ImageMigrator {
+        if ( $this->image_migrator !== null ) {
+            return $this->image_migrator;
+        }
+
+        // AbstractMigrator exposes $this->oc (DatabaseConnector), $this->logger,
+        // $this->checkpoint, $this->batch, and $this->config — all we need.
+        try {
+            $this->image_migrator = new ImageMigrator(
+                $this->oc,
+                $this->logger,
+                $this->checkpoint,
+                $this->batch,
+                $this->config
+            );
+        } catch ( \Throwable $e ) {
+            $this->logger->warning( '[multilingual] Could not init ImageMigrator for fallback: ' . $e->getMessage() );
+            return null;
+        }
+
+        return $this->image_migrator;
     }
 
     /**

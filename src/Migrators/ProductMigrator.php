@@ -130,7 +130,10 @@ class ProductMigrator extends AbstractMigrator {
 
         $name        = $this->sanitizeName( $desc['name'] ?? '' );
         $description = $this->cleanDescription( $desc['description'] ?? '' );
-        $short_desc  = $this->sanitizeText( $desc['tag'] ?? '' );
+        // OpenCart's `tag` field holds comma-separated SEO/search keywords, NOT a
+        // short description. WooCommerce short description (post_excerpt) is left
+        // empty because OpenCart has no equivalent field.
+        $short_desc  = '';
 
         // Secondary language (Arabic) fields via Polylang / WPML meta or just stored as meta.
         $name_ar      = '';
@@ -157,7 +160,8 @@ class ProductMigrator extends AbstractMigrator {
         if ( is_array( $sec ) ) {
             $name_ar      = $this->sanitizeName( $sec['name']             ?? '' );
             $desc_ar      = $this->cleanDescription( $sec['description']  ?? '' );
-            $short_ar     = $this->sanitizeText( $sec['tag']              ?? '' );
+            // tag field = SEO keywords; not a short description — leave empty.
+            $short_ar     = '';
             $metatitle_ar = $this->sanitizeText( $sec['meta_title']       ?? '' );
             $metadesc_ar  = $this->sanitizeText( $sec['meta_description'] ?? '' );
             $metakw_ar    = $this->sanitizeText( $sec['meta_keyword']     ?? '' );
@@ -358,8 +362,16 @@ class ProductMigrator extends AbstractMigrator {
         }
         $this->assignCategories( $post_id, $oc_categories );
 
+        // Store the OC image path so the multilingual pass (and future update runs)
+        // can re-attempt the import if _thumbnail_id is missing (e.g. image was
+        // unavailable during the primary migration pass).
+        $featured_oc_path = $row['image'] ?? '';
+        if ( $featured_oc_path !== '' ) {
+            update_post_meta( $post_id, '_octowoo_oc_image_path', $featured_oc_path );
+        }
+
         // Featured image + gallery.
-        $this->assignImages( $post_id, $row['image'] ?? '', $oc_images );
+        $this->assignImages( $post_id, $featured_oc_path, $oc_images );
 
         // Attributes + variations — guard against combination explosion.
         if ( $has_vars ) {
@@ -415,7 +427,8 @@ class ProductMigrator extends AbstractMigrator {
             'ID'           => $wc_post_id,
             'post_title'   => $this->sanitizeName( $desc['name'] ?? '' ),
             'post_content' => wp_kses_post( $this->cleanDescription( $desc['description'] ?? '' ) ),
-            'post_excerpt' => wp_kses_post( $this->sanitizeText( $desc['tag'] ?? '' ) ),
+            // OC `tag` = SEO keywords, not a short description; clear any previously set value.
+            'post_excerpt' => '',
         ] );
 
         $price = (float) $row['price'];
@@ -458,6 +471,13 @@ class ProductMigrator extends AbstractMigrator {
         }
         if ( ! empty( $desc['meta_keyword'] ) ) {
             update_post_meta( $wc_post_id, '_yoast_wpseo_focuskw',  $this->sanitizeText( $desc['meta_keyword'] ) );
+        }
+
+        // Keep OC image path meta in sync so the multilingual pass can re-attempt
+        // image import for Arabic translations if _thumbnail_id is missing.
+        $featured_oc_path = $row['image'] ?? '';
+        if ( $featured_oc_path !== '' ) {
+            update_post_meta( $wc_post_id, '_octowoo_oc_image_path', $featured_oc_path );
         }
 
         wc_delete_product_transients( $wc_post_id );
