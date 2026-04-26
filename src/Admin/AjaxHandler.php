@@ -1218,6 +1218,22 @@ class AjaxHandler {
             ] );
         }
 
+        // Prevent concurrent purge operations — two simultaneous AJAX requests can
+        // interleave SQL deletions, produce corrupted log output, and leave orphaned
+        // WPML translation terms that appear as duplicate categories after the next
+        // migration run.
+        $lock_key = 'octowoo_purge_in_progress';
+        if ( get_transient( $lock_key ) ) {
+            wp_send_json_error( [
+                'message' => __( 'A purge operation is already running. Please wait for it to complete before starting another.', 'octowoo' ),
+            ] );
+        }
+        set_transient( $lock_key, 1, 600 ); // 10-minute safety TTL to self-heal stale locks.
+        // Always release the lock when this request ends — including after wp_die() / exit.
+        register_shutdown_function( function () use ( $lock_key ) {
+            delete_transient( $lock_key );
+        } );
+
         // phpcs:ignore WordPress.Security.NonceVerification
         $raw_entities = (array) ( $_POST['entities'] ?? [] );
         $allowed      = [ 'products', 'categories', 'tags', 'customers', 'orders', 'coupons', 'reviews', 'manufacturers', 'information', 'downloads', 'filters' ];
@@ -1233,9 +1249,10 @@ class AjaxHandler {
 
         set_time_limit( 0 ); // Bulk deletion can take a while on large stores.
 
+        $config = AdminPage::getConfig();
         $run_id = get_option( 'octowoo_last_run_id', 'purge-' . time() );
-        $logger = new Logger( $run_id );
-        $purger = new DataPurger( $logger );
+        $logger = new Logger( $run_id, $config['logging'] ?? [] );
+        $purger = new DataPurger( $logger, $config );
 
         try {
             $results = $purger->purge( $entities, $force );

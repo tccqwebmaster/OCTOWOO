@@ -345,8 +345,6 @@ class ProductMigrator extends AbstractMigrator {
         }
         if ( $metakw_ar ) {
             update_post_meta( $post_id, '_octowoo_metakw_ar', $metakw_ar );
-        }        if ( $metakw_ar ) {
-            update_post_meta( $post_id, '_octowoo_metakw_ar', $metakw_ar );
         }
         // SEO meta fields.
         if ( ! empty( $desc['meta_title'] ) ) {

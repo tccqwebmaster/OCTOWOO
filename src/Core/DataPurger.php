@@ -17,9 +17,11 @@ namespace OctoWoo\Core;
 class DataPurger {
 
     private Logger $logger;
+    private array $config = [];
 
-    public function __construct( Logger $logger ) {
+    public function __construct( Logger $logger, array $config = [] ) {
         $this->logger = $logger;
+        $this->config = $config;
     }
 
     /**
@@ -260,13 +262,56 @@ class DataPurger {
         global $wpdb;
 
         if ( $force ) {
-            $term_ids = $wpdb->get_col( $wpdb->prepare(
-                "SELECT DISTINCT tt.term_id
-                   FROM {$wpdb->term_taxonomy} tt
-                  WHERE tt.taxonomy = %s",
+            // Use direct SQL instead of wp_delete_term() for force mode.
+            // When WPML is active, wp_delete_term() called in the primary-language
+            // context silently skips secondary-language (Arabic) terms via its hooks.
+            // This leaves orphaned Arabic terms with no icl_translations row, and on
+            // the next migration run those orphans are invisible to getExistingTranslationId()
+            // (which queries WPML), causing translateTerms() to create brand-new duplicates
+            // on top of the surviving orphans — hence duplicate Arabic categories.
+            $term_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
+                "SELECT DISTINCT tt.term_id FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                $taxonomy
+            ) ) );
+
+            if ( empty( $term_ids ) ) {
+                return 0;
+            }
+
+            $id_csv = implode( ',', $term_ids );
+
+            // 1. Remove object → term assignments (product in category, etc.).
+            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+                "DELETE tr FROM {$wpdb->term_relationships} tr
+                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+                 WHERE tt.taxonomy = %s",
                 $taxonomy
             ) );
+
+            // 2. Remove all term meta (thumbnail_id, _octowoo_oc_id, WPML flags, etc.).
+            $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+            // 3. Remove taxonomy registration rows.
+            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+            // 4. Remove term rows that are no longer referenced by any other taxonomy.
+            $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
+                "DELETE t FROM {$wpdb->terms} t
+                  LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE tt.term_id IS NULL AND t.term_id IN ({$id_csv})"
+            );
+
+            // Flush WP in-memory term caches so stale data is not served.
+            clean_taxonomy_cache( $taxonomy );
+            foreach ( $term_ids as $tid ) {
+                clean_term_cache( $tid );
+            }
+
+            $deleted = count( $term_ids );
         } else {
+            // Tagged mode: only delete terms that carry OctoWoo meta, using
+            // wp_delete_term() so WP hooks (wc term counts etc.) fire correctly.
+
             // Include both primary OC terms (_octowoo_oc_id) and WPML translation
             // terms (_octowoo_translation_lang), so Arabic/secondary terms are also
             // purged even when they have no OC id of their own.
@@ -278,22 +323,24 @@ class DataPurger {
                     AND tt.taxonomy   = %s",
                 $taxonomy
             ) );
-        }
 
-        if ( empty( $term_ids ) ) {
-            return 0;
-        }
+            if ( empty( $term_ids ) ) {
+                return 0;
+            }
 
-        $deleted = 0;
-        foreach ( array_map( 'intval', $term_ids ) as $term_id ) {
-            $result = wp_delete_term( $term_id, $taxonomy );
-            if ( $result && ! is_wp_error( $result ) ) {
-                $deleted++;
+            $deleted = 0;
+            foreach ( array_map( 'intval', $term_ids ) as $term_id ) {
+                $result = wp_delete_term( $term_id, $taxonomy );
+                if ( $result && ! is_wp_error( $result ) ) {
+                    $deleted++;
+                }
             }
         }
 
         // Clean up orphaned WPML icl_translations rows for deleted terms.
         // wp_delete_term() does not remove these rows, leaving stale WPML data.
+        // In force mode, this removes ALL icl rows for the taxonomy since we've
+        // deleted every term_taxonomy row above.
         if ( $deleted > 0 ) {
             $icl_table = $wpdb->prefix . 'icl_translations';
             $has_icl   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $icl_table ) );

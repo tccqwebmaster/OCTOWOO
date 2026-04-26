@@ -934,6 +934,13 @@ class WpmlIntegration extends AbstractMigrator {
                 // Sync Yoast SEO meta to the existing translated term.
                 $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
 
+                // Sync category thumbnail image — without this update, Arabic categories
+                // lose their image whenever the primary category's image changes.
+                $thumb_id = get_term_meta( $primary_term_id, 'thumbnail_id', true );
+                if ( $thumb_id ) {
+                    update_term_meta( $existing_translation_id, 'thumbnail_id', (int) $thumb_id );
+                }
+
                 // Register old OC Arabic URL → new WC Arabic category URL.
                 if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
                     $this->queueSecondaryTermRedirect( $existing_translation_id, $taxonomy, $sec_seo_map[ $oc_id ] );
@@ -1108,6 +1115,15 @@ class WpmlIntegration extends AbstractMigrator {
 
         update_term_meta( $translated_term_id, '_octowoo_translation_of',   $source->term_id );
         update_term_meta( $translated_term_id, '_octowoo_translation_lang', $this->secondary_lang );
+
+        // Copy category thumbnail image so the secondary-language term displays
+        // the same image as its primary-language counterpart.
+        // (WooCommerce stores category images as 'thumbnail_id' term meta; WPML
+        // does not carry this over automatically when creating translated terms.)
+        $thumb_id = get_term_meta( $source->term_id, 'thumbnail_id', true );
+        if ( $thumb_id ) {
+            update_term_meta( $translated_term_id, 'thumbnail_id', (int) $thumb_id );
+        }
 
         return $translated_term_id;
     }
