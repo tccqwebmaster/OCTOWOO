@@ -163,18 +163,24 @@ class ImageMigrator extends AbstractMigrator {
      * @return int|null  WP attachment post ID, or null on failure.
      */
     public function importByOcPath( string $oc_path ): ?int {
-        if ( ! $this->shouldImportImages() ) {
-            return null;
-        }
-
         if ( empty( $oc_path ) ) {
             return null;
         }
 
-        // Check cache first.
+        // Always check cache first — even when image import is disabled for this run,
+        // an attachment already in the media library can still be used as a thumbnail.
+        // This covers the case where images were imported in a previous run or in a
+        // prior step of the same run (the standalone Images migrator runs before Products).
         $cached = $this->findAttachmentByOcPath( $oc_path );
         if ( $cached ) {
             return $cached;
+        }
+
+        // Import gate: only attempt sideloading when the images step is enabled.
+        // Avoids hammering the source server when the admin selectively re-runs only
+        // specific migrators (e.g., Products only) without enabling Images.
+        if ( ! $this->shouldImportImages() ) {
+            return null;
         }
 
         $is_local_source = ( $this->config['opencart']['image_source'] ?? 'remote' ) === 'local';
@@ -332,10 +338,20 @@ class ImageMigrator extends AbstractMigrator {
     public function findAttachmentByOcPath( string $oc_path ): ?int {
         global $wpdb;
 
-        $id = $wpdb->get_var(
+        // JOIN with wp_posts to guarantee we only return an actual media-library
+        // attachment.  ProductMigrator also stores '_octowoo_oc_image_path' on the
+        // product post (for multilingual-pass retry), so without the post_type
+        // filter a plain wp_postmeta lookup can return the product's own post_id
+        // instead of the attachment — making _thumbnail_id point to the wrong post
+        // and causing the featured image to appear missing on the storefront.
+        $id = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->prepare(
-                "SELECT post_id FROM {$wpdb->postmeta}
-                 WHERE meta_key = %s AND meta_value = %s
+                "SELECT pm.post_id
+                 FROM {$wpdb->postmeta} pm
+                 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                 WHERE pm.meta_key  = %s
+                   AND pm.meta_value = %s
+                   AND p.post_type  = 'attachment'
                  LIMIT 1",
                 self::META_KEY_OC_PATH,
                 $oc_path

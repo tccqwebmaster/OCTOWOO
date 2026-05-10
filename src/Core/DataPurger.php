@@ -357,6 +357,165 @@ class DataPurger {
         return $deleted;
     }
 
+    // ── Orphan translation cleanup ─────────────────────────────────────────────
+
+    /**
+     * Delete orphaned / duplicate translation terms created by WpmlIntegration
+     * during failed or retried runs.  Handles two cases:
+     *
+     *  1. Placeholder terms — name matches 'octowoo-ar-new-%'.  These were
+     *     created when two languages share the same term name (e.g. "Apple")
+     *     and an older code path left the placeholder name instead of renaming
+     *     it to the real Arabic text.
+     *
+     *  2. Duplicate Arabic terms — multiple terms share the same WPML trid
+     *     (created when a category chunk was processed more than once due to a
+     *     server timeout / retry).  Keeps the lowest term_id, deletes extras.
+     *
+     * @param  string[] $taxonomies  Defaults to product_cat + detected brand taxons.
+     * @return int  Total terms deleted.
+     */
+    public function purgeOrphanTranslationTerms( array $taxonomies = [] ): int {
+        global $wpdb;
+
+        if ( empty( $taxonomies ) ) {
+            $taxonomies = [ 'product_cat' ];
+            foreach ( [ 'product_brand', 'pwb-brand', 'pa_brand' ] as $t ) {
+                if ( taxonomy_exists( $t ) ) {
+                    $taxonomies[] = $t;
+                }
+            }
+        }
+
+        $deleted = 0;
+
+        foreach ( $taxonomies as $taxonomy ) {
+
+            // 1. Placeholder terms (name LIKE 'octowoo-ar-new-%').
+            $placeholder_ids = array_map( 'intval', (array) $wpdb->get_col(
+                $wpdb->prepare(
+                    "SELECT t.term_id
+                       FROM {$wpdb->terms} t
+                       JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                      WHERE tt.taxonomy = %s
+                        AND t.name LIKE 'octowoo-ar-new-%%'",
+                    $taxonomy
+                )
+            ) );
+
+            $deleted += $this->forceDeleteTermIds( $placeholder_ids, $taxonomy );
+
+            // 2. Duplicate Arabic terms — multiple icl_translations rows for the
+            //    same trid with the same secondary language.  Keep lowest term_id.
+            $icl_table = $wpdb->prefix . 'icl_translations';
+            $has_icl   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $icl_table ) );
+            if ( ! $has_icl ) {
+                continue;
+            }
+
+            $element_type = 'tax_' . $taxonomy;
+
+            // Fetch all secondary-language term rows that belong to a trid with >1 such row.
+            $dup_rows = $wpdb->get_results( $wpdb->prepare(
+                "SELECT i.trid, tt.term_id
+                   FROM `{$icl_table}` i
+                   JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = i.element_id
+                  WHERE i.element_type  = %s
+                    AND i.language_code != 'en'
+                    AND i.trid IN (
+                        SELECT i2.trid
+                          FROM `{$icl_table}` i2
+                         WHERE i2.element_type  = %s
+                           AND i2.language_code != 'en'
+                         GROUP BY i2.trid
+                        HAVING COUNT(*) > 1
+                    )
+                  ORDER BY i.trid ASC, tt.term_id ASC",
+                $element_type,
+                $element_type
+            ) );
+
+            // Group by trid, keep first (lowest term_id), delete the rest.
+            $trid_groups = [];
+            foreach ( $dup_rows as $row ) {
+                $trid_groups[ $row->trid ][] = (int) $row->term_id;
+            }
+
+            $to_delete = [];
+            foreach ( $trid_groups as $term_ids ) {
+                array_shift( $term_ids ); // keep lowest term_id
+                $to_delete = array_merge( $to_delete, $term_ids );
+            }
+
+            $deleted += $this->forceDeleteTermIds( array_unique( $to_delete ), $taxonomy );
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Hard-delete term IDs: removes from wp_terms, wp_term_taxonomy,
+     * wp_term_relationships, wp_termmeta, and WPML icl_translations.
+     *
+     * @param  int[]   $term_ids
+     * @param  string  $taxonomy
+     * @return int     Number of terms deleted.
+     */
+    private function forceDeleteTermIds( array $term_ids, string $taxonomy ): int {
+        if ( empty( $term_ids ) ) {
+            return 0;
+        }
+
+        global $wpdb;
+
+        $id_csv = implode( ',', array_map( 'intval', $term_ids ) );
+
+        // Get the term_taxonomy_ids for these term_ids in this taxonomy.
+        $tt_ids = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
+            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy}
+              WHERE term_id IN ({$id_csv}) AND taxonomy = '{$taxonomy}'"
+        ) );
+
+        if ( ! empty( $tt_ids ) ) {
+            $tt_csv = implode( ',', $tt_ids );
+            // Remove product → term assignments.
+            $wpdb->query( "DELETE FROM {$wpdb->term_relationships} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            // Remove taxonomy registration rows.
+            $wpdb->query( "DELETE FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+            // Remove WPML icl_translations rows.
+            $icl_table = $wpdb->prefix . 'icl_translations';
+            $has_icl   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $icl_table ) );
+            if ( $has_icl ) {
+                $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
+                    "DELETE FROM `{$icl_table}`
+                      WHERE element_id   IN ({$tt_csv})
+                        AND element_type  = 'tax_{$taxonomy}'"
+                );
+            }
+        }
+
+        // Remove all term meta.
+        $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        // Remove term rows (only those no longer referenced by any taxonomy).
+        $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
+            "DELETE t FROM {$wpdb->terms} t
+              LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+             WHERE tt.term_id IS NULL
+               AND t.term_id IN ({$id_csv})"
+        );
+
+        // Flush WP object cache for affected terms.
+        foreach ( $term_ids as $tid ) {
+            clean_term_cache( $tid, $taxonomy );
+        }
+        clean_taxonomy_cache( $taxonomy );
+
+        $this->logger->info( "[purge-orphan] Deleted " . count( $term_ids ) . " orphan term(s) from {$taxonomy}." );
+
+        return count( $term_ids );
+    }
+
     // ── Customers ─────────────────────────────────────────────────────────────
 
     private function purgeCustomers( bool $force = false ): int {

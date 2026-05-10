@@ -15,7 +15,7 @@
  *      come before their children.
  *   2. For each category, look up:
  *        - Primary language description (English, lang_id=1)
- *        - Secondary language description (Arabic, lang_id=2)
+ *        - Secondary language description (lang_id=2)
  *   3. Resolve the WC parent term_id from the checkpoint ID-map.
  *   4. Create / update the product_cat term.
  *   5. Store the OC→WC ID mapping in the checkpoint manager.
@@ -127,15 +127,15 @@ class CategoryMigrator extends AbstractMigrator {
             return false;
         }
 
-        // Secondary language description (Arabic).
+        // Secondary language description.
         $lang_id_sec = $this->langIdSecondary();
-        $desc_ar     = ( $lang_id_sec > 0 ) ? ( $descriptions[ $oc_id ][ $lang_id_sec ] ?? [] ) : [];
-        if ( empty( $desc_ar ) && ! empty( $descriptions[ $oc_id ] ) ) {
+        $sec_desc    = ( $lang_id_sec > 0 ) ? ( $descriptions[ $oc_id ][ $lang_id_sec ] ?? [] ) : [];
+        if ( empty( $sec_desc ) && ! empty( $descriptions[ $oc_id ] ) ) {
             // Fallback: use first non-primary language row when secondary ID
-            // is missing/misconfigured, so multilingual pass still has Arabic data.
+            // is missing/misconfigured, so multilingual pass still has secondary data.
             foreach ( $descriptions[ $oc_id ] as $candidate_lang_id => $candidate_desc ) {
                 if ( (int) $candidate_lang_id !== $lang_id ) {
-                    $desc_ar = $candidate_desc;
+                    $sec_desc = $candidate_desc;
                     $this->logger->warning( "[categories] Secondary language ID {$lang_id_sec} not found for OC #{$oc_id}; using language_id={$candidate_lang_id} as fallback." );
                     break;
                 }
@@ -176,8 +176,8 @@ class CategoryMigrator extends AbstractMigrator {
         $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
 
         // Guard: if the found WC term has an empty name it is almost certainly a
-        // WPML Arabic stub (WPML copies _octowoo_oc_id via field-sync).  Treat it
-        // as "not found" so we look up – or create – the real English primary term.
+        // secondary-language stub (WPML copies _octowoo_oc_id via field-sync).  Treat it
+        // as "not found" so we look up – or create – the real primary-language term.
         if ( $existing_wc_id ) {
             $check_term = get_term( $existing_wc_id, 'product_cat' );
             if ( ! $check_term || is_wp_error( $check_term ) || trim( (string) $check_term->name ) === '' ) {
@@ -203,7 +203,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+                return $this->updateCategory( $existing_wc_id, $name, $slug, $description, $wc_parent, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
             }
 
             if ( ! $this->isDry() ) {
@@ -224,7 +224,7 @@ class CategoryMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createCategory( $name, $slug, $description, $wc_parent, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+        return $this->createCategory( $name, $slug, $description, $wc_parent, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
     }
 
     // ── Create / update ───────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ class CategoryMigrator extends AbstractMigrator {
         int    $wc_parent,
         int    $oc_id,
         array  $desc,
-        array  $desc_ar = [],
+        array  $sec_desc = [],
         string $image   = '',
         int    $pending_parent_oc_id = 0
     ): bool {
@@ -264,7 +264,7 @@ class CategoryMigrator extends AbstractMigrator {
 
                 if ( $existing && ! is_wp_error( $existing ) ) {
                     $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing->term_id );
-                    $this->addTermMeta( $existing->term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+                    $this->addTermMeta( $existing->term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
                     $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id} (term_exists)." );
                     $this->reparentPendingChildren( $oc_id, (int) $existing->term_id );
                     return true;
@@ -280,7 +280,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         $wc_term_id = (int) $result['term_id'];
 
-        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_term_id );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
 
@@ -296,7 +296,7 @@ class CategoryMigrator extends AbstractMigrator {
         int    $wc_parent,
         int    $oc_id,
         array  $desc,
-        array  $desc_ar = [],
+        array  $sec_desc = [],
         string $image   = '',
         int    $pending_parent_oc_id = 0
     ): bool {
@@ -339,7 +339,7 @@ class CategoryMigrator extends AbstractMigrator {
 
                 $retry = wp_update_term( $wc_term_id, 'product_cat', $retry_args );
                 if ( ! is_wp_error( $retry ) ) {
-                    $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+                    $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
                     $this->reparentPendingChildren( $oc_id, $wc_term_id );
                     $this->logger->warning( "[categories] Name update skipped for WC #{$wc_term_id} (OC #{$oc_id}) due to empty normalized term name; kept existing term name." );
                     return true;
@@ -352,7 +352,7 @@ class CategoryMigrator extends AbstractMigrator {
             return false;
         }
 
-        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $desc_ar, $image, $pending_parent_oc_id );
+        $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
         $this->logger->info( "[categories] Updated WC term #{$wc_term_id} (OC #{$oc_id})." );
         return true;
@@ -360,7 +360,7 @@ class CategoryMigrator extends AbstractMigrator {
 
     // ── Term meta ─────────────────────────────────────────────────────────────
 
-    private function addTermMeta( int $wc_term_id, int $oc_id, array $desc, array $desc_ar = [], string $image = '', int $pending_parent_oc_id = 0 ): void {
+    private function addTermMeta( int $wc_term_id, int $oc_id, array $desc, array $sec_desc = [], string $image = '', int $pending_parent_oc_id = 0 ): void {
         // Store OC source ID for cross-referencing.
         update_term_meta( $wc_term_id, '_octowoo_oc_id', $oc_id );
 
@@ -381,13 +381,14 @@ class CategoryMigrator extends AbstractMigrator {
             update_term_meta( $wc_term_id, '_yoast_wpseo_focuskw', $this->sanitizeText( $desc['meta_keyword'] ) );
         }
 
-        // Secondary language data for WPML / Polylang translation pass.
-        if ( ! empty( $desc_ar ) ) {
-            update_term_meta( $wc_term_id, '_octowoo_name_ar',        $this->sanitizeName( $desc_ar['name']             ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_description_ar', $this->cleanDescription( $desc_ar['description']  ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metatitle_ar',   $this->sanitizeText( $desc_ar['meta_title']       ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metadesc_ar',    $this->sanitizeText( $desc_ar['meta_description'] ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metakw_ar',      $this->sanitizeText( $desc_ar['meta_keyword']     ?? '' ) );
+        // Secondary-language data for WPML / Polylang translation pass.
+        if ( ! empty( $sec_desc ) ) {
+            $sfx = $this->secLangSuffix();
+            update_term_meta( $wc_term_id, '_octowoo_name' . $sfx,        $this->sanitizeName( $sec_desc['name']             ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_description' . $sfx, $this->cleanDescription( $sec_desc['description']  ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metatitle' . $sfx,   $this->sanitizeText( $sec_desc['meta_title']       ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metadesc' . $sfx,    $this->sanitizeText( $sec_desc['meta_description'] ?? '' ) );
+            update_term_meta( $wc_term_id, '_octowoo_metakw' . $sfx,      $this->sanitizeText( $sec_desc['meta_keyword']     ?? '' ) );
         }
 
         // Category thumbnail: import the OC image and assign as WC thumbnail.
@@ -488,17 +489,21 @@ class CategoryMigrator extends AbstractMigrator {
         // calls within a chunked AJAX migration (one call per HTTP request) do
         // not re-query the OC database and do not repeat orphan warnings on
         // every chunk.  TTL of 2 hours is well beyond any realistic migration run.
-        $transient_key = 'octowoo_cat_topo_' . md5( $this->pfx() );
+        // Key uses 'cat_all' (not 'cat_topo') to bust any cache built by the
+        // old status=1-filtered query.
+        $transient_key = 'octowoo_cat_all_' . md5( $this->pfx() );
         $cached = get_transient( $transient_key );
         if ( is_array( $cached ) && ! empty( $cached ) ) {
             return $cached;
         }
 
         $pfx  = $this->pfx();
+        // Fetch ALL categories regardless of status so the migrated count matches
+        // what the source scanner reports.  Inactive categories are imported as
+        // hidden WooCommerce terms; the store owner can manage visibility after.
         $rows = $this->oc->fetchAll(
             "SELECT category_id, parent_id, sort_order, image
-             FROM `{$pfx}category`
-             WHERE status = 1"
+             FROM `{$pfx}category`"
         );
 
         // Index rows and build a parent→children map.

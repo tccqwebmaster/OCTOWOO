@@ -43,7 +43,7 @@ class AjaxHandler {
      * An active run whose last checkpoint update is older than this is
      * considered orphaned and auto-cleared on the next Start or chunk.
      */
-    private const STALE_LOCK_SECONDS = 7200;
+    private const STALE_LOCK_SECONDS = 900; // 15 min without a heartbeat → assume dead
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
@@ -70,6 +70,8 @@ class AjaxHandler {
             'octowoo_pause_migration',
             'octowoo_resume_migration',
             'octowoo_skip_migrator',
+            'octowoo_cleanup_ml_terms',
+            'octowoo_repair_order_items',
         ];
 
         foreach ( $actions as $action ) {
@@ -205,7 +207,13 @@ class AjaxHandler {
                 $this->actionSkipMigrator();
                 break;
 
-            default:
+            case 'octowoo_cleanup_ml_terms':
+                $this->actionCleanupMlTerms();
+                break;
+
+            case 'octowoo_repair_order_items':
+                $this->actionRepairOrderItems();
+                break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
     }
@@ -242,10 +250,22 @@ class AjaxHandler {
         $resume = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
 
         if ( $active_run && ! $resume ) {
-            wp_send_json_error( [
-                'message' => __( 'A migration is already in progress. Abort it first or use Resume.', 'octowoo' ),
-                'run_id'  => $active_run,
-            ] );
+            // Auto-abort the stale run so Background-Scheduler-driven runs never
+            // block the user from starting a fresh migration.
+            BackgroundProcessor::abort( $active_run );
+            MigrationManager::requestAbort( $active_run );
+            global $wpdb;
+            $cp_table_s = $wpdb->prefix . 'octowoo_checkpoints'; // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL,WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "UPDATE `{$cp_table_s}` SET status = 'aborted' WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                    $active_run
+                )
+            );
+            $cp_stale_s = new CheckpointManager( $active_run );
+            $cp_stale_s->markRunFinished();
+            MigrationManager::clearRuntimeSignals( $active_run );
+            $active_run = null;
         }
 
         // Resolve run ID: use existing if resuming, generate new otherwise.
@@ -379,20 +399,51 @@ class AjaxHandler {
     }
 
     private function actionResumeMigration(): void {
+        // Accept explicit run_id from POST; fall back to active → last run so
+        // an accidentally aborted migration can always be resumed.
+        $raw = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS );
         $run_id = sanitize_text_field(
-            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
-                ?? CheckpointManager::getActiveRunId()
-                ?? ''
+            ( $raw !== null && $raw !== '' )
+                ? $raw
+                : ( CheckpointManager::getActiveRunId()
+                    ?? get_option( 'octowoo_last_run_id', '' ) )
         );
 
         if ( ! $run_id ) {
-            wp_send_json_error( [ 'message' => __( 'No paused migration found.', 'octowoo' ) ] );
+            wp_send_json_error( [ 'message' => __( 'No migration found to resume.', 'octowoo' ) ] );
         }
 
+        // Clear any pause signal so the chunk loop re-enters immediately.
         MigrationManager::clearPause( $run_id );
 
+        // Re-activate aborted migrators: restore their status to 'pending' while
+        // preserving processed_count and last_oc_id so the chunk loop continues
+        // from exactly where it left off — not from the beginning.
+        // This is the key recovery step when the user accidentally clicks Abort.
+        global $wpdb;
+        $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
+        $reactivated = (int) $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL,WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "UPDATE `{$cp_table}` SET status = 'pending', updated_at = %s WHERE run_id = %s AND status = 'aborted'", // phpcs:ignore WordPress.DB.PreparedSQL
+                current_time( 'mysql' ),
+                $run_id
+            )
+        );
+
+        // Re-register the run as active so the chunk loop and heartbeat work.
+        $cp = new CheckpointManager( $run_id );
+        $cp->markRunActive();
+
+        $msg = $reactivated > 0
+            ? sprintf(
+                /* translators: number of migrators reactivated */
+                __( 'Migration resumed (%d aborted migrator(s) reactivated — will continue from last checkpoint).', 'octowoo' ),
+                $reactivated
+            )
+            : __( 'Migration resumed.', 'octowoo' );
+
         wp_send_json_success( [
-            'message' => __( 'Migration resumed.', 'octowoo' ),
+            'message' => $msg,
             'run_id'  => $run_id,
         ] );
     }
@@ -626,13 +677,25 @@ class AjaxHandler {
         }
 
         // If a run_id was sent, treat this as a resume of that specific run.
-        // If empty, it's a fresh start — block if another run is truly active.
+        // If empty, it's a fresh start.  Auto-abort any stale lock so recovery
+        // buttons never block on a crashed/orphaned or Background-Scheduler run.
+        // A truly live run always sends its run_id, so this only fires for stale ones.
         if ( $run_id === '' ) {
             if ( $active_run ) {
-                wp_send_json_error( [
-                    'message' => __( 'A migration is already in progress. Abort it first or use Resume.', 'octowoo' ),
-                    'run_id'  => $active_run,
-                ] );
+                // Force-abort the stale run in-line (same logic as actionAbortMigration).
+                global $wpdb;
+                $cp_table = $cp_table ?? $wpdb->prefix . 'octowoo_checkpoints'; // phpcs:ignore WordPress.DB.PreparedSQL
+                BackgroundProcessor::abort( $active_run );
+                MigrationManager::requestAbort( $active_run );
+                $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL,WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "UPDATE `{$cp_table}` SET status = 'aborted' WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                        $active_run
+                    )
+                );
+                $cp_stale = new CheckpointManager( $active_run );
+                $cp_stale->markRunFinished();
+                MigrationManager::clearRuntimeSignals( $active_run );
             }
             $run_id = null; // let MigrationManager generate a fresh ID
         }
@@ -662,10 +725,18 @@ class AjaxHandler {
             $overrides['migration']['on_duplicate'] = $on_duplicate_raw;
         }
         if ( $migrators_raw !== '' ) {
-            $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
-            $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            $allowed    = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
+            $selected   = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            // Respect saved Settings: a migrator disabled there can never be re-enabled
+            // by the Migration-tab UI checkboxes alone — the user must save Settings first.
+            $saved_cfg  = AdminPage::getConfig();
+            $saved_mig  = is_array( $saved_cfg['migration'] ?? null ) ? $saved_cfg['migration'] : [];
             foreach ( $allowed as $key ) {
-                $overrides['migration'][ 'run_' . $key ] = in_array( $key, $selected, true );
+                $in_ui      = in_array( $key, $selected, true );
+                $in_settings = $key === 'multilingual'
+                    ? ! empty( $saved_cfg['multilingual']['enabled'] )
+                    : ( isset( $saved_mig[ 'run_' . $key ] ) ? (bool) $saved_mig[ 'run_' . $key ] : true );
+                $overrides['migration'][ 'run_' . $key ] = $in_ui && $in_settings;
             }
         }
 
@@ -760,6 +831,159 @@ class AjaxHandler {
      */
     private function actionGetReport(): void {
         wp_send_json_success( \OctoWoo\Core\MigrationReport::load() );
+    }
+
+    /**
+     * Delete orphaned / duplicate WPML translation terms (placeholder and retry
+     * duplicates created by WpmlIntegration during failed chunk runs).
+     */
+    private function actionCleanupMlTerms(): void {
+        $logger  = new Logger( 'cleanup-ml', AdminPage::getConfig()['logging'] ?? [] );
+        $purger  = new DataPurger( $logger, AdminPage::getConfig() );
+        $deleted = $purger->purgeOrphanTranslationTerms();
+        $logger->flush();
+        wp_send_json_success( [
+            'deleted' => $deleted,
+            'message' => sprintf(
+                /* translators: %d = number of terms deleted */
+                __( 'Cleanup complete. %d orphan translation term(s) removed.', 'octowoo' ),
+                $deleted
+            ),
+        ] );
+    }
+
+    /**
+     * Repair order-item → product links for all OctoWoo-migrated orders.
+     *
+     * Processes orders in batches. Each AJAX call handles one batch and returns
+     * done=false until the last batch, at which point done=true is returned and
+     * the page transient is cleared so the next button click starts fresh.
+     */
+    private function actionRepairOrderItems(): void {
+        global $wpdb;
+
+        $config     = AdminPage::getConfig();
+        $batch_size = max( 20, min( 100, (int) ( $config['migration']['batch_size'] ?? 20 ) * 2 ) );
+
+        // Support fresh start vs. continuation: JS sends reset=1 on first click.
+        if ( ! empty( $_POST['reset'] ) ) {
+            delete_transient( 'octowoo_repair_order_page' );
+        }
+
+        $page = max( 1, (int) ( get_transient( 'octowoo_repair_order_page' ) ?: 1 ) );
+
+        /** @var int[] $order_ids */
+        $order_ids = wc_get_orders( [
+            'meta_key'     => '_octowoo_oc_order_id',
+            'meta_compare' => 'EXISTS',
+            'limit'        => $batch_size,
+            'paged'        => $page,
+            'return'       => 'ids',
+            'type'         => 'shop_order',
+        ] );
+
+        if ( empty( $order_ids ) ) {
+            delete_transient( 'octowoo_repair_order_page' );
+            wp_send_json_success( [
+                'done'      => true,
+                'relinked'  => 0,
+                'processed' => ( $page - 1 ) * $batch_size,
+                'message'   => __( 'All migrated orders scanned — no more items to process.', 'octowoo' ),
+            ] );
+            return;
+        }
+
+        $run_id = get_option( 'octowoo_last_run_id', 'repair' );
+        $logger = new Logger( $run_id, $config['logging'] ?? [] );
+        $chk    = new CheckpointManager( $run_id );
+
+        $relinked = 0;
+
+        foreach ( $order_ids as $wc_order_id ) {
+            $order = wc_get_order( (int) $wc_order_id );
+            if ( ! $order ) {
+                continue;
+            }
+
+            foreach ( $order->get_items() as $item_id => $item ) {
+                if ( ! ( $item instanceof \WC_Order_Item_Product ) ) {
+                    continue;
+                }
+
+                $oc_prod  = (int) $item->get_meta( '_octowoo_oc_product_id', true );
+                $oc_model = trim( (string) $item->get_meta( '_octowoo_oc_product_model', true ) );
+
+                if ( $oc_prod <= 0 ) {
+                    continue; // Not tracked by OctoWoo.
+                }
+
+                // Fast path: id_map lookup.
+                $wc_id   = $chk->getWcId( 'product', $oc_prod );
+                $product = $wc_id ? wc_get_product( $wc_id ) : null;
+
+                // SKU / model fallback.
+                if ( ( ! $product || ! $product->get_id() ) && $oc_model !== '' ) {
+                    $found_id = (int) $wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT pm.post_id
+                             FROM {$wpdb->postmeta} pm
+                             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                             WHERE pm.meta_key   = '_sku'
+                               AND pm.meta_value = %s
+                               AND p.post_type   IN ('product','product_variation')
+                               AND p.post_status != 'trash'
+                             LIMIT 1",
+                            $oc_model
+                        )
+                    );
+                    if ( $found_id > 0 ) {
+                        $product = wc_get_product( $found_id );
+                        if ( $product ) {
+                            $chk->saveIdMap( 'product', $oc_prod, $found_id );
+                        }
+                    }
+                }
+
+                if ( ! $product || ! $product->get_id() ) {
+                    continue;
+                }
+
+                $new_id = $product->get_id();
+                $old_id = (int) $item->get_product_id();
+
+                if ( $new_id === $old_id ) {
+                    continue; // Already correct.
+                }
+
+                wc_update_order_item_meta( (int) $item_id, '_product_id',   $new_id );
+                wc_update_order_item_meta( (int) $item_id, '_variation_id', 0 );
+                $relinked++;
+
+                $logger->debug( "Repaired order #{$wc_order_id} item #{$item_id}: _product_id {$old_id} → {$new_id}." );
+            }
+        }
+
+        // Advance or close the transient.
+        $is_last = count( $order_ids ) < $batch_size;
+        if ( $is_last ) {
+            delete_transient( 'octowoo_repair_order_page' );
+        } else {
+            set_transient( 'octowoo_repair_order_page', $page + 1, HOUR_IN_SECONDS );
+        }
+
+        $logger->flush();
+
+        wp_send_json_success( [
+            'done'      => $is_last,
+            'relinked'  => $relinked,
+            'processed' => $page * $batch_size,
+            /* translators: 1: batch number 2: items re-linked */
+            'message'   => sprintf(
+                __( 'Batch %1$d complete. Re-linked %2$d order item(s) in this batch.', 'octowoo' ),
+                $page,
+                $relinked
+            ),
+        ] );
     }
 
     /**
@@ -1024,11 +1248,12 @@ class AjaxHandler {
         delete_option( 'octowoo_run_started_at' );
         delete_option( 'octowoo_db_lock' );
 
-        // Invalidate the category topological-sort transient so the next run
-        // re-builds the sorted list from scratch.
+        // Invalidate category transients (both old and new key names) so the
+        // next run re-builds the sorted list from scratch.
         $reset_config = AdminPage::getConfig();
-        $oc_pfx       = $reset_config['oc_db']['prefix'] ?? 'oc_';
-        delete_transient( 'octowoo_cat_topo_' . md5( $oc_pfx ) );
+        $oc_pfx       = $reset_config['db']['prefix'] ?? 'oc_';
+        delete_transient( 'octowoo_cat_topo_' . md5( $oc_pfx ) ); // legacy key
+        delete_transient( 'octowoo_cat_all_'  . md5( $oc_pfx ) ); // current key
 
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),
@@ -1095,10 +1320,18 @@ class AjaxHandler {
         // phpcs:ignore WordPress.Security.NonceVerification
         $clear_orders_bg_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
         if ( $migrators_raw !== '' ) {
-            $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
-            $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            $allowed    = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
+            $selected   = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            // Respect saved Settings: a migrator disabled there can never be re-enabled
+            // by the Migration-tab UI checkboxes alone — the user must save Settings first.
+            $saved_cfg  = AdminPage::getConfig();
+            $saved_mig  = is_array( $saved_cfg['migration'] ?? null ) ? $saved_cfg['migration'] : [];
             foreach ( $allowed as $key ) {
-                $overrides['migration'][ 'run_' . $key ] = in_array( $key, $selected, true );
+                $in_ui       = in_array( $key, $selected, true );
+                $in_settings = $key === 'multilingual'
+                    ? ! empty( $saved_cfg['multilingual']['enabled'] )
+                    : ( isset( $saved_mig[ 'run_' . $key ] ) ? (bool) $saved_mig[ 'run_' . $key ] : true );
+                $overrides['migration'][ 'run_' . $key ] = $in_ui && $in_settings;
             }
         }
 

@@ -268,9 +268,10 @@ class InformationMigrator extends AbstractMigrator {
             return;
         }
 
-        update_post_meta( $post_id, '_octowoo_title_ar',    $this->sanitizeText( $desc['title']            ?? '' ) );
-        update_post_meta( $post_id, '_octowoo_desc_ar',     $this->cleanDescription( $desc['description']  ?? '' ) );
-        update_post_meta( $post_id, '_octowoo_metatitle_ar',$this->sanitizeText( $desc['meta_title']       ?? '' ) );
-        update_post_meta( $post_id, '_octowoo_metadesc_ar', $this->sanitizeText( $desc['meta_description'] ?? '' ) );
+        $sfx = $this->secLangSuffix();
+        update_post_meta( $post_id, '_octowoo_title' . $sfx,    $this->sanitizeText( $desc['title']            ?? '' ) );
+        update_post_meta( $post_id, '_octowoo_desc' . $sfx,     $this->cleanDescription( $desc['description']  ?? '' ) );
+        update_post_meta( $post_id, '_octowoo_metatitle' . $sfx,$this->sanitizeText( $desc['meta_title']       ?? '' ) );
+        update_post_meta( $post_id, '_octowoo_metadesc' . $sfx, $this->sanitizeText( $desc['meta_description'] ?? '' ) );
     }
 }

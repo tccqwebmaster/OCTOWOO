@@ -80,6 +80,11 @@ class BackgroundProcessor {
         // Fresh (re)enqueue should clear stale pause/skip/abort runtime flags.
         MigrationManager::clearRuntimeSignals( $run_id );
 
+        // Clear the image-import circuit-breaker transient so a fresh run
+        // always re-attempts remote image downloads even if the last run
+        // tripped the breaker (e.g. source server was temporarily down).
+        delete_transient( 'octowoo_img_remote_down' );
+
         // Persist overrides so each AS callback can rebuild the same manager.
         set_transient( self::transientKey( $run_id ), $overrides, self::TRANSIENT_TTL );
 

@@ -99,9 +99,9 @@ class CheckpointManager {
      *
      * Three conditions each independently clear the lock:
      *  A. All checkpoint rows are in a terminal state (aborted/completed/failed).
-     *  B. Checkpoint rows exist but the most-recently updated row is > 2 hours
+     *  B. Checkpoint rows exist but the most-recently updated row is > 15 min
      *     old — the PHP / AS process silently died mid-batch.
-     *  C. No checkpoint rows at all AND 'octowoo_run_started_at' is > 2 hours
+     *  C. No checkpoint rows at all AND 'octowoo_run_started_at' is > 15 min
      *     ago — the run was initialised but never actually executed a chunk.
      */
     public static function getActiveRunId(): ?string {
@@ -145,17 +145,17 @@ class CheckpointManager {
                 )
             );
 
-            if ( $last_updated && ( time() - (int) strtotime( $last_updated ) ) > 7200 ) {
-                // No batch has run for 2+ hours — process is dead.
+            if ( $last_updated && ( time() - (int) strtotime( $last_updated ) ) > 900 ) {
+                // No batch has run for 15+ min — process is dead.
                 delete_option( 'octowoo_active_run_id' );
                 $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
                 return null;
             }
         } else {
             // Condition C: run was just created but no migrators were inserted yet.
-            // If started_at is > 2 hours ago the run never actually kicked off.
+            // If started_at is > 15 min ago the run never actually kicked off.
             $started_at = (string) get_option( 'octowoo_run_started_at', '' );
-            if ( $started_at && ( time() - (int) strtotime( $started_at ) ) > 7200 ) {
+            if ( $started_at && ( time() - (int) strtotime( $started_at ) ) > 900 ) {
                 delete_option( 'octowoo_active_run_id' );
                 return null;
             }

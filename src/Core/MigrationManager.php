@@ -545,7 +545,16 @@ class MigrationManager {
             $saved = [];
         }
 
-        return $this->deepMerge( $this->deepMerge( $defaults, $saved ), $overrides );
+        $merged = $this->deepMerge( $this->deepMerge( $defaults, $saved ), $overrides );
+
+        // Bridge: multilingual.enabled → migration.run_multilingual.
+        // Prevents the multilingual migrator from running silently when the user
+        // has not enabled it in Settings and no explicit AJAX override was sent.
+        if ( ! isset( $overrides['migration']['run_multilingual'] ) ) {
+            $merged['migration']['run_multilingual'] = ! empty( $merged['multilingual']['enabled'] );
+        }
+
+        return $merged;
     }
 
     /**

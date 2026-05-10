@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.41
+Stable tag: 2.4.68
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -184,7 +184,27 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 
 == Changelog ==
 
-= 2.4.25 =
+= 2.4.68 =
+* **Added:** SKU/model fallback for order-item product linking. `addOrderItem()` now stores `_octowoo_oc_product_model` (the OpenCart model/SKU) on every order line item and uses it as a fallback when the id_map lookup fails or the originally-linked WC product has been deleted and re-migrated.
+* **Added:** `relinkOrderItems()` — when an order is re-processed with `on_duplicate=update`, all existing order items are automatically re-linked to the current WC product IDs (via id_map → SKU fallback), keeping `_product_id` accurate after product re-migrations.
+* **Added:** `octowoo_repair_order_items` AJAX action and **Repair Order Items** admin button. Scans all OctoWoo-migrated orders in batches, resolves each line item's current WC product via id_map or SKU match, and updates `_product_id` directly — fixing orders that show revenue but broken product links after products were deleted and re-migrated.
+
+= 2.4.67 =
+* **Fixed:** Already-migrated (existing) products were not getting their WooCommerce category assignments updated when the Products migration step was re-run. `updateProduct()` now calls `assignCategories()` so re-running the Products step automatically corrects any product → category relationship based on the current `oc_product_to_category` data and the migrated category checkpoint map.
+
+= 2.4.66 =
+* **Code quality:** Renamed all internal `_ar`-suffixed variables (`$name_ar`, `$desc_ar`, `$short_ar`, `$metatitle_ar`, `$metadesc_ar`, `$metakw_ar`), the `$ar_tags_cache` property, the `prefetchArTagsForProducts()` method (now `prefetchSecLangTagsForProducts()`), cache array keys (`'ar'`/`'en'` → `'sec'`/`'pri'`), and all Arabic-specific comments to use generic primary/secondary-language terminology. Also renamed `fixArabicTermParents()` → `fixSecLangTermParents()`. No functional changes — the plugin was already fully language-agnostic at runtime via `secLangSuffix()` and config-driven locale values.
+
+= 2.4.65 =
+* **Fixed (critical):** English categories showing as "English (0)" after running the Multilingual step — all 290 categories were reclassified as Arabic by WPML. Root cause: `wpml_set_element_language_details` was called with `source_language_code = 'en'` for the English primary term/post, which WPML interprets as "this English item was translated FROM English" (i.e., it's a translation, not the original), stripping it from the English language filter. Fix: `source_language_code` is now always `null` for primary-language items (the original) and `$primary_lang` only for secondary-language translations.
+* **Fixed:** Fallback term query (used when id_map is empty) was including WPML-registered secondary-language terms alongside primary terms. This caused Arabic translation terms to be treated as primary English terms, generating cascading orphan Arabic-of-Arabic translations. The query now excludes any term already registered in WPML as a non-primary language.
+
+= 2.4.64 =
+* **Fixed:** Featured images (English and Arabic) not appearing on migrated products. `findAttachmentByOcPath()` now filters by `post_type = 'attachment'` so it can never return a product post ID instead of a media-library attachment — which was silently setting `_thumbnail_id` to the wrong value.
+* **Fixed:** When the Images step was run separately before Products, `importByOcPath()` skipped the attachment-cache lookup due to the `run_images` gate being checked first. Cache lookup now always runs before the gate, so already-imported attachments are always usable regardless of `run_images` setting.
+* **Improved:** Secondary-language meta keys (e.g. `_octowoo_name_ar`) are now derived from `multilingual.secondary_locale` config instead of being hardcoded to Arabic — any configured language is supported automatically.
+
+= 2.4.63 =
 * **Fixed:** Product/category descriptions now decode escaped HTML entities before cleaning, preventing literal `<p>`/`<h1>` tags from appearing on storefront.
 * **Fixed:** Product secondary-language selection now falls back to the first non-primary language row when configured secondary language ID is missing.
 * **Improved:** Product/category names are now normalized to plain text (decode entities + strip tags), preventing HTML fragments from leaking into titles.

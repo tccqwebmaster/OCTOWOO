@@ -35,13 +35,15 @@ class SeoMigrator extends AbstractMigrator {
     // ── Entry point ───────────────────────────────────────────────────────────
 
     public function migrate(): array {
-        $pfx       = $this->pfx();
-        $resume_id = $this->checkpoint->getLastId( self::KEY );
+        $pfx        = $this->pfx();
+        $resume_id  = $this->checkpoint->getLastId( self::KEY );
         $demo_limit = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
+        $batch_size = max( 1, (int) ( $this->config['migration']['batch_size'] ?? 50 ) );
+        $chunk_mode = $this->batch->isChunkMode();
 
         if ( $resume_id === PHP_INT_MAX ) {
             $this->logger->info( '[seo] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
         // Check if oc_seo_url table exists.
@@ -56,54 +58,124 @@ class SeoMigrator extends AbstractMigrator {
             $this->checkpoint->init( self::KEY, 0 );
             $this->checkpoint->start( self::KEY );
             $this->checkpoint->complete( self::KEY );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
-        $stats = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        $stats = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => false ];
 
-        // Fetch all SEO URL rows for the primary language.
-        $rows = $this->oc->fetchAll(
-            "SELECT seo_url_id, query, keyword
-             FROM `{$pfx}seo_url`
-             WHERE store_id = 0 AND language_id = ?
-               AND keyword != ''
-             ORDER BY seo_url_id ASC",
+        // Count total rows (re-queried each chunk so resumable even after table changes).
+        $total = (int) $this->oc->fetchColumn(
+            "SELECT COUNT(*) FROM `{$pfx}seo_url`
+             WHERE store_id = 0 AND language_id = ? AND keyword != ''",
             [ $this->langId() ]
         );
 
-                if ( $demo_limit > 0 && count( $rows ) > $demo_limit ) {
-                        $rows = array_slice( $rows, 0, $demo_limit );
-                        $this->logger->info( "[seo] Demo limit active: processing first {$demo_limit} rows." );
+        if ( $demo_limit > 0 ) {
+            $total = min( $total, $demo_limit );
+        }
+
+        // Offset from checkpoint.
+        $offset = $this->checkpoint->getProcessedCount( self::KEY );
+
+        // First chunk: initialise checkpoint row.
+        if ( $offset === 0 ) {
+            $this->checkpoint->init( self::KEY, $total );
+            $this->checkpoint->start( self::KEY );
+            $this->logger->info( "[seo] Starting SEO migration: total={$total}, chunk_mode=" . ( $chunk_mode ? 'yes' : 'no' ) );
+        }
+
+        if ( $offset >= $total ) {
+            $this->checkpoint->complete( self::KEY );
+            $stats['is_done'] = true;
+            return $stats;
+        }
+
+        // In chunk mode process one page; in full (sync / CLI) mode loop to completion.
+        $single_pass = $chunk_mode;
+
+        while ( $offset < $total ) {
+            $limit = $single_pass ? min( $batch_size, $total - $offset ) : min( $batch_size, $total - $offset );
+
+            $rows = $this->oc->fetchAll(
+                "SELECT seo_url_id, query, keyword
+                 FROM `{$pfx}seo_url`
+                 WHERE store_id = 0 AND language_id = ?
+                   AND keyword != ''
+                 ORDER BY seo_url_id ASC
+                 LIMIT {$limit} OFFSET {$offset}",
+                [ $this->langId() ]
+            );
+
+            if ( empty( $rows ) ) {
+                break;
+            }
+
+            $last_id    = 0;
+            $batch_done = 0;
+
+            foreach ( $rows as $row ) {
+                $last_id = max( $last_id, (int) ( $row['seo_url_id'] ?? 0 ) );
+                $result  = $this->processSeoRow( $row );
+                if ( $result === true ) {
+                    $stats['processed']++;
+                } elseif ( $result === false ) {
+                    $stats['failed']++;
+                } else {
+                    $stats['skipped']++;
                 }
+                $batch_done++;
+            }
 
-        $this->checkpoint->init( self::KEY, count( $rows ) );
-        $this->checkpoint->start( self::KEY );
+            $offset += $batch_done;
+            $this->checkpoint->update( self::KEY, $last_id, $batch_done );
 
-                $last_id = 0;
+            // Persist wp_options redirects after every chunk so partial progress
+            // is never lost. The htaccess block is only (re-)written on the final
+            // chunk so we don't thrash the filesystem on every batch.
+            $this->persistRedirectsWpOnly();
 
-        foreach ( $rows as $row ) {
-            $last_id = max( $last_id, (int) ( $row['seo_url_id'] ?? 0 ) );
-            $result = $this->processSeoRow( $row );
-            if ( $result === true ) {
-                $stats['processed']++;
-            } elseif ( $result === false ) {
-                $stats['failed']++;
-            } else {
-                $stats['skipped']++;
+            if ( $single_pass ) {
+                break;
             }
         }
 
-        $this->checkpoint->update( self::KEY, $last_id, count( $rows ) );
+        if ( $offset >= $total ) {
+            // Final chunk: reload ALL accumulated redirects from wp_options (every
+            // previous chunk persisted its rules there via persistRedirectsWpOnly())
+            // and merge with the current chunk before writing .htaccess.
+            // Without this, only the last chunk's rules appear in the htaccess block.
+            $all_saved = get_option( 'octowoo_redirects', [] );
+            if ( is_array( $all_saved ) && ! empty( $all_saved ) ) {
+                // Current chunk rules take precedence (overwrite any stale entries).
+                $this->redirect_map = array_merge( $all_saved, $this->redirect_map );
+            }
 
-        // Write all collected redirects to persistent storage.
-        $this->persistRedirects();
+            $this->writeHtaccessRedirects();
 
-        $this->checkpoint->complete( self::KEY );
-        $this->logger->success(
-            "[seo] Done. processed={$stats['processed']}, skipped={$stats['skipped']}, failed={$stats['failed']}"
-        );
+            $this->checkpoint->complete( self::KEY );
+            $this->logger->success(
+                "[seo] Done. processed={$stats['processed']}, skipped={$stats['skipped']}, failed={$stats['failed']}"
+            );
+            $stats['is_done'] = true;
+        }
 
         return $stats;
+    }
+
+    /**
+     * Persist only the wp_options redirect map (safe to call on every chunk).
+     * .htaccess is written separately on the final chunk.
+     */
+    private function persistRedirectsWpOnly(): void {
+        if ( empty( $this->redirect_map ) ) {
+            return;
+        }
+
+        if ( $this->config['seo']['use_wp_redirects'] ?? true ) {
+            $this->saveWpRedirects();
+        }
+
+        $this->logger->debug( '[seo] Persisted ' . count( $this->redirect_map ) . ' redirect rules to wp_options.' );
     }
 
     // ── Per-row processing ────────────────────────────────────────────────────
@@ -230,6 +302,7 @@ class SeoMigrator extends AbstractMigrator {
 
     /**
      * Persist the collected redirect map using both configured strategies.
+     * Called once at the very end of the migration (after all chunks).
      */
     private function persistRedirects(): void {
         if ( empty( $this->redirect_map ) ) {

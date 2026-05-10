@@ -111,40 +111,41 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <?php
                 $ow_entity_rows = [
                     [
-                        'label' => __( 'Products', 'octowoo' ), 'value' => 'products', 'scan_key' => 'products',
+                        'label' => __( 'Products', 'octowoo' ), 'value' => 'products', 'scan_key' => 'products', 'run_key' => 'run_products',
                         'children' => [
-                            [ 'label' => __( 'Reviews', 'octowoo' ),           'value' => 'reviews',  'scan_key' => 'reviews' ],
-                            [ 'label' => __( 'Product Bundles *', 'octowoo' ),  'value' => 'bundles',  'scan_key' => '' ],
+                            [ 'label' => __( 'Related Products', 'octowoo' ),  'value' => 'related',  'scan_key' => '',        'run_key' => 'run_related' ],
+                            [ 'label' => __( 'Reviews', 'octowoo' ),           'value' => 'reviews',  'scan_key' => 'reviews', 'run_key' => 'run_reviews' ],
+                            [ 'label' => __( 'Product Bundles *', 'octowoo' ),  'value' => 'bundles',  'scan_key' => '',        'run_key' => 'run_bundles' ],
                         ],
                     ],
                     [
-                        'label' => __( 'Customers', 'octowoo' ), 'value' => 'customers', 'scan_key' => 'customers',
+                        'label' => __( 'Customers', 'octowoo' ), 'value' => 'customers', 'scan_key' => 'customers', 'run_key' => 'run_customers',
                         'children' => [
-                            [ 'label' => __( 'Orders', 'octowoo' ), 'value' => 'orders', 'scan_key' => 'orders' ],
+                            [ 'label' => __( 'Orders', 'octowoo' ), 'value' => 'orders', 'scan_key' => 'orders', 'run_key' => 'run_orders' ],
                         ],
                     ],
                     [
-                        'label' => __( 'Categories', 'octowoo' ), 'value' => 'categories', 'scan_key' => 'categories',
+                        'label' => __( 'Categories', 'octowoo' ), 'value' => 'categories', 'scan_key' => 'categories', 'run_key' => 'run_categories',
                         'children' => [],
                     ],
                     [
-                        'label' => __( 'CMS Pages', 'octowoo' ), 'value' => 'information', 'scan_key' => 'information',
+                        'label' => __( 'CMS Pages', 'octowoo' ), 'value' => 'information', 'scan_key' => 'information', 'run_key' => 'run_information',
                         'children' => [],
                     ],
                     [
-                        'label' => __( 'Manufacturers / Brands', 'octowoo' ), 'value' => 'manufacturers', 'scan_key' => 'manufacturers',
+                        'label' => __( 'Manufacturers / Brands', 'octowoo' ), 'value' => 'manufacturers', 'scan_key' => 'manufacturers', 'run_key' => 'run_manufacturers',
                         'children' => [],
                     ],
                     [
-                        'label' => __( 'Coupons', 'octowoo' ), 'value' => 'coupons', 'scan_key' => 'coupons',
+                        'label' => __( 'Coupons', 'octowoo' ), 'value' => 'coupons', 'scan_key' => 'coupons', 'run_key' => 'run_coupons',
                         'children' => [],
                     ],
                     [
-                        'label' => __( 'Tax Classes', 'octowoo' ), 'value' => 'tax_classes', 'scan_key' => 'tax_classes',
+                        'label' => __( 'Tax Classes', 'octowoo' ), 'value' => 'tax_classes', 'scan_key' => 'tax_classes', 'run_key' => 'run_tax',
                         'children' => [],
                     ],
                     [
-                        'label' => __( 'Tags &amp; Filters', 'octowoo' ), 'value' => 'tags_filters', 'scan_key' => 'tags',
+                        'label' => __( 'Tags &amp; Filters', 'octowoo' ), 'value' => 'tags_filters', 'scan_key' => 'tags', 'run_key' => 'run_tags',
                         'children' => [],
                     ],
                 ];
@@ -160,19 +161,21 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                         $ow_badge = $ow_ent['scan_key']
                             ? ' <span class="ow-count-badge" data-scan="' . esc_attr( $ow_ent['scan_key'] ) . '" style="display:none;background:#2271b1;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:normal;"></span>'
                             : '';
+                        $ow_chk = ( $config['migration'][ $ow_ent['run_key'] ?? '' ] ?? true ) ? ' checked' : '';
                         printf(
                             '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">' .
-                            '<input type="checkbox" class="ow-entity-chk" value="%s" checked> %s%s</label>',
-                            esc_attr( $ow_ent['value'] ), esc_html( $ow_ent['label'] ), $ow_badge
+                            '<input type="checkbox" class="ow-entity-chk" value="%s"%s> %s%s</label>',
+                            esc_attr( $ow_ent['value'] ), $ow_chk, esc_html( $ow_ent['label'] ), $ow_badge
                         );
                         foreach ( $ow_ent['children'] as $ow_ch ) {
                             $ow_ch_badge = $ow_ch['scan_key']
                                 ? ' <span class="ow-count-badge" data-scan="' . esc_attr( $ow_ch['scan_key'] ) . '" style="display:none;background:#2271b1;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:normal;"></span>'
                                 : '';
+                            $ow_ch_chk = ( $config['migration'][ $ow_ch['run_key'] ?? '' ] ?? true ) ? ' checked' : '';
                             printf(
                                 '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin:6px 0 0 26px;">' .
-                                '<input type="checkbox" class="ow-entity-chk" value="%s" checked> %s%s</label>',
-                                esc_attr( $ow_ch['value'] ), esc_html( $ow_ch['label'] ), $ow_ch_badge
+                                '<input type="checkbox" class="ow-entity-chk" value="%s"%s> %s%s</label>',
+                                esc_attr( $ow_ch['value'] ), $ow_ch_chk, esc_html( $ow_ch['label'] ), $ow_ch_badge
                             );
                         }
                         echo '</div>';
@@ -233,49 +236,42 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
             $ow_opts = [
                 [
                     'id'      => 'ow-opt-images',
-                    'checked' => true,
+                    'checked' => ! empty( $config['migration']['run_images'] ),
                     'icon'    => '🖼',
                     'label'   => __( 'Transfer images from Categories &amp; Product descriptions', 'octowoo' ),
                     'hint'    => __( 'Downloads product images from the OpenCart image folder into the WooCommerce media library.', 'octowoo' ),
                 ],
                 [
                     'id'      => 'ow-opt-downloads',
-                    'checked' => true,
+                    'checked' => ! empty( $config['migration']['run_downloads'] ),
                     'icon'    => '📦',
                     'label'   => __( 'Migrate downloadable products', 'octowoo' ),
                     'hint'    => __( 'Copies downloadable product files from OpenCart and attaches them to WooCommerce products. Disable if you have no downloadable products.', 'octowoo' ),
                 ],
                 [
                     'id'      => 'ow-opt-passwords',
-                    'checked' => true,
+                    'checked' => ! empty( $config['woocommerce']['migrate_oc_passwords'] ),
                     'icon'    => '🔑',
                     'label'   => __( "Migrate customers' passwords", 'octowoo' ),
                     'hint'    => __( 'Converts OpenCart password hashes so customers can log in on WooCommerce with the same password.', 'octowoo' ),
                 ],
                 [
                     'id'      => 'ow-opt-seo',
-                    'checked' => true,
+                    'checked' => ! empty( $config['migration']['run_seo'] ),
                     'icon'    => '🔗',
                     'label'   => __( 'Migrate categories &amp; products SEO URLs', 'octowoo' ),
                     'hint'    => __( 'Imports OpenCart SEO-friendly URLs as WooCommerce post slugs (Yoast meta also copied).', 'octowoo' ),
                 ],
                 [
                     'id'      => 'ow-opt-redirects',
-                    'checked' => false,
+                    'checked' => ! empty( $config['seo']['write_htaccess'] ),
                     'icon'    => '↪',
                     'label'   => __( 'Create 301 redirects after migration', 'octowoo' ),
                     'hint'    => __( 'Writes redirect rules into .htaccess so old OpenCart URLs (e.g. /index.php?route=product/product&product_id=12) forward to the new WooCommerce URLs.', 'octowoo' ),
                 ],
                 [
-                    'id'      => 'ow-opt-strip-html',
-                    'checked' => false,
-                    'icon'    => '✂',
-                    'label'   => __( 'Strip HTML from category &amp; product names', 'octowoo' ),
-                    'hint'    => __( 'Removes &lt;b&gt;, &lt;span&gt; and other HTML tags that some OpenCart themes inject into names.', 'octowoo' ),
-                ],
-                [
                     'id'      => 'ow-opt-multilingual',
-                    'checked' => false,
+                    'checked' => ! empty( $config['multilingual']['enabled'] ),
                     'icon'    => '🌐',
                     'label'   => __( 'Multilingual data (WPML / Polylang)', 'octowoo' ),
                     'hint'    => __( 'Runs a translation pass AFTER all primary migrators finish. Creates Arabic (or secondary language) posts/terms and links them via WPML/Polylang. Requires WPML or Polylang to be active.', 'octowoo' ),
@@ -327,7 +323,13 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary">
                     🌐 <?php esc_html_e( 'Multilingual Recovery', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ! $active_run ? 'disabled' : ''; ?>>
+                <button type="button" id="ow-btn-cleanup-ml-terms" class="ow-btn ow-btn-secondary">
+                    🧹 <?php esc_html_e( 'Fix Orphan Categories', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-repair-order-items" class="ow-btn ow-btn-secondary">
+                    🔗 <?php esc_html_e( 'Repair Order Items', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>>
                     ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
                 </button>
                 <button type="button" id="ow-btn-abort" class="ow-btn ow-btn-danger" disabled>
@@ -362,7 +364,7 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                         <button type="button" id="ow-btn-start-bg" class="ow-btn ow-btn-secondary">
                             ⚙ <?php esc_html_e( 'Start in Background', 'octowoo' ); ?>
                         </button>
-                        <button type="button" id="ow-btn-resume-bg" class="ow-btn ow-btn-secondary" <?php echo ! $active_run ? 'disabled' : ''; ?>>
+                        <button type="button" id="ow-btn-resume-bg" class="ow-btn ow-btn-secondary" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>>
                             ⚙ <?php esc_html_e( 'Resume in Background', 'octowoo' ); ?>
                         </button>
                         <button type="button" id="ow-btn-cancel-bg" class="ow-btn ow-btn-danger" disabled>
@@ -380,7 +382,13 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
             <p class="ow-form-hint" style="margin-top:12px;">
                 WP-CLI: <code>wp octowoo migrate</code> &nbsp;|&nbsp;
                 <code>wp octowoo migrate --resume</code> &nbsp;|&nbsp;
-                <code>wp octowoo migrate --dry-run</code>
+                <code>wp octowoo migrate --dry-run</code> &nbsp;|&nbsp;
+                <code>wp octowoo migrate --migrators=categories,products</code><br>
+                <code>wp octowoo status</code> &nbsp;|&nbsp;
+                <code>wp octowoo logs</code> &nbsp;|&nbsp;
+                <code>wp octowoo logs --level=ERROR</code> &nbsp;|&nbsp;
+                <code>wp octowoo reset</code> &nbsp;|&nbsp;
+                <code>wp octowoo test-connection</code>
             </p>
         </div>
 

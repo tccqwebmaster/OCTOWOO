@@ -88,6 +88,15 @@ abstract class AbstractMigrator {
     }
 
     /**
+     * Return the meta-key suffix used to store secondary-language data,
+     * derived from the configured secondary_locale (e.g. '_ar', '_fr', '_de').
+     * All migrators write and WpmlIntegration reads with this same suffix.
+     */
+    protected function secLangSuffix(): string {
+        return '_' . ( $this->config['multilingual']['secondary_locale'] ?? 'ar' );
+    }
+
+    /**
      * Return the configured WPML/Polylang primary language code (e.g. 'en').
      */
     protected function primaryLocale(): string {

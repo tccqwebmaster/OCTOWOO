@@ -71,6 +71,16 @@ class WpmlIntegration extends AbstractMigrator {
     /** Lazy-initialised ImageMigrator used for image re-import fallback. */
     private ?ImageMigrator $image_migrator = null;
 
+    /**
+     * Pre-fetched secondary + primary language tags, keyed by OC product_id.
+     * Populated by prefetchSecLangTagsForProducts() once per chunk to avoid N+1 OC DB queries.
+     *
+     * Format: [ oc_id => [ 'sec' => 'tag1,tag2', 'pri' => 'tag1,tag2' ] ]
+     *
+     * @var array<int, array{sec: string, pri: string}>
+     */
+    private array $sec_tags_cache = [];
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
@@ -79,15 +89,15 @@ class WpmlIntegration extends AbstractMigrator {
 
         if ( ! $settings_enabled && ! $run_enabled ) {
             $this->logger->info( '[multilingual] Disabled in config – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
         // Guard against re-execution when a prior chunk already completed this step.
-        // In update mode we always re-run so images, Arabic tags, and brands are
-        // re-copied to existing Arabic translations without requiring Reset Progress.
+        // In update mode we always re-run so images, secondary-language tags, and brands are
+        // re-copied to existing secondary-language translations without requiring Reset Progress.
         if ( $this->onDuplicate() !== 'update' && $this->checkpoint->isCompleted( self::KEY ) ) {
             $this->logger->info( '[multilingual] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
         $this->primary_lang   = $this->config['multilingual']['primary_locale']   ?? 'en';
@@ -99,61 +109,490 @@ class WpmlIntegration extends AbstractMigrator {
 
         if ( $this->adapter === 'none' ) {
             $this->logger->warning( '[multilingual] Neither WPML nor Polylang is active. Skipping translation pass.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
         $this->logger->info( "[multilingual] Using adapter: {$this->adapter}. Primary: {$this->primary_lang} | Secondary: {$this->secondary_lang}" );
+
+        $chunk_mode  = $this->batch->isChunkMode();
+        $batch_size  = max( 1, (int) ( $this->config['migration']['batch_size'] ?? 20 ) );
+        $demo_limit  = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
+
+        global $wpdb;
+
+        // How many product rows have been translated so far (used as SQL OFFSET).
+        $product_offset = $this->checkpoint->getProcessedCount( self::KEY );
+
+        // Total products to translate — query wp_posts directly so Multilingual
+        // Recovery works even when the id_map was cleared (e.g. after Reset Progress).
+        //
+        // We exclude secondary-language copies using NOT EXISTS on the
+        // '_octowoo_translation_of' postmeta that our migrator sets on every
+        // translated post it creates.  This is faster than JOINing on
+        // icl_translations (which may be unindexed for our query) and works for
+        // both WPML and Polylang.  It also preserves correct OFFSET-based
+        // pagination because the meta is set on the TRANSLATED posts, not the
+        // originals, so the primary-language result set is stable across chunks.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $product_total = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'product'
+               AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm_x
+                   WHERE pm_x.post_id  = p.ID
+                     AND pm_x.meta_key = '_octowoo_translation_of'
+               )"
+        );
+        if ( $demo_limit > 0 ) {
+            $product_total = min( $product_total, $demo_limit );
+        }
 
         $processed = 0;
         $skipped   = 0;
         $failed    = 0;
 
-        // Pre-fetch Arabic SEO keywords from oc_seo_url so we can register
-        // old-OC-path → new-WC-Arabic-URL redirects as each translation is linked.
-        $sec_seo_map = $this->fetchSecondaryLangSeoMap();
+        // ── Terms phase: chunked translation of categories + brands ────────────
+        // Categories and brand terms MUST be done before products so that
+        // copyProductDataToTranslation() can resolve secondary-language term IDs.
+        //
+        // Because large stores can have 200+ categories and each WPML term
+        // operation does several DB inserts, we process terms in batches of
+        // $batch_size per chunk (same as products) and track progress in a
+        // transient keyed by run_id.  Each chunk returns early (is_done=false)
+        // until all taxonomies are done, then products start on the next chunk.
+        //
+        // Transient structure:
+        //   'cat_off'    int|'done'  offset into category rows
+        //   'brand_off'  int|'done'  offset into brand rows (or 'done' when no brand tax)
+        //   'done'       bool        true once both taxonomies are finished
+        //   'inited'     bool        true once checkpoint->init() was called
+        $run_id_key    = $this->checkpoint->getRunId();
+        $terms_key     = 'octowoo_ml_terms_' . $run_id_key;
+        $terms_state   = get_transient( $terms_key );
+        $brand_tax     = $this->detectActiveBrandTaxonomy();
 
-        // ── 1. Translate taxonomy terms FIRST ────────────────────────────────
-        // Arabic category and brand terms must exist before products are
-        // translated so copyProductDataToTranslation() can resolve them.
-
-        // Translate product categories.
-        $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
-        [ $p, $s, $f ] = $this->translateTerms( 'product_cat', $cat_seo_map, 'category' );
-        $processed += $p; $skipped += $s; $failed += $f;
-
-        // Translate brand terms so Arabic products can be linked to Arabic brand term IDs.
-        $brand_tax = $this->detectActiveBrandTaxonomy();
-        if ( $brand_tax !== '' ) {
-            [ $p, $s, $f ] = $this->translateTerms( $brand_tax, [], 'manufacturer' );
-            $processed += $p; $skipped += $s; $failed += $f;
+        if ( ! is_array( $terms_state ) ) {
+            $terms_state = [
+                'cat_off'   => 0,
+                'brand_off' => ( $brand_tax !== '' ) ? 0 : 'done',
+                'done'      => false,
+                'inited'    => false,
+            ];
         }
 
-        // ── 2. Translate posts (now that terms exist) ────────────────────────
+        if ( $product_offset === 0 && ! $terms_state['done'] ) {
 
-        // Translate products.
-        [ $p, $s, $f ] = $this->translatePosts( 'product', '_octowoo_name_ar', '_octowoo_description_ar', $sec_seo_map );
-        $processed += $p; $skipped += $s; $failed += $f;
+            if ( ! $terms_state['inited'] ) {
+                $this->checkpoint->init( self::KEY, $product_total );
+                $this->checkpoint->start( self::KEY );
+                $terms_state['inited'] = true;
+            }
 
-        // Translate pages (from InformationMigrator).
-        [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title_ar', '_octowoo_desc_ar' );
-        $processed += $p; $skipped += $s; $failed += $f;
+            // ── Category batch ────────────────────────────────────────────
+            if ( $terms_state['cat_off'] !== 'done' ) {
+                $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
+                [ $p, $s, $f, $cat_has_more ] = $this->translateTerms(
+                    'product_cat', $cat_seo_map, 'category',
+                    (int) $terms_state['cat_off'], $batch_size
+                );
+                $processed += $p; $skipped += $s; $failed += $f;
 
-        $this->logger->info( "[multilingual] Done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
+                if ( $cat_has_more ) {
+                    $terms_state['cat_off'] = (int) $terms_state['cat_off'] + $batch_size;
+                    set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                    $this->logger->info( "[multilingual] Categories chunk done (offset={$terms_state['cat_off']}). More categories remain." );
+                    return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
+                }
+                $terms_state['cat_off'] = 'done';
+                $this->logger->info( '[multilingual] Categories translation complete.' );
+            }
 
-        // Flush WordPress rewrite rules so all newly created/updated term slugs
-        // (Arabic categories, tags, brands) are immediately routable. Without this,
-        // Arabic category and tag archive URLs return 404 until an admin visits
-        // Settings → Permalinks.
-        flush_rewrite_rules( false );
+            // ── Brand batch ───────────────────────────────────────────────
+            if ( $brand_tax !== '' && $terms_state['brand_off'] !== 'done' ) {
+                [ $p, $s, $f, $brand_has_more ] = $this->translateTerms(
+                    $brand_tax, [], 'manufacturer',
+                    (int) $terms_state['brand_off'], $batch_size
+                );
+                $processed += $p; $skipped += $s; $failed += $f;
 
-        return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed ];
+                if ( $brand_has_more ) {
+                    $terms_state['brand_off'] = (int) $terms_state['brand_off'] + $batch_size;
+                    set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                    $this->logger->info( "[multilingual] Brands chunk done (offset={$terms_state['brand_off']}). More brands remain." );
+                    return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
+                }
+                $terms_state['brand_off'] = 'done';
+                $this->logger->info( '[multilingual] Brands translation complete.' );
+            }
+
+            // All terms done — next chunk will start products.
+            $terms_state['done'] = true;
+            set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+            $this->logger->info( "[multilingual] All terms done. Next chunk starts products: total={$product_total}, batch_size={$batch_size}" );
+            return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
+        }
+
+        // ── Translate a batch of products ─────────────────────────────────────
+        if ( $product_total > 0 ) {
+            $sec_seo_map = $this->fetchSecondaryLangSeoMap();
+            $fetch_limit = $chunk_mode ? $batch_size : $product_total;
+
+            // Fetch products directly from wp_posts with a LEFT JOIN on _octowoo_oc_id.
+            // Using wp_posts (not id_map) ensures ALL products are translated,
+            // even when id_map was cleared by Reset Progress.
+            // NOT EXISTS on '_octowoo_translation_of' excludes secondary-language copies
+            // that our migrator created, so we only process primary-language originals.
+            // This is stable across chunks (meta is on translations, not originals).
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $product_rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT p.ID AS wc_id, COALESCE(pm.meta_value, 0) AS oc_id
+                     FROM {$wpdb->posts} p
+                     LEFT JOIN {$wpdb->postmeta} pm
+                         ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
+                     WHERE p.post_type   = 'product'
+                       AND p.post_status IN ('publish','draft')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM {$wpdb->postmeta} pm_x
+                           WHERE pm_x.post_id  = p.ID
+                             AND pm_x.meta_key = '_octowoo_translation_of'
+                       )
+                     ORDER BY p.ID ASC
+                     LIMIT %d OFFSET %d",
+                    $fetch_limit,
+                    $product_offset
+                ),
+                ARRAY_A
+            );
+
+            if ( ! empty( $product_rows ) ) {
+                // Pre-fetch secondary + primary OC tags for this batch of products
+                // in a single query each to eliminate the N+1 OC DB query pattern
+                // previously found in copyProductDataToTranslation().
+                $batch_oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $product_rows ) );
+                if ( ! empty( $batch_oc_ids ) ) {
+                    $this->prefetchSecLangTagsForProducts( $batch_oc_ids );
+                }
+
+                [ $p, $s, $f ] = $this->translatePostsFromRows(
+                    $product_rows,
+                    'product',
+                    '_octowoo_name' . $this->secLangSuffix(),
+                    '_octowoo_description' . $this->secLangSuffix(),
+                    $sec_seo_map
+                );
+                $processed += $p; $skipped += $s; $failed += $f;
+
+                $batch_count    = count( $product_rows );
+                $new_offset     = $product_offset + $batch_count;
+                $this->checkpoint->update( self::KEY, $new_offset, $batch_count );
+                $product_offset = $new_offset;
+
+                $this->logger->info( "[multilingual] Products chunk done: offset={$product_offset}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
+            } else {
+                // No rows returned — treat as done.
+                $product_offset = $product_total;
+            }
+        }
+
+        // ── Last chunk: translate pages + complete ────────────────────────────
+        if ( $product_offset >= $product_total ) {
+            // Pages (InformationMigrator) are small; process them all at once.
+            [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $this->secLangSuffix(), '_octowoo_desc' . $this->secLangSuffix() );
+            $processed += $p; $skipped += $s; $failed += $f;
+
+            $this->logger->info( "[multilingual] All done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
+
+            // Flush WordPress rewrite rules so newly created/updated term slugs
+            // are immediately routable.
+            flush_rewrite_rules( false );
+
+            // Clean up the terms-phase transient — no longer needed after completion.
+            delete_transient( 'octowoo_ml_terms_' . $this->checkpoint->getRunId() );
+
+            $this->checkpoint->complete( self::KEY );
+            return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => true ];
+        }
+
+        // More product batches remain — signal the caller to schedule another chunk.
+        $this->flushSecondaryLangRedirects();
+        return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
     }
 
-    // ── Post translation pass ─────────────────────────────────────────────────
+    /**
+     * Pre-fetch secondary (secondary) and primary language tag strings from
+     * oc_product_description for a given set of OC product IDs.
+     *
+     * This eliminates the N+1 OC DB query pattern in copyProductDataToTranslation()
+     * where each product made two separate queries.  Instead we make two bulk queries
+     * per chunk and cache the results in $this->sec_tags_cache.
+     *
+     * @param int[] $oc_ids
+     */
 
     /**
-     * Iterate every WC product / WP page that was migrated, read secondary
-     * language meta and create a translated post linked to the primary.
+     * Rebuild the octowoo_id_map table for entity_type='product' from the
+     * _octowoo_oc_id postmeta stored on existing WC product posts.
+     *
+     * Called automatically when Multilingual Recovery is triggered but the
+     * id_map is empty (e.g. after Reset Progress). This allows translation to
+     * run without requiring a full product re-migration.
+     */
+    private function rebuildProductIdMapFromMeta(): void {
+        global $wpdb;
+
+        $this->logger->info( '[multilingual] id_map is empty – rebuilding product map from postmeta (_octowoo_oc_id).' );
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $rows = $wpdb->get_results(
+            "SELECT pm.meta_value AS oc_id, pm.post_id AS wc_id
+             FROM {$wpdb->postmeta} pm
+             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+             WHERE pm.meta_key = '_octowoo_oc_id'
+               AND p.post_type = 'product'
+               AND p.post_status != 'trash'",
+            ARRAY_A
+        );
+
+        if ( empty( $rows ) ) {
+            $this->logger->warning( '[multilingual] No WC products with _octowoo_oc_id meta found. Cannot rebuild id_map.' );
+            return;
+        }
+
+        $table   = $wpdb->prefix . 'octowoo_id_map';
+        $run_id  = 'rebuilt-' . gmdate( 'Ymd' );
+        $count   = 0;
+
+        foreach ( $rows as $row ) {
+            $oc_id = (int) $row['oc_id'];
+            $wc_id = (int) $row['wc_id'];
+            if ( $oc_id <= 0 || $wc_id <= 0 ) {
+                continue;
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->query(
+                $wpdb->prepare(
+                    "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id)
+                     VALUES ('product', %d, %d, %s)
+                     ON DUPLICATE KEY UPDATE wc_id = VALUES(wc_id), run_id = VALUES(run_id)",
+                    $oc_id,
+                    $wc_id,
+                    $run_id
+                )
+            );
+            $count++;
+        }
+
+        $this->logger->info( "[multilingual] Rebuilt id_map: {$count} product entries restored." );
+    }
+
+    private function prefetchSecLangTagsForProducts( array $oc_ids ): void {
+        if ( empty( $oc_ids ) ) {
+            return;
+        }
+
+        $sec_lang_id = $this->langIdSecondary();
+        $pri_lang_id = $this->langId();
+
+        if ( $sec_lang_id === 0 ) {
+            return;
+        }
+
+        $pfx         = $this->pfx();
+        $placeholders = implode( ',', array_fill( 0, count( $oc_ids ), '?' ) );
+
+        // Fetch secondary-language tags for the whole batch.
+        $sec_rows = $this->oc->fetchAll(
+            "SELECT product_id, `tag`
+             FROM `{$pfx}product_description`
+             WHERE product_id IN ({$placeholders}) AND language_id = ?",
+            array_merge( $oc_ids, [ $sec_lang_id ] )
+        );
+
+        // Fetch primary-language tags for the whole batch.
+        $pri_rows = $this->oc->fetchAll(
+            "SELECT product_id, `tag`
+             FROM `{$pfx}product_description`
+             WHERE product_id IN ({$placeholders}) AND language_id = ?",
+            array_merge( $oc_ids, [ $pri_lang_id ] )
+        );
+
+        // Index by product_id.
+        $sec_index = [];
+        foreach ( $sec_rows as $r ) {
+            $sec_index[ (int) $r['product_id'] ] = (string) $r['tag'];
+        }
+        $pri_index = [];
+        foreach ( $pri_rows as $r ) {
+            $pri_index[ (int) $r['product_id'] ] = (string) $r['tag'];
+        }
+
+        $this->sec_tags_cache = [];
+        foreach ( $oc_ids as $oc_id ) {
+            $this->sec_tags_cache[ $oc_id ] = [
+                'sec' => $sec_index[ $oc_id ] ?? '',
+                'pri' => $pri_index[ $oc_id ] ?? '',
+            ];
+        }
+    }
+
+    /**
+     * Translate posts for a pre-fetched set of id_map rows.
+     * Extracted from translatePosts() to support chunked (OFFSET-based) iteration.
+     *
+     * @param  array[] $rows             Rows from octowoo_id_map (oc_id, wc_id).
+     * @param  string  $post_type
+     * @param  string  $title_meta_key
+     * @param  string  $content_meta_key
+     * @param  array   $sec_seo_map      [ oc_id => slug ]
+     * @return int[]  [processed, skipped, failed]
+     */
+    private function translatePostsFromRows(
+        array  $rows,
+        string $post_type,
+        string $title_meta_key,
+        string $content_meta_key,
+        array  $sec_seo_map = []
+    ): array {
+        $processed = 0;
+        $skipped   = 0;
+        $failed    = 0;
+
+        foreach ( $rows as $row ) {
+            $primary_id = (int) $row['wc_id'];
+            $oc_id      = (int) $row['oc_id'];
+
+            $sec_title   = (string) get_post_meta( $primary_id, $title_meta_key,   true );
+            $sec_content = (string) get_post_meta( $primary_id, $content_meta_key, true );
+            $sec_excerpt = $post_type === 'product'
+                ? (string) get_post_meta( $primary_id, '_octowoo_short_description' . $this->secLangSuffix(), true )
+                : '';
+
+            $primary_post_raw = get_post( $primary_id );
+            if ( ! $primary_post_raw ) {
+                $failed++;
+                continue;
+            }
+
+            if ( $sec_title === '' ) {
+                $sec_title = $primary_post_raw->post_title;
+                $this->logger->debug( "[multilingual] No secondary-language title for {$post_type} #{$primary_id} – using primary title as fallback." );
+            }
+            if ( $sec_content === '' ) {
+                $sec_content = $primary_post_raw->post_content;
+            }
+            if ( $sec_excerpt === '' && $post_type === 'product' ) {
+                $sec_excerpt = $primary_post_raw->post_excerpt;
+            }
+
+            $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
+            if ( $existing_translation_id > 0 ) {
+                if ( $this->isDry() ) {
+                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$sec_title}" );
+                    $processed++;
+                    continue;
+                }
+
+                $update_data = [
+                    'ID'           => $existing_translation_id,
+                    'post_title'   => $sec_title,
+                    'post_content' => $sec_content,
+                    'post_excerpt' => $sec_excerpt,
+                    'post_name'    => $primary_post_raw->post_name,
+                ];
+                $updated = wp_update_post( $update_data, true );
+
+                if ( is_wp_error( $updated ) ) {
+                    $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $updated->get_error_message() );
+                    $failed++;
+                    continue;
+                }
+
+                if ( $post_type === 'product' ) {
+                    $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
+                }
+
+                $this->applyYoastPostMeta( $primary_id, $existing_translation_id );
+                $this->fixTranslationSlug( $existing_translation_id, $primary_post_raw->post_name );
+
+                // Force secondary-language content + thumbnail after wp_update_post which fires
+                // save_post: WPML field-sync may copy primary-language post_content back over
+                // the secondary content we set in $update_data, erasing the description.
+                // Direct DB write + meta update bypass all hooks (same as fixTranslationSlug).
+                $this->forceTranslationContent(
+                    $existing_translation_id,
+                    $sec_title,
+                    $sec_content,
+                    $sec_excerpt,
+                    (int) get_post_meta( $primary_id, '_thumbnail_id', true )
+                );
+
+                if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                    $this->queueSecondaryLangRedirect( $existing_translation_id, $sec_seo_map[ $oc_id ] );
+                }
+
+                $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
+                $processed++;
+                continue;
+            }
+
+            if ( $this->isDry() ) {
+                $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$sec_title}" );
+                $processed++;
+                continue;
+            }
+
+            $translated_id = $this->createTranslatedPost( $primary_post_raw, $sec_title, $sec_content, $post_type, $sec_excerpt );
+
+            if ( ! $translated_id ) {
+                $this->logger->error( "[multilingual] Failed to create {$this->secondary_lang} translation for {$post_type} #{$primary_id} – wp_insert_post returned 0." );
+                $failed++;
+                continue;
+            }
+
+            // Register the WPML/Polylang translation link BEFORE copying WC data.
+            // This ensures any field-sync triggered by wpml_set_element_language_details
+            // fires first, so we can then overwrite with the correct secondary-language values.
+            $this->linkPostTranslation( $primary_id, $translated_id, $post_type );
+
+            if ( $post_type === 'product' ) {
+                $this->copyProductDataToTranslation( $primary_id, $translated_id );
+            }
+
+            $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
+
+            // Force secondary-language content + thumbnail AFTER all WPML/Polylang operations.
+            // wpml_set_element_language_details (inside linkPostTranslation) can trigger
+            // field-sync that copies primary-language post_content back, erasing the secondary
+            // description. Direct DB write is the same technique as fixTranslationSlug().
+            $this->forceTranslationContent(
+                $translated_id,
+                $sec_title,
+                $sec_content,
+                $sec_excerpt,
+                (int) get_post_meta( $primary_id, '_thumbnail_id', true )
+            );
+
+            if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
+                $this->queueSecondaryLangRedirect( $translated_id, $sec_seo_map[ $oc_id ] );
+            }
+
+            $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
+            $processed++;
+        }
+
+        $this->flushSecondaryLangRedirects();
+
+        return [ $processed, $skipped, $failed ];
+    }
+
+    // ── Post translation pass (all-at-once, for small collections like pages) ─
+
+    /**
+     * Fetch ALL id_map rows for the given entity type and translate them in one
+     * pass.  Only used for 'page' (InformationMigrator content) which is a
+     * small set.  Products use the chunked translatePostsFromRows() path.
      *
      * @return int[] [processed, skipped, failed]
      */
@@ -172,146 +611,18 @@ class WpmlIntegration extends AbstractMigrator {
             ARRAY_A
         );
 
-        $processed = 0;
-        $skipped   = 0;
-        $failed    = 0;
-
-        foreach ( $rows as $row ) {
-            $primary_id = (int) $row['wc_id'];
-            $oc_id      = (int) $row['oc_id'];
-
-            // Fetch secondary language data from post meta.
-            $ar_title   = (string) get_post_meta( $primary_id, $title_meta_key,   true );
-            $ar_content = (string) get_post_meta( $primary_id, $content_meta_key, true );
-
-            // Arabic short description — only relevant for products.
-            $ar_excerpt = $post_type === 'product'
-                ? (string) get_post_meta( $primary_id, '_octowoo_short_description_ar', true )
-                : '';
-
-            // Fall back to English values when Arabic meta is missing so every
-            // product always gets a translation post (WPML still routes it under
-            // /ar/ and WC meta, SKU, tags, and brands are all correctly assigned).
-            $primary_post_raw = get_post( $primary_id );
-            if ( ! $primary_post_raw ) {
-                $failed++;
-                continue;
-            }
-
-            if ( $ar_title === '' ) {
-                $ar_title = $primary_post_raw->post_title;
-                $this->logger->debug( "[multilingual] No Arabic title for {$post_type} #{$primary_id} – using English title as fallback." );
-            }
-            if ( $ar_content === '' ) {
-                $ar_content = $primary_post_raw->post_content;
-            }
-            if ( $ar_excerpt === '' && $post_type === 'product' ) {
-                $ar_excerpt = $primary_post_raw->post_excerpt;
-            }
-
-            // If translation already exists (e.g. WPML duplicated English),
-            // update it with Arabic data instead of skipping permanently.
-            $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
-            if ( $existing_translation_id > 0 ) {
-                if ( $this->isDry() ) {
-                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$ar_title}" );
-                    $processed++;
-                    continue;
-                }
-
-                $primary_post_for_slug = $primary_post_raw;
-                $update_data = [
-                    'ID'           => $existing_translation_id,
-                    'post_title'   => $ar_title,
-                    'post_content' => $ar_content,
-                    'post_excerpt' => $ar_excerpt,
-                    'post_name'    => $primary_post_for_slug ? $primary_post_for_slug->post_name : '',
-                ];
-                $updated = wp_update_post( $update_data, true );
-
-                if ( is_wp_error( $updated ) ) {
-                    $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $updated->get_error_message() );
-                    $failed++;
-                    continue;
-                }
-
-                // For products, also sync WC meta + terms so SKU, price,
-                // stock, tags, and brands all appear on the Arabic version.
-                if ( $post_type === 'product' ) {
-                    $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
-                }
-
-                // Sync Yoast SEO meta to the existing translation.
-                $this->applyYoastPostMeta( $primary_id, $existing_translation_id );
-
-                // After wp_update_post() the slug uniqueness check may have
-                // appended -2 again. Force the correct slug now.
-                if ( $primary_post_for_slug ) {
-                    $this->fixTranslationSlug( $existing_translation_id, $primary_post_for_slug->post_name );
-                }
-
-                // Register the secondary-language SEO redirect so the old OC
-                // Arabic URL (e.g. /ar/some-slug) points to the new WC URL.
-                if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
-                    $this->queueSecondaryLangRedirect( $existing_translation_id, $sec_seo_map[ $oc_id ] );
-                }
-
-                $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
-                $processed++;
-                continue;
-            }
-
-            if ( $this->isDry() ) {
-                $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$ar_title}" );
-                $processed++;
-                continue;
-            }
-
-            $translated_id = $this->createTranslatedPost( $primary_post_raw, $ar_title, $ar_content, $post_type, $ar_excerpt );
-
-            if ( ! $translated_id ) {
-                $this->logger->error( "[multilingual] Failed to create {$this->secondary_lang} translation for {$post_type} #{$primary_id} – wp_insert_post returned 0." );
-                $failed++;
-                continue;
-            }
-
-            // For products, sync WC meta + terms after the post is linked.
-            if ( $post_type === 'product' ) {
-                $this->copyProductDataToTranslation( $primary_id, $translated_id );
-            }
-
-            $this->linkPostTranslation( $primary_id, $translated_id, $post_type );
-
-            // Now that WPML knows this post is the secondary-language translation,
-            // its slug uniqueness is scoped per-language. Force the slug to match
-            // the primary so Arabic URLs look identical (just with the /ar/ prefix):
-            //   English: /product/zelda-switch/
-            //   Arabic:  /ar/product/zelda-switch/   (NOT /ar/product/zelda-switch-2/)
-            $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
-
-            // Register the secondary-language SEO redirect so the old OC
-            // Arabic URL (e.g. /ar/some-slug) points to the new WC URL.
-            if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
-                $this->queueSecondaryLangRedirect( $translated_id, $sec_seo_map[ $oc_id ] );
-            }
-
-            $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
-            $processed++;
+        if ( empty( $rows ) ) {
+            return [ 0, 0, 0 ];
         }
 
-        // Persist any queued secondary-language redirects into the same
-        // octowoo_redirects option that SeoMigrator uses (served by
-        // SeoMigrator::handleWpRedirect() on every front-end request).
-        $this->flushSecondaryLangRedirects();
-
-        return [ $processed, $skipped, $failed ];
+        return $this->translatePostsFromRows( $rows, $post_type, $title_meta_key, $content_meta_key, $sec_seo_map );
     }
 
     /**
      * Create a translated WP post in the secondary language.
      */
     private function createTranslatedPost( \WP_Post $source, string $title, string $content, string $post_type, string $excerpt = '' ): int {
-        // Always use the primary (English) slug so Arabic URLs stay clean
+        // Always use the primary-language slug so secondary-language URLs stay clean
         // (e.g. /ar/product/apple-cable/ instead of /ar/product/%d8%a7%d8%a8%d9%84-...).
         $slug = $source->post_name;
 
@@ -327,7 +638,19 @@ class WpmlIntegration extends AbstractMigrator {
             'menu_order'     => $source->menu_order,
         ];
 
+        // Switch to the secondary language BEFORE wp_insert_post so WPML's save_post
+        // hook auto-registers this post in the secondary language immediately during creation.
+        // Without this switch, WPML assigns the new post to the current admin language
+        // ('en'), then linkPostTranslation must re-assign it to the secondary language —
+        // which triggers WPML field-sync that copies the primary post_content back, erasing
+        // the secondary-language description.  This is the same pattern used in createTranslatedTerm().
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', $this->secondary_lang );
+        }
         $new_id = wp_insert_post( $insert_data, true );
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            do_action( 'wpml_switch_language', null ); // Restore default language.
+        }
 
         if ( is_wp_error( $new_id ) ) {
             $this->logger->error( "[multilingual] Failed creating translated post ({$this->secondary_lang}): " . $new_id->get_error_message() );
@@ -335,30 +658,31 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // Copy Yoast SEO meta for secondary language.
-        // Fall back to English when Arabic meta is absent so the translated post
+        // Fall back to primary-language values when secondary meta is absent so the translated post
         // always has meaningful Yoast data instead of blank fields.
-        $ar_meta_title = (string) get_post_meta( (int) $source->ID, '_octowoo_metatitle_ar', true );
-        $ar_meta_desc  = (string) get_post_meta( (int) $source->ID, '_octowoo_metadesc_ar',  true );
-        $ar_meta_kw    = (string) get_post_meta( (int) $source->ID, '_octowoo_metakw_ar',    true );
+        $sfx           = $this->secLangSuffix();
+        $sec_meta_title = (string) get_post_meta( (int) $source->ID, '_octowoo_metatitle' . $sfx, true );
+        $sec_meta_desc  = (string) get_post_meta( (int) $source->ID, '_octowoo_metadesc'  . $sfx, true );
+        $sec_meta_kw    = (string) get_post_meta( (int) $source->ID, '_octowoo_metakw'    . $sfx, true );
 
-        if ( $ar_meta_title === '' ) {
-            $ar_meta_title = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_title', true );
+        if ( $sec_meta_title === '' ) {
+            $sec_meta_title = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_title', true );
         }
-        if ( $ar_meta_desc === '' ) {
-            $ar_meta_desc = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_metadesc', true );
+        if ( $sec_meta_desc === '' ) {
+            $sec_meta_desc = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_metadesc', true );
         }
-        if ( $ar_meta_kw === '' ) {
-            $ar_meta_kw = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_focuskw', true );
+        if ( $sec_meta_kw === '' ) {
+            $sec_meta_kw = (string) get_post_meta( (int) $source->ID, '_yoast_wpseo_focuskw', true );
         }
 
-        if ( $ar_meta_title ) {
-            update_post_meta( $new_id, '_yoast_wpseo_title',   $ar_meta_title );
+        if ( $sec_meta_title ) {
+            update_post_meta( $new_id, '_yoast_wpseo_title',   $sec_meta_title );
         }
-        if ( $ar_meta_desc ) {
-            update_post_meta( $new_id, '_yoast_wpseo_metadesc', $ar_meta_desc );
+        if ( $sec_meta_desc ) {
+            update_post_meta( $new_id, '_yoast_wpseo_metadesc', $sec_meta_desc );
         }
-        if ( $ar_meta_kw ) {
-            update_post_meta( $new_id, '_yoast_wpseo_focuskw', $ar_meta_kw );
+        if ( $sec_meta_kw ) {
+            update_post_meta( $new_id, '_yoast_wpseo_focuskw', $sec_meta_kw );
         }
 
         // Mark as a translation.
@@ -369,11 +693,54 @@ class WpmlIntegration extends AbstractMigrator {
     }
 
     /**
+     * Force secondary-language content and thumbnail onto a translation post via direct DB writes
+     * that bypass all WordPress/WPML/Polylang hooks.
+     *
+     * WPML field-sync (fired by wpml_set_element_language_details or save_post) can
+     * copy the primary-language post_content back over the secondary content we set — erasing it.
+     * WPML Media Translation can also clear _thumbnail_id when it looks for a secondary-language
+     * attachment translation that does not exist.
+     *
+     * Writing directly to wp_posts and wp_postmeta then busting the object cache is
+     * the same technique used by fixTranslationSlug() for post_name and is guaranteed
+     * to survive any plugin hook because it runs AFTER all those hooks have fired.
+     *
+     * @param int    $post_id   Translated post ID.
+     * @param string $title     Secondary-language post title.
+     * @param string $content   Secondary-language post content (HTML).
+     * @param string $excerpt   Secondary-language short description / post_excerpt.
+     * @param int    $thumb_id  Featured image attachment ID from the primary product.
+     */
+    private function forceTranslationContent( int $post_id, string $title, string $content, string $excerpt, int $thumb_id ): void {
+        global $wpdb;
+
+        // Direct write to wp_posts — bypasses save_post, WPML field-sync, and
+        // every other plugin hook that could overwrite the secondary-language content.
+        $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->posts,
+            [
+                'post_title'   => $title,
+                'post_content' => $content,
+                'post_excerpt' => $excerpt,
+            ],
+            [ 'ID' => $post_id ]
+        );
+        clean_post_cache( $post_id );
+
+        // Re-apply thumbnail after WPML language linking which may have cleared
+        // _thumbnail_id if WPML Media Translation treats it as translatable and
+        // no secondary-language attachment exists (returns null → no image on translated page).
+        if ( $thumb_id > 0 ) {
+            update_post_meta( $post_id, '_thumbnail_id', $thumb_id );
+        }
+    }
+
+    /**
      * Force a post's slug (post_name) to exactly $desired_slug, bypassing
      * WordPress's wp_unique_post_slug() uniqueness check.
      *
-     * Why this is needed: when wp_insert_post() runs for the Arabic translation,
-     * WordPress sees the English post already has the same slug and appends "-2",
+     * Why this is needed: when wp_insert_post() runs for the secondary-language translation,
+     * WordPress sees the primary-language post already has the same slug and appends "-2",
      * producing ugly URLs like /ar/product/zelda-switch-2/.
      *
      * This must be called AFTER linkPostTranslation() so WPML already knows the
@@ -423,14 +790,15 @@ class WpmlIntegration extends AbstractMigrator {
     // ── Yoast SEO meta helpers ─────────────────────────────────────────────────
 
     /**
-     * Write Yoast SEO meta (title, metadesc, focuskw) to an Arabic translated post.
-     * Reads Arabic _octowoo_*_ar meta from the primary post; falls back to the
-     * English Yoast values so the translated post always has complete SEO data.
+     * Write Yoast SEO meta (title, metadesc, focuskw) to a secondary-language translated post.
+     * Reads secondary-language _octowoo_* meta from the primary post; falls back to the
+     * primary-language Yoast values so the translated post always has complete SEO data.
      */
     private function applyYoastPostMeta( int $primary_id, int $translated_id ): void {
-        $title = (string) get_post_meta( $primary_id, '_octowoo_metatitle_ar', true );
-        $desc  = (string) get_post_meta( $primary_id, '_octowoo_metadesc_ar',  true );
-        $kw    = (string) get_post_meta( $primary_id, '_octowoo_metakw_ar',    true );
+        $sfx   = $this->secLangSuffix();
+        $title = (string) get_post_meta( $primary_id, '_octowoo_metatitle' . $sfx, true );
+        $desc  = (string) get_post_meta( $primary_id, '_octowoo_metadesc'  . $sfx, true );
+        $kw    = (string) get_post_meta( $primary_id, '_octowoo_metakw'    . $sfx, true );
 
         if ( $title === '' ) { $title = (string) get_post_meta( $primary_id, '_yoast_wpseo_title',    true ); }
         if ( $desc  === '' ) { $desc  = (string) get_post_meta( $primary_id, '_yoast_wpseo_metadesc', true ); }
@@ -442,13 +810,14 @@ class WpmlIntegration extends AbstractMigrator {
     }
 
     /**
-     * Write Yoast SEO meta to an Arabic translated term.
-     * Reads Arabic _octowoo_*_ar meta from the primary term; falls back to English.
+     * Write Yoast SEO meta to a secondary-language translated term.
+     * Reads secondary-language _octowoo_* meta from the primary term; falls back to primary-language values.
      */
     private function applyYoastTermMeta( int $primary_term_id, int $translated_term_id ): void {
-        $title = (string) get_term_meta( $primary_term_id, '_octowoo_metatitle_ar', true );
-        $desc  = (string) get_term_meta( $primary_term_id, '_octowoo_metadesc_ar',  true );
-        $kw    = (string) get_term_meta( $primary_term_id, '_octowoo_metakw_ar',    true );
+        $sfx   = $this->secLangSuffix();
+        $title = (string) get_term_meta( $primary_term_id, '_octowoo_metatitle' . $sfx, true );
+        $desc  = (string) get_term_meta( $primary_term_id, '_octowoo_metadesc'  . $sfx, true );
+        $kw    = (string) get_term_meta( $primary_term_id, '_octowoo_metakw'    . $sfx, true );
 
         if ( $title === '' ) { $title = (string) get_term_meta( $primary_term_id, '_yoast_wpseo_title',    true ); }
         if ( $desc  === '' ) { $desc  = (string) get_term_meta( $primary_term_id, '_yoast_wpseo_metadesc', true ); }
@@ -463,8 +832,8 @@ class WpmlIntegration extends AbstractMigrator {
 
     /**
      * Pre-fetch all secondary-language SEO keywords from oc_seo_url indexed by
-     * OC product_id.  Used to map old OpenCart Arabic product paths to new WC
-     * Arabic URLs.
+     * OC product_id.  Used to map old OpenCart secondary-language product paths to new WC
+     * secondary-language URLs.
      *
      * Returns an empty array when the secondary language is disabled, the
      * oc_seo_url table does not exist, or no secondary-language rows are found.
@@ -621,10 +990,12 @@ class WpmlIntegration extends AbstractMigrator {
             // wp_insert_post). Passing the existing trid avoids creating a duplicate
             // translation group for the same post.
             $existing_trid = $this->wpmlGetTrid( $primary_id, $element_type );
-            $this->wpmlSetPostLanguage( $primary_id, $element_type, $this->primary_lang, $existing_trid );
+            // is_primary = true → source_language_code = null (this IS the original).
+            $this->wpmlSetPostLanguage( $primary_id, $element_type, $this->primary_lang, $existing_trid, true );
             // Re-fetch trid after language update to ensure we have the canonical value.
             $trid = $this->wpmlGetTrid( $primary_id, $element_type );
-            $this->wpmlSetPostLanguage( $translated_id, $element_type, $this->secondary_lang, $trid );
+            // is_primary = false → source_language_code = $this->primary_lang (translated FROM primary).
+            $this->wpmlSetPostLanguage( $translated_id, $element_type, $this->secondary_lang, $trid, false );
 
         } elseif ( $this->adapter === 'polylang' ) {
             $this->polylangSetPostLanguage( $primary_id,    $this->primary_lang );
@@ -640,7 +1011,7 @@ class WpmlIntegration extends AbstractMigrator {
 
     /**
      * Copy all WooCommerce-specific meta and taxonomy term assignments from the
-     * English primary product to its Arabic translation post.
+     * primary product to its secondary-language translation post.
      *
      * WPML does NOT automatically carry these over when we create the translated
      * post manually, so we must copy them explicitly:
@@ -658,8 +1029,8 @@ class WpmlIntegration extends AbstractMigrator {
             '_virtual', '_downloadable', '_sold_individually',
             '_tax_status', '_tax_class', '_product_attributes',
             '_octowoo_oc_id',
-            // Featured image and gallery — without these the Arabic product
-            // has no images even though the English product has them.
+            // Featured image and gallery — without these the translated product
+            // has no images even though the primary product has them.
             '_thumbnail_id',
             '_product_image_gallery',
         ];
@@ -669,7 +1040,7 @@ class WpmlIntegration extends AbstractMigrator {
             update_post_meta( $target_id, $key, $value );
         }
 
-        // ── Image fallback: re-attempt import when English product has no thumbnail ──
+        // ── Image fallback: re-attempt import when primary product has no thumbnail ──
         // This covers the case where images were unavailable during the primary
         // migration pass (e.g. source server temporarily down, local path not mounted).
         // ProductMigrator stores '_octowoo_oc_image_path' on every product so we
@@ -680,7 +1051,7 @@ class WpmlIntegration extends AbstractMigrator {
             if ( $oc_image_path !== '' && $this->imageMigratorInstance() !== null ) {
                 $new_thumb = $this->imageMigratorInstance()->importByOcPath( $oc_image_path );
                 if ( $new_thumb && $new_thumb > 0 ) {
-                    // Apply to English product as well so it is not missing next time.
+                    // Apply to primary product as well so it is not missing next time.
                     set_post_thumbnail( $source_id, $new_thumb );
                     set_post_thumbnail( $target_id, $new_thumb );
                 }
@@ -693,92 +1064,100 @@ class WpmlIntegration extends AbstractMigrator {
             wp_set_object_terms( $target_id, $type_terms, 'product_type' );
         }
 
-        // ── product_cat terms → resolve to Arabic translated category terms ─
-        // Without this the Arabic product has no category at all, so the
+        // ── product_cat terms → resolve to secondary-language translated category terms ─
+        // Without this the translated product has no category at all, so the
         // breadcrumb shows "Home › Shop › Product" with no category segment.
         $cat_ids = wp_get_object_terms( $source_id, 'product_cat', [ 'fields' => 'ids' ] );
         if ( ! is_wp_error( $cat_ids ) && ! empty( $cat_ids ) ) {
             $translated_cat_ids = [];
             foreach ( array_map( 'intval', $cat_ids ) as $cat_id ) {
-                $ar_cat_id = $this->getExistingTranslationId( $cat_id, 'tax_product_cat' );
-                // Fall back to the English term ID if no Arabic translation exists yet.
-                $translated_cat_ids[] = $ar_cat_id > 0 ? $ar_cat_id : $cat_id;
+                $sec_cat_id = $this->getExistingTranslationId( $cat_id, 'tax_product_cat' );
+                // Fall back to the primary-language term ID if no secondary-language translation exists yet.
+                $translated_cat_ids[] = $sec_cat_id > 0 ? $sec_cat_id : $cat_id;
             }
             wp_set_object_terms( $target_id, $translated_cat_ids, 'product_cat' );
         }
 
         // ── product_tag terms ──────────────────────────────────────────────
-        // Prefer secondary-language (Arabic) tag strings from OpenCart so the
-        // Arabic product gets Arabic tag terms instead of the shared English ones.
+        // Prefer secondary-language tag strings from OpenCart so the translated
+        // product gets secondary-language tag terms instead of the shared primary-language ones.
         // OpenCart stores per-language comma-separated tags in
         // oc_product_description.tag (one row per language per product).
-        $ar_tags_assigned = false;
+        $sec_tags_assigned = false;
         $oc_product_id    = (int) get_post_meta( $source_id, '_octowoo_oc_id', true );
         if ( $oc_product_id > 0 ) {
             $sec_lang_id = $this->langIdSecondary();
             $pri_lang_id = $this->langId();
             if ( $sec_lang_id > 0 ) {
-                $pfx        = $this->pfx();
-                $ar_tag_raw = $this->oc->fetchColumn(
-                    "SELECT `tag` FROM `{$pfx}product_description`
-                     WHERE product_id = ? AND language_id = ?",
-                    [ $oc_product_id, $sec_lang_id ]
-                );
-                if ( is_string( $ar_tag_raw ) && $ar_tag_raw !== '' ) {
-                    $ar_tag_names = array_values(
+                // Use pre-fetched tag cache (populated by prefetchSecLangTagsForProducts() once
+                // per chunk) to avoid per-product N+1 queries against the OC database.
+                // Falls back to a live OC query only if the cache was not populated
+                // (e.g. when translatePosts() is called directly outside the chunked path).
+                if ( isset( $this->sec_tags_cache[ $oc_product_id ] ) ) {
+                    $sec_tag_raw = $this->sec_tags_cache[ $oc_product_id ]['sec'];
+                    $pri_tag_raw = $this->sec_tags_cache[ $oc_product_id ]['pri'];
+                } else {
+                    $pfx        = $this->pfx();
+                    $sec_tag_raw = (string) $this->oc->fetchColumn(
+                        "SELECT `tag` FROM `{$pfx}product_description`
+                         WHERE product_id = ? AND language_id = ?",
+                        [ $oc_product_id, $sec_lang_id ]
+                    );
+                    $pri_tag_raw = (string) $this->oc->fetchColumn(
+                        "SELECT `tag` FROM `{$pfx}product_description`
+                         WHERE product_id = ? AND language_id = ?",
+                        [ $oc_product_id, $pri_lang_id ]
+                    );
+                }
+
+                if ( is_string( $sec_tag_raw ) && $sec_tag_raw !== '' ) {
+                    $sec_tag_names = array_values(
                         array_filter(
-                            array_map( 'sanitize_text_field', explode( ',', $ar_tag_raw ) ),
+                            array_map( 'sanitize_text_field', explode( ',', $sec_tag_raw ) ),
                             fn( string $t ) => $t !== ''
                         )
                     );
 
-                    if ( ! empty( $ar_tag_names ) ) {
-                        // Fetch English tag names from OC (same product, primary language)
-                        // so we can match Arabic ↔ English by position and share slugs.
-                        $en_tag_raw   = $this->oc->fetchColumn(
-                            "SELECT `tag` FROM `{$pfx}product_description`
-                             WHERE product_id = ? AND language_id = ?",
-                            [ $oc_product_id, $pri_lang_id ]
-                        );
-                        $en_tag_names = is_string( $en_tag_raw ) && $en_tag_raw !== ''
+                    if ( ! empty( $sec_tag_names ) ) {
+                        $pri_tag_names = is_string( $pri_tag_raw ) && $pri_tag_raw !== ''
                             ? array_values( array_filter(
-                                array_map( 'sanitize_text_field', explode( ',', $en_tag_raw ) ),
+                                array_map( 'sanitize_text_field', explode( ',', $pri_tag_raw ) ),
                                 fn( string $t ) => $t !== ''
                             ) )
                             : [];
 
-                        $ar_term_ids = [];
-                        foreach ( $ar_tag_names as $idx => $ar_tag_name ) {
-                            // Create (or find existing) Arabic tag term.
-                            $result = wp_insert_term( $ar_tag_name, 'product_tag' );
+                        $sec_term_ids = [];
+                        foreach ( $sec_tag_names as $idx => $sec_tag_name ) {
+                            // Create (or find existing) secondary-language tag term.
+                            $result = wp_insert_term( $sec_tag_name, 'product_tag' );
                             if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
-                                $ar_tid = (int) $result->get_error_data( 'term_exists' );
+                                $sec_tid = (int) $result->get_error_data( 'term_exists' );
                             } elseif ( ! is_wp_error( $result ) ) {
-                                $ar_tid = (int) $result['term_id'];
+                                $sec_tid = (int) $result['term_id'];
                             } else {
                                 continue;
                             }
 
-                            // Find the matching English WC tag term by position.
-                            // If found, force the Arabic term to share the same slug
-                            // so URLs use clean English text instead of %d8%... encoding.
-                            if ( isset( $en_tag_names[ $idx ] ) ) {
-                                $en_term = get_term_by( 'name', $en_tag_names[ $idx ], 'product_tag' );
-                                if ( $en_term && ! is_wp_error( $en_term ) ) {
-                                    $this->fixTranslationTermSlug( $ar_tid, $en_term->slug );
-                                    // Register WPML translation link between English and Arabic tag terms.
-                                    $this->linkTermTranslation( $en_term->term_id, $ar_tid, 'product_tag' );
+                            // Find the matching primary-language WC tag term by position.
+                            // If found, force the secondary-language term to share the same slug
+                            // so URLs use clean primary-language text instead of encoded characters.
+                            if ( isset( $pri_tag_names[ $idx ] ) ) {
+                                $pri_term = get_term_by( 'name', $pri_tag_names[ $idx ], 'product_tag' );
+                                if ( $pri_term && ! is_wp_error( $pri_term ) ) {
+                                    $this->fixTranslationTermSlug( $sec_tid, $pri_term->slug );
+                                    // Register WPML translation link between primary and secondary tag terms.
+                                    $this->linkTermTranslation( $pri_term->term_id, $sec_tid, 'product_tag' );
                                 }
                             }
 
-                            // Register Arabic tag with WPML (idempotent).
+                            // Register secondary-language tag with WPML (idempotent).
                             if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
-                                $ar_term_obj = get_term( $ar_tid, 'product_tag' );
-                                if ( $ar_term_obj && ! is_wp_error( $ar_term_obj ) ) {
-                                    $ar_tt_id = (int) $ar_term_obj->term_taxonomy_id;
-                                    if ( $ar_tt_id > 0 ) {
+                                $sec_term_obj = get_term( $sec_tid, 'product_tag' );
+                                if ( $sec_term_obj && ! is_wp_error( $sec_term_obj ) ) {
+                                    $sec_tt_id = (int) $sec_term_obj->term_taxonomy_id;
+                                    if ( $sec_tt_id > 0 ) {
                                         do_action( 'wpml_set_element_language_details', [
-                                            'element_id'           => $ar_tt_id,
+                                            'element_id'           => $sec_tt_id,
                                             'element_type'         => 'tax_product_tag',
                                             'trid'                 => null,
                                             'language_code'        => $this->secondary_lang,
@@ -788,43 +1167,43 @@ class WpmlIntegration extends AbstractMigrator {
                                 }
                             }
 
-                            $ar_term_ids[] = $ar_tid;
+                            $sec_term_ids[] = $sec_tid;
                         }
 
-                        if ( ! empty( $ar_term_ids ) ) {
-                            wp_set_object_terms( $target_id, $ar_term_ids, 'product_tag', false );
-                            $ar_tags_assigned = true;
+                        if ( ! empty( $sec_term_ids ) ) {
+                            wp_set_object_terms( $target_id, $sec_term_ids, 'product_tag', false );
+                            $sec_tags_assigned = true;
                         }
                     }
                 }
             }
         }
-        // Fall back: no Arabic OC tags — resolve English tag IDs to their Arabic
-        // translated counterparts so Arabic products get Arabic-language tag terms
-        // (not English tag IDs, which would make them visible on English tag archives).
-        if ( ! $ar_tags_assigned ) {
+        // Fall back: no secondary-language OC tags — resolve primary-language tag IDs to their
+        // translated counterparts so translated products get secondary-language tag terms
+        // (not primary-language tag IDs, which would make them visible on primary-language archives).
+        if ( ! $sec_tags_assigned ) {
             $tag_ids = wp_get_object_terms( $source_id, 'product_tag', [ 'fields' => 'ids' ] );
             if ( ! is_wp_error( $tag_ids ) && ! empty( $tag_ids ) ) {
                 $translated_tag_ids = [];
-                foreach ( array_map( 'intval', $tag_ids ) as $en_tag_id ) {
-                    $ar_tag_id            = $this->getExistingTranslationId( $en_tag_id, 'tax_product_tag' );
-                    $translated_tag_ids[] = $ar_tag_id > 0 ? $ar_tag_id : $en_tag_id;
+                foreach ( array_map( 'intval', $tag_ids ) as $pri_tag_id ) {
+                    $sec_tag_id           = $this->getExistingTranslationId( $pri_tag_id, 'tax_product_tag' );
+                    $translated_tag_ids[] = $sec_tag_id > 0 ? $sec_tag_id : $pri_tag_id;
                 }
                 wp_set_object_terms( $target_id, $translated_tag_ids, 'product_tag', false );
             }
         }
 
         // ── Brand / manufacturer taxonomy ──────────────────────────────────
-        // Resolve English brand term IDs → Arabic translated term IDs.
-        // Falls back to the English term ID when no Arabic translation exists.
+        // Resolve primary-language brand term IDs → secondary-language translated term IDs.
+        // Falls back to the primary-language term ID when no secondary-language translation exists.
         $brand_tax = $this->detectActiveBrandTaxonomy();
         if ( $brand_tax !== '' ) {
             $brand_ids = wp_get_object_terms( $source_id, $brand_tax, [ 'fields' => 'ids' ] );
             if ( ! is_wp_error( $brand_ids ) && ! empty( $brand_ids ) ) {
                 $translated_brand_ids = [];
                 foreach ( array_map( 'intval', $brand_ids ) as $bid ) {
-                    $ar_bid = $this->getExistingTranslationId( $bid, "tax_{$brand_tax}" );
-                    $translated_brand_ids[] = $ar_bid > 0 ? $ar_bid : $bid;
+                    $sec_bid = $this->getExistingTranslationId( $bid, "tax_{$brand_tax}" );
+                    $translated_brand_ids[] = $sec_bid > 0 ? $sec_bid : $bid;
                 }
                 wp_set_object_terms( $target_id, $translated_brand_ids, $brand_tax );
             }
@@ -860,7 +1239,16 @@ class WpmlIntegration extends AbstractMigrator {
      * @param string $entity_type   Value used in octowoo_id_map (default 'category').
      * @return int[] [processed, skipped, failed]
      */
-    private function translateTerms( string $taxonomy, array $sec_seo_map = [], string $entity_type = 'category' ): array {
+    /**
+     * @return array{0:int,1:int,2:int,3:bool}  [processed, skipped, failed, has_more]
+     */
+    private function translateTerms(
+        string $taxonomy,
+        array  $sec_seo_map  = [],
+        string $entity_type  = 'category',
+        int    $offset       = 0,
+        int    $limit        = 0
+    ): array {
         global $wpdb;
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -872,6 +1260,42 @@ class WpmlIntegration extends AbstractMigrator {
             ARRAY_A
         );
 
+        // Fallback: if id_map has no entries (e.g. after Reset Progress), query
+        // the taxonomy directly so Multilingual Recovery still translates all terms.
+        if ( empty( $rows ) ) {
+            $this->logger->info( "[multilingual] id_map empty for entity_type='{$entity_type}'; querying {$taxonomy} terms directly." );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT tt.term_id AS wc_id, COALESCE(tm.meta_value, 0) AS oc_id
+                     FROM {$wpdb->term_taxonomy} tt
+                     LEFT JOIN {$wpdb->termmeta} tm
+                         ON tm.term_id = tt.term_id AND tm.meta_key = '_octowoo_oc_id'
+                     WHERE tt.taxonomy = %s
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM {$wpdb->prefix}icl_translations icl
+                           WHERE icl.element_id   = tt.term_taxonomy_id
+                             AND icl.element_type  = %s
+                             AND icl.language_code != %s
+                       )",
+                    $taxonomy,
+                    'tax_' . $taxonomy,
+                    $this->primary_lang
+                ),
+                ARRAY_A
+            );
+        }
+
+        $total_rows = count( $rows );
+        $has_more   = false;
+        if ( $limit > 0 ) {
+            $has_more = ( $offset + $limit ) < $total_rows;
+            $rows     = array_slice( $rows, $offset, $limit );
+        } elseif ( $offset > 0 ) {
+            $rows = array_slice( $rows, $offset );
+        }
+
         $processed = 0;
         $skipped   = 0;
         $failed    = 0;
@@ -880,8 +1304,9 @@ class WpmlIntegration extends AbstractMigrator {
             $primary_term_id = (int) $row['wc_id'];
             $oc_id           = (int) $row['oc_id'];
 
-            $ar_name        = get_term_meta( $primary_term_id, '_octowoo_name_ar',        true );
-            $ar_description = get_term_meta( $primary_term_id, '_octowoo_description_ar', true );
+            $sfx            = $this->secLangSuffix();
+            $sec_name        = get_term_meta( $primary_term_id, '_octowoo_name' . $sfx,        true );
+            $sec_description = get_term_meta( $primary_term_id, '_octowoo_description' . $sfx, true );
 
             // Fetch primary term for slug and fallback values.
             $primary_term = get_term( $primary_term_id, $taxonomy );
@@ -890,50 +1315,50 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            // Fall back to English when Arabic meta is absent so every
-            // category still gets a linked Arabic term.
-            if ( ! $ar_name ) {
-                $ar_name = $primary_term->name;
-                $this->logger->debug( "[multilingual] No Arabic name meta for {$taxonomy} term WC #{$primary_term_id} – using English name as fallback." );
+            // Fall back to primary-language values when secondary meta is absent so every
+            // category still gets a linked secondary-language term.
+            if ( ! $sec_name ) {
+                $sec_name = $primary_term->name;
+                $this->logger->debug( "[multilingual] No secondary-language name meta for {$taxonomy} term WC #{$primary_term_id} – using primary name as fallback." );
             }
-            if ( ! $ar_description ) {
-                $ar_description = $primary_term->description;
+            if ( ! $sec_description ) {
+                $sec_description = $primary_term->description;
             }
 
-            // Resolve the Arabic parent term ID so the secondary-language term
+            // Resolve the secondary-language parent term ID so the translated term
             // sits at the correct depth in the taxonomy hierarchy.
             // Only applicable for hierarchical taxonomies (product_cat).
-            $ar_parent = 0;
+            $sec_parent = 0;
             if ( $primary_term->parent > 0 ) {
-                $ar_parent = $this->getExistingTranslationId( $primary_term->parent, "tax_{$taxonomy}" );
+                $sec_parent = $this->getExistingTranslationId( $primary_term->parent, "tax_{$taxonomy}" );
             }
 
             $existing_translation_id = $this->getExistingTranslationId( $primary_term_id, "tax_{$taxonomy}" );
             if ( $existing_translation_id > 0 ) {
                 if ( $this->isDry() ) {
-                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$taxonomy} term #{$primary_term_id}: {$ar_name}" );
+                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$taxonomy} term #{$primary_term_id}: {$sec_name}" );
                     $processed++;
                     continue;
                 }
 
                 // Use a guaranteed-unique temporary slug so WordPress never raises a
                 // slug-uniqueness error. The root problem: after the first run,
-                // fixTranslationTermSlug() sets the Arabic term slug = "electronics-in-qatar"
-                // (same as English primary). On the second run, wp_update_term() with that
-                // slug calls wp_unique_term_slug() which sees the English primary owns it
+                // fixTranslationTermSlug() sets the secondary-language term slug = "electronics-in-qatar"
+                // (same as primary). On the second run, wp_update_term() with that
+                // slug calls wp_unique_term_slug() which sees the primary owns it
                 // → changes it to "electronics-in-qatar-2" → then WP checks if that suffix
                 // slug already exists → returns WP_Error "already in use by another term".
                 //
-                // Passing 'octowoo-ar-{id}' (unique per term, never used by any real term)
+                // Passing 'octowoo-sec-{id}' (unique per term, never used by any real term)
                 // bypasses all uniqueness conflicts. fixTranslationTermSlug() immediately
                 // overwrites it with the correct shared slug via direct DB write.
-                $temp_slug = 'octowoo-ar-' . $existing_translation_id;
+                $temp_slug = 'octowoo-sec-' . $existing_translation_id;
 
                 $updated = wp_update_term( $existing_translation_id, $taxonomy, [
-                    'name'        => $ar_name,
-                    'description' => $ar_description,
+                    'name'        => $sec_name,
+                    'description' => $sec_description,
                     'slug'        => $temp_slug,
-                    'parent'      => $ar_parent,
+                    'parent'      => $sec_parent,
                 ] );
 
                 if ( is_wp_error( $updated ) ) {
@@ -944,7 +1369,7 @@ class WpmlIntegration extends AbstractMigrator {
 
                 // Re-register the WPML translation link on every update run.
                 // This is idempotent and repairs any stale or missing
-                // icl_translations rows that cause Arabic category 404 errors.
+                // icl_translations rows that cause secondary-language category 404 errors.
                 $this->linkTermTranslation( $primary_term_id, $existing_translation_id, $taxonomy );
 
                 // Force the slug to match the primary term AFTER WPML linking.
@@ -956,14 +1381,14 @@ class WpmlIntegration extends AbstractMigrator {
                 // Sync Yoast SEO meta to the existing translated term.
                 $this->applyYoastTermMeta( $primary_term_id, $existing_translation_id );
 
-                // Sync category thumbnail image — without this update, Arabic categories
+                // Sync category thumbnail image — without this update, secondary-language categories
                 // lose their image whenever the primary category's image changes.
                 $thumb_id = get_term_meta( $primary_term_id, 'thumbnail_id', true );
                 if ( $thumb_id ) {
                     update_term_meta( $existing_translation_id, 'thumbnail_id', (int) $thumb_id );
                 }
 
-                // Register old OC Arabic URL → new WC Arabic category URL.
+                // Register old OC secondary-language URL → new WC secondary-language category URL.
                 if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
                     $this->queueSecondaryTermRedirect( $existing_translation_id, $taxonomy, $sec_seo_map[ $oc_id ] );
                 }
@@ -974,12 +1399,12 @@ class WpmlIntegration extends AbstractMigrator {
             }
 
             if ( $this->isDry() ) {
-                $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$taxonomy} term #{$primary_term_id}: {$ar_name}" );
+                $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$taxonomy} term #{$primary_term_id}: {$sec_name}" );
                 $processed++;
                 continue;
             }
 
-            $translated_term_id = $this->createTranslatedTerm( $primary_term, $ar_name, $ar_description, $taxonomy, $ar_parent );
+            $translated_term_id = $this->createTranslatedTerm( $primary_term, $sec_name, $sec_description, $taxonomy, $sec_parent );
 
             if ( ! $translated_term_id ) {
                 $failed++;
@@ -992,7 +1417,7 @@ class WpmlIntegration extends AbstractMigrator {
             // clobber it with a uniqueness-suffixed version.
             $this->fixTranslationTermSlug( $translated_term_id, $primary_term->slug );
 
-            // Register old OC Arabic URL → new WC Arabic category URL.
+            // Register old OC secondary-language URL → new WC secondary-language category URL.
             if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
                 $this->queueSecondaryTermRedirect( $translated_term_id, $taxonomy, $sec_seo_map[ $oc_id ] );
             }
@@ -1004,26 +1429,24 @@ class WpmlIntegration extends AbstractMigrator {
         // Persist any queued secondary-language category redirects.
         $this->flushSecondaryLangRedirects();
 
-        // Post-sweep: ensure every secondary-language category term has the
-        // correct Arabic parent. The per-item $ar_parent lookup above can return 0
-        // when the Arabic parent was not yet created at the time the child was
-        // processed (ordering is not guaranteed in the id_map SELECT). This sweep
-        // runs after all Arabic terms exist, so every parent is resolvable.
-        if ( $taxonomy === 'product_cat' ) {
-            $this->fixArabicTermParents( $taxonomy );
+        // Post-sweep: ensure every secondary-language category term has the correct
+        // secondary-language parent.  Only run this after the LAST batch of categories (when
+        // $has_more is false) so all secondary-language terms exist before we resolve parents.
+        if ( ! $has_more && $taxonomy === 'product_cat' ) {
+            $this->fixSecLangTermParents( $taxonomy );
         }
 
-        return [ $processed, $skipped, $failed ];
+        return [ $processed, $skipped, $failed, $has_more ];
     }
 
     /**
-     * Post-sweep: walk all migrated category terms and set the correct Arabic
-     * parent on each Arabic translation term.
+     * Post-sweep: walk all migrated category terms and set the correct secondary-language
+     * parent on each secondary-language translation term.
      *
      * Called once at the end of translateTerms('product_cat', ...) after every
-     * Arabic term has been created/updated, so all parents are resolvable.
+     * secondary-language term has been created/updated, so all parents are resolvable.
      */
-    private function fixArabicTermParents( string $taxonomy ): void {
+    private function fixSecLangTermParents( string $taxonomy ): void {
         global $wpdb;
 
         $rows = $wpdb->get_results(
@@ -1035,38 +1458,38 @@ class WpmlIntegration extends AbstractMigrator {
         );
 
         foreach ( $rows as $row ) {
-            $en_term_id = (int) $row['wc_id'];
-            $en_term    = get_term( $en_term_id, $taxonomy );
+            $pri_term_id = (int) $row['wc_id'];
+            $pri_term    = get_term( $pri_term_id, $taxonomy );
 
-            if ( ! $en_term || is_wp_error( $en_term ) || (int) $en_term->parent === 0 ) {
+            if ( ! $pri_term || is_wp_error( $pri_term ) || (int) $pri_term->parent === 0 ) {
                 continue; // Root-level or invalid – nothing to fix.
             }
 
-            $ar_term_id = $this->getExistingTranslationId( $en_term_id, "tax_{$taxonomy}" );
-            if ( $ar_term_id <= 0 ) {
+            $sec_term_id = $this->getExistingTranslationId( $pri_term_id, "tax_{$taxonomy}" );
+            if ( $sec_term_id <= 0 ) {
                 continue;
             }
 
-            $ar_parent_id = $this->getExistingTranslationId( $en_term->parent, "tax_{$taxonomy}" );
-            if ( $ar_parent_id <= 0 ) {
-                continue; // Arabic parent does not exist yet – skip.
+            $sec_parent_id = $this->getExistingTranslationId( $pri_term->parent, "tax_{$taxonomy}" );
+            if ( $sec_parent_id <= 0 ) {
+                continue; // Secondary-language parent does not exist yet – skip.
             }
 
-            $ar_term = get_term( $ar_term_id, $taxonomy );
-            if ( $ar_term && ! is_wp_error( $ar_term ) && (int) $ar_term->parent === $ar_parent_id ) {
+            $sec_term = get_term( $sec_term_id, $taxonomy );
+            if ( $sec_term && ! is_wp_error( $sec_term ) && (int) $sec_term->parent === $sec_parent_id ) {
                 continue; // Already correct.
             }
 
-            $result = wp_update_term( $ar_term_id, $taxonomy, [ 'parent' => $ar_parent_id ] );
+            $result = wp_update_term( $sec_term_id, $taxonomy, [ 'parent' => $sec_parent_id ] );
             if ( is_wp_error( $result ) ) {
-                $this->logger->warning( "[multilingual] Could not fix Arabic parent for {$taxonomy} term #{$ar_term_id}: " . $result->get_error_message() );
+                $this->logger->warning( "[multilingual] Could not fix secondary-language parent for {$taxonomy} term #{$sec_term_id}: " . $result->get_error_message() );
             } else {
                 // wp_update_term may suffix the slug for uniqueness; restore it.
-                $en_term_for_slug = get_term( $en_term_id, $taxonomy );
-                if ( $en_term_for_slug && ! is_wp_error( $en_term_for_slug ) ) {
-                    $this->fixTranslationTermSlug( $ar_term_id, $en_term_for_slug->slug );
+                $pri_term_for_slug = get_term( $pri_term_id, $taxonomy );
+                if ( $pri_term_for_slug && ! is_wp_error( $pri_term_for_slug ) ) {
+                    $this->fixTranslationTermSlug( $sec_term_id, $pri_term_for_slug->slug );
                 }
-                $this->logger->debug( "[multilingual] Fixed Arabic parent for {$taxonomy} term #{$ar_term_id} → parent #{$ar_parent_id}." );
+                $this->logger->debug( "[multilingual] Fixed secondary-language parent for {$taxonomy} term #{$sec_term_id} → parent #{$sec_parent_id}." );
             }
         }
     }
@@ -1074,24 +1497,24 @@ class WpmlIntegration extends AbstractMigrator {
     /**
      * Create a translated taxonomy term in the secondary language.
      */
-    private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy, int $ar_parent = 0 ): int {
+    private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy, int $sec_parent = 0 ): int {
         // Do NOT pass 'slug' to wp_insert_term — WordPress rejects the primary-
-        // language slug because another term (the English one) already owns it.
+        // language slug because another term (the primary one) already owns it.
         // Let WordPress generate a temporary slug, then force the correct one
         // via direct DB write after the term is created and WPML-linked.
         //
         // Switch to the secondary language BEFORE wp_insert_term so WPML's
-        // hook auto-registers the new term as 'ar' immediately during creation.
+        // hook auto-registers the new term in the secondary language immediately during creation.
         // Without this, WPML sees the current language as 'en' (the default) and
-        // registers the Arabic term as English — causing it to appear in the
-        // English category widget and breaking language filtering.
+        // registers the secondary term as primary — causing it to appear in the
+        // primary-language category widget and breaking language filtering.
         if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
             do_action( 'wpml_switch_language', $this->secondary_lang );
         }
 
         $result = wp_insert_term( $name, $taxonomy, [
             'description' => $description ?: $source->description,
-            'parent'      => $ar_parent,
+            'parent'      => $sec_parent,
         ] );
 
         if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
@@ -1101,19 +1524,19 @@ class WpmlIntegration extends AbstractMigrator {
         if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
             $existing_id = (int) $result->get_error_data( 'term_exists' );
 
-            // Guard: if the "existing" term is actually the English primary term
+            // Guard: if the "existing" term is actually the primary-language term
             // (same name in both languages — e.g. brand names like "Apple", "Nintendo"),
-            // using that ID as the Arabic translation would create a self-link in
+            // using that ID as the secondary-language translation would create a self-link in
             // icl_translations, which WPML rejects. Instead, insert a throwaway
             // placeholder name that is guaranteed unique, then rename it via direct DB.
             if ( $existing_id === $source->term_id ) {
-                $placeholder = 'octowoo-ar-new-' . $source->term_id . '-' . time();
+                $placeholder = 'octowoo-sec-new-' . $source->term_id . '-' . time();
                 if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
                     do_action( 'wpml_switch_language', $this->secondary_lang );
                 }
                 $retry = wp_insert_term( $placeholder, $taxonomy, [
                     'description' => $description ?: $source->description,
-                    'parent'      => $ar_parent,
+                    'parent'      => $sec_parent,
                 ] );
                 if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
                     do_action( 'wpml_switch_language', null );
@@ -1123,6 +1546,14 @@ class WpmlIntegration extends AbstractMigrator {
                     return 0;
                 }
                 $existing_id = (int) $retry['term_id'];
+
+                // Rename placeholder → actual secondary-language name immediately so the term
+                // is never visible as "octowoo-sec-new-…" in WP Admin.
+                // WordPress allows multiple terms with the same name in one taxonomy
+                // (only slugs must be unique), so this direct update is safe.
+                global $wpdb;
+                $wpdb->update( $wpdb->terms, [ 'name' => $name ], [ 'term_id' => $existing_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                clean_term_cache( $existing_id );
                 // fixTranslationTermSlug (called by the caller) will set the correct slug afterwards.
             }
 
@@ -1137,29 +1568,30 @@ class WpmlIntegration extends AbstractMigrator {
         $translated_term_id = (int) $result['term_id'];
 
         // Copy Yoast SEO meta.
-        // Fall back to English when Arabic meta is absent.
-        $ar_meta_title = (string) get_term_meta( $source->term_id, '_octowoo_metatitle_ar', true );
-        $ar_meta_desc  = (string) get_term_meta( $source->term_id, '_octowoo_metadesc_ar',  true );
-        $ar_meta_kw    = (string) get_term_meta( $source->term_id, '_octowoo_metakw_ar',    true );
+        // Fall back to primary-language values when secondary meta is absent.
+        $sfx            = $this->secLangSuffix();
+        $sec_meta_title = (string) get_term_meta( $source->term_id, '_octowoo_metatitle' . $sfx, true );
+        $sec_meta_desc  = (string) get_term_meta( $source->term_id, '_octowoo_metadesc'  . $sfx, true );
+        $sec_meta_kw    = (string) get_term_meta( $source->term_id, '_octowoo_metakw'    . $sfx, true );
 
-        if ( $ar_meta_title === '' ) {
-            $ar_meta_title = (string) get_term_meta( $source->term_id, '_yoast_wpseo_title', true );
+        if ( $sec_meta_title === '' ) {
+            $sec_meta_title = (string) get_term_meta( $source->term_id, '_yoast_wpseo_title', true );
         }
-        if ( $ar_meta_desc === '' ) {
-            $ar_meta_desc = (string) get_term_meta( $source->term_id, '_yoast_wpseo_metadesc', true );
+        if ( $sec_meta_desc === '' ) {
+            $sec_meta_desc = (string) get_term_meta( $source->term_id, '_yoast_wpseo_metadesc', true );
         }
-        if ( $ar_meta_kw === '' ) {
-            $ar_meta_kw = (string) get_term_meta( $source->term_id, '_yoast_wpseo_focuskw', true );
+        if ( $sec_meta_kw === '' ) {
+            $sec_meta_kw = (string) get_term_meta( $source->term_id, '_yoast_wpseo_focuskw', true );
         }
 
-        if ( $ar_meta_title ) {
-            update_term_meta( $translated_term_id, '_yoast_wpseo_title',   $ar_meta_title );
+        if ( $sec_meta_title ) {
+            update_term_meta( $translated_term_id, '_yoast_wpseo_title',   $sec_meta_title );
         }
-        if ( $ar_meta_desc ) {
-            update_term_meta( $translated_term_id, '_yoast_wpseo_metadesc', $ar_meta_desc );
+        if ( $sec_meta_desc ) {
+            update_term_meta( $translated_term_id, '_yoast_wpseo_metadesc', $sec_meta_desc );
         }
-        if ( $ar_meta_kw ) {
-            update_term_meta( $translated_term_id, '_yoast_wpseo_focuskw', $ar_meta_kw );
+        if ( $sec_meta_kw ) {
+            update_term_meta( $translated_term_id, '_yoast_wpseo_focuskw', $sec_meta_kw );
         }
 
         update_term_meta( $translated_term_id, '_octowoo_translation_of',   $source->term_id );
@@ -1192,12 +1624,14 @@ class WpmlIntegration extends AbstractMigrator {
             // Get existing trid FIRST (WPML may have auto-assigned one during
             // wp_insert_term) to avoid creating a duplicate translation group.
             $existing_trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
-            $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid );
+            // is_primary = true → source_language_code = null (this IS the original).
+            $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid, true );
             // Re-fetch after update for canonical trid.
             $trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
             $translated_term = get_term( $translated_term_id, $taxonomy );
             if ( $translated_term && ! is_wp_error( $translated_term ) ) {
-                $this->wpmlSetTermLanguage( $translated_term, $element_type, $this->secondary_lang, $trid );
+                // is_primary = false → source_language_code = $this->primary_lang.
+                $this->wpmlSetTermLanguage( $translated_term, $element_type, $this->secondary_lang, $trid, false );
             }
 
         } elseif ( $this->adapter === 'polylang' ) {
@@ -1212,13 +1646,17 @@ class WpmlIntegration extends AbstractMigrator {
 
     // ── WPML helpers ──────────────────────────────────────────────────────────
 
-    private function wpmlSetPostLanguage( int $post_id, string $element_type, string $lang, ?int $trid ): void {
+    private function wpmlSetPostLanguage( int $post_id, string $element_type, string $lang, ?int $trid, bool $is_primary = false ): void {
         do_action( 'wpml_set_element_language_details', [
             'element_id'           => $post_id,
             'element_type'         => $element_type,
             'trid'                 => $trid,
             'language_code'        => $lang,
-            'source_language_code' => $trid === null ? null : $this->primary_lang,
+            // source_language_code must be NULL for the default-language original.
+            // Passing $this->primary_lang here tells WPML "this was translated FROM
+            // English" which reclassifies the English original as a translation —
+            // making it disappear from the English language filter (English 0).
+            'source_language_code' => $is_primary ? null : $this->primary_lang,
         ] );
     }
 
@@ -1227,13 +1665,16 @@ class WpmlIntegration extends AbstractMigrator {
         return $trid ? (int) $trid : null;
     }
 
-    private function wpmlSetTermLanguage( \WP_Term $term, string $element_type, string $lang, ?int $trid ): void {
+    private function wpmlSetTermLanguage( \WP_Term $term, string $element_type, string $lang, ?int $trid, bool $is_primary = false ): void {
         do_action( 'wpml_set_element_language_details', [
             'element_id'           => (int) $term->term_taxonomy_id,
             'element_type'         => $element_type,
             'trid'                 => $trid,
             'language_code'        => $lang,
-            'source_language_code' => $trid === null ? null : $this->primary_lang,
+            // source_language_code must be NULL for the primary-language original.
+            // Passing $this->primary_lang for an English term tells WPML it is a
+            // translation of English, stripping it from the English language filter.
+            'source_language_code' => $is_primary ? null : $this->primary_lang,
         ] );
     }
 

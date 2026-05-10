@@ -3,7 +3,7 @@
  * Product migrator.
  *
  * Handles both simple and variable products, including:
- *  - Basic fields: name, description (Arabic + English), SKU, price, special price.
+ *  - Basic fields: name, description (primary + secondary language), SKU, price, special price.
  *  - Stock: quantity and status.
  *  - Category assignment.
  *  - Featured image + gallery.
@@ -53,14 +53,13 @@ class ProductMigrator extends AbstractMigrator {
         $options       = $this->fetchProductOptions();
         $specials       = $this->fetchProductSpecials();
 
-        $total_callback = fn() => $this->oc->count( 'product', 'status = 1' );
+        $total_callback = fn() => $this->oc->count( 'product' );
 
         $batch_callback = fn( int $offset, int $limit ) => $this->oc->fetchBatch(
             "SELECT product_id, model, sku, quantity, stock_status_id, image,
                     price, subtract, sort_order, status, date_added, date_modified,
                     tax_class_id, weight, weight_class_id, length, width, height, minimum
              FROM `{$pfx}product`
-             WHERE status = 1
              ORDER BY product_id ASC",
             [],
             $limit,
@@ -124,7 +123,15 @@ class ProductMigrator extends AbstractMigrator {
              ?? null;
 
         if ( ! $desc ) {
-            $this->logger->warning( "[products] No description for OC #{$oc_id} – skipping." );
+            // Product exists in oc_product (status=1) but has NO description row
+            // at all in oc_product_description.  This is a data-quality issue in
+            // the source OpenCart database.  We skip the product and log clearly
+            // so the operator can investigate and re-run after fixing the data.
+            $this->logger->warning(
+                "[products] Skipping OC #{$oc_id}: no description found in oc_product_description " .
+                "(checked primary language_id={$lang_id} and all other languages). " .
+                'Fix the source data and reset progress to migrate this product.'
+            );
             return false;
         }
 
@@ -135,13 +142,13 @@ class ProductMigrator extends AbstractMigrator {
         // empty because OpenCart has no equivalent field.
         $short_desc  = '';
 
-        // Secondary language (Arabic) fields via Polylang / WPML meta or just stored as meta.
-        $name_ar      = '';
-        $desc_ar      = '';
-        $short_ar     = '';
-        $metatitle_ar = '';
-        $metadesc_ar  = '';
-        $metakw_ar    = '';
+        // Secondary language fields (language-agnostic — locale comes from config).
+        $sec_name      = '';
+        $sec_desc      = '';
+        $sec_short     = '';
+        $sec_metatitle = '';
+        $sec_metadesc  = '';
+        $sec_metakw    = '';
         $sec = null;
         if ( $lang_id_sec > 0 && isset( $descriptions[ $oc_id ][ $lang_id_sec ] ) ) {
             $sec = $descriptions[ $oc_id ][ $lang_id_sec ];
@@ -158,40 +165,71 @@ class ProductMigrator extends AbstractMigrator {
         }
 
         if ( is_array( $sec ) ) {
-            $name_ar      = $this->sanitizeName( $sec['name']             ?? '' );
-            $desc_ar      = $this->cleanDescription( $sec['description']  ?? '' );
+            $sec_name      = $this->sanitizeName( $sec['name']             ?? '' );
+            $sec_desc      = $this->cleanDescription( $sec['description']  ?? '' );
             // tag field = SEO keywords; not a short description — leave empty.
-            $short_ar     = '';
-            $metatitle_ar = $this->sanitizeText( $sec['meta_title']       ?? '' );
-            $metadesc_ar  = $this->sanitizeText( $sec['meta_description'] ?? '' );
-            $metakw_ar    = $this->sanitizeText( $sec['meta_keyword']     ?? '' );
+            $sec_short     = '';
+            $sec_metatitle = $this->sanitizeText( $sec['meta_title']       ?? '' );
+            $sec_metadesc  = $this->sanitizeText( $sec['meta_description'] ?? '' );
+            $sec_metakw    = $this->sanitizeText( $sec['meta_keyword']     ?? '' );
         }
 
         if ( $name === '' ) {
-            $this->logger->warning( "[products] Empty product name for OC #{$oc_id}." );
+            $this->logger->warning(
+                "[products] Skipping OC #{$oc_id}: product name is empty after sanitization " .
+                "(raw name: '" . ( $desc['name'] ?? '' ) . "'). Fix the source data and reset progress."
+            );
             return false;
         }
 
-        // Duplicate check: first by OC ID mapping (fast), then by SKU
-        // (catches products that exist in WC but weren't tagged by OctoWoo).
+        // Duplicate check:
+        //  1. id_map / _octowoo_oc_id meta  — fastest when the id_map is warm.
+        //  2. Direct _sku postmeta query    — always reliable, even when WooCommerce's
+        //     wc_product_meta_lookup table is stale (which happens when products were
+        //     created via update_post_meta() without going through WC_Product::save()).
+        //     wc_get_product_id_by_sku() queries that lookup table in WC 3.7+ and
+        //     therefore returns 0 for products created by OctoWoo — causing duplicates.
         $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
 
         if ( ! $existing_wc_id ) {
             $sku = sanitize_text_field( $row['sku'] ?: $row['model'] );
-            if ( $sku !== '' && function_exists( 'wc_get_product_id_by_sku' ) ) {
-                $by_sku = (int) wc_get_product_id_by_sku( $sku );
+            if ( $sku !== '' ) {
+                global $wpdb;
+                // Query wp_postmeta directly so we never depend on wc_product_meta_lookup.
+                $by_sku = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "SELECT pm.post_id
+                         FROM {$wpdb->postmeta} pm
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         WHERE pm.meta_key = '_sku'
+                           AND pm.meta_value = %s
+                           AND p.post_type IN ('product','product_variation')
+                           AND p.post_status != 'trash'
+                         LIMIT 1",
+                        $sku
+                    )
+                );
                 if ( $by_sku > 0 ) {
                     $existing_wc_id = $by_sku;
-                    // Cache so future runs use the fast OC-ID path.
+                    // Cache in id_map so future requests use the fast path.
                     $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $by_sku );
-                    $this->logger->debug( "[products] SKU match '{$sku}' OC #{$oc_id} → WC #{$by_sku}." );
+                    $this->logger->info( "[products] SKU match '{$sku}' OC #{$oc_id} → WC #{$by_sku} (skipping duplicate)." );
                 }
             }
         }
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar );
+                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw );
+            }
+            // Even in skip mode: repair missing featured image without touching anything else.
+            // This is a lightweight fix — no post update, no option changes, just the thumbnail.
+            if ( ! get_post_thumbnail_id( $existing_wc_id ) ) {
+                $this->imageMigrator = $this->imageMigrator ?? new ImageMigrator(
+                    $this->oc, $this->logger, $this->checkpoint, $this->batch, $this->config
+                );
+                $this->assignImages( $existing_wc_id, $row['image'] ?? '', $extra_images[ $oc_id ] ?? [] );
+                $this->logger->debug( "[products] Repaired missing featured image for WC #{$existing_wc_id} (OC #{$oc_id})." );
             }
             $this->logger->debug( "[products] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;
@@ -202,7 +240,7 @@ class ProductMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar );
+        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw );
     }
 
     // ── Create product ────────────────────────────────────────────────────────
@@ -217,12 +255,12 @@ class ProductMigrator extends AbstractMigrator {
         array  $oc_images,
         array  $oc_options,
         array  $oc_specials,
-        string $name_ar      = '',
-        string $desc_ar      = '',
-        string $metatitle_ar = '',
-        string $metadesc_ar  = '',
-        string $short_ar     = '',
-        string $metakw_ar    = ''
+        string $sec_name      = '',
+        string $sec_desc      = '',
+        string $sec_metatitle = '',
+        string $sec_metadesc  = '',
+        string $sec_short     = '',
+        string $sec_metakw    = ''
     ): bool {
         global $wpdb;
 
@@ -242,7 +280,7 @@ class ProductMigrator extends AbstractMigrator {
                 $wpdb, $oc_id, $product_type, $has_vars,
                 $row, $desc, $name, $description, $short_desc,
                 $oc_categories, $oc_images, $oc_options, $oc_specials,
-                $name_ar, $desc_ar, $metatitle_ar, $metadesc_ar, $short_ar, $metakw_ar
+                $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw
             );
         } catch ( \Throwable $e ) {
             $wpdb->query( 'ROLLBACK' );
@@ -270,19 +308,22 @@ class ProductMigrator extends AbstractMigrator {
         array  $oc_images,
         array  $oc_options,
         array  $oc_specials,
-        string $name_ar      = '',
-        string $desc_ar      = '',
-        string $metatitle_ar = '',
-        string $metadesc_ar  = '',
-        string $short_ar     = '',
-        string $metakw_ar    = ''
+        string $sec_name      = '',
+        string $sec_desc      = '',
+        string $sec_metatitle = '',
+        string $sec_metadesc  = '',
+        string $sec_short     = '',
+        string $sec_metakw    = ''
     ): bool {
+
+        // Map OpenCart status: 1 = enabled → publish, 0 = disabled → draft.
+        $wc_status = ( (int) ( $row['status'] ?? 1 ) === 1 ) ? 'publish' : 'draft';
 
         $post_id = wp_insert_post( [
             'post_title'   => $name,
             'post_content' => wp_kses_post( $description ),
             'post_excerpt' => wp_kses_post( $short_desc ),
-            'post_status'  => 'publish',
+            'post_status'  => $wc_status,
             'post_type'    => 'product',
             'post_date'    => $row['date_added'] ?? current_time( 'mysql' ),
         ], true );
@@ -331,24 +372,25 @@ class ProductMigrator extends AbstractMigrator {
         // Source reference.
         update_post_meta( $post_id, '_octowoo_oc_id', $oc_id );
 
-        // Arabic / secondary-language meta (for WPML / Polylang translation pass).
-        if ( $name_ar ) {
-            update_post_meta( $post_id, '_octowoo_name_ar', $name_ar );
+        // Secondary-language meta (for WPML / Polylang translation pass).
+        $sfx = $this->secLangSuffix();
+        if ( $sec_name ) {
+            update_post_meta( $post_id, '_octowoo_name' . $sfx, $sec_name );
         }
-        if ( $desc_ar ) {
-            update_post_meta( $post_id, '_octowoo_description_ar', $desc_ar );
+        if ( $sec_desc ) {
+            update_post_meta( $post_id, '_octowoo_description' . $sfx, $sec_desc );
         }
-        if ( $short_ar ) {
-            update_post_meta( $post_id, '_octowoo_short_description_ar', $short_ar );
+        if ( $sec_short ) {
+            update_post_meta( $post_id, '_octowoo_short_description' . $sfx, $sec_short );
         }
-        if ( $metatitle_ar ) {
-            update_post_meta( $post_id, '_octowoo_metatitle_ar', $metatitle_ar );
+        if ( $sec_metatitle ) {
+            update_post_meta( $post_id, '_octowoo_metatitle' . $sfx, $sec_metatitle );
         }
-        if ( $metadesc_ar ) {
-            update_post_meta( $post_id, '_octowoo_metadesc_ar', $metadesc_ar );
+        if ( $sec_metadesc ) {
+            update_post_meta( $post_id, '_octowoo_metadesc' . $sfx, $sec_metadesc );
         }
-        if ( $metakw_ar ) {
-            update_post_meta( $post_id, '_octowoo_metakw_ar', $metakw_ar );
+        if ( $sec_metakw ) {
+            update_post_meta( $post_id, '_octowoo_metakw' . $sfx, $sec_metakw );
         }
         // SEO meta fields.
         if ( ! empty( $desc['meta_title'] ) ) {
@@ -370,8 +412,10 @@ class ProductMigrator extends AbstractMigrator {
             update_post_meta( $post_id, '_octowoo_oc_image_path', $featured_oc_path );
         }
 
-        // Featured image + gallery.
-        $this->assignImages( $post_id, $featured_oc_path, $oc_images );
+        // NOTE: assignImages() is intentionally called AFTER COMMIT (below) so that
+        // media_handle_sideload() runs outside the transaction.  Inside a transaction
+        // the attachment post would be rolled back on failure, leaving the physical
+        // file on disk with no DB record (orphan file + duplicate on next run).
 
         // Attributes + variations — guard against combination explosion.
         if ( $has_vars ) {
@@ -397,7 +441,45 @@ class ProductMigrator extends AbstractMigrator {
 
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $post_id );
 
+        // Populate wc_product_meta_lookup so that WC's wc_get_product_id_by_sku()
+        // and admin product list work correctly, and future OctoWoo runs can also
+        // find this product via the WC API if needed.
+        // Static cache: check table existence only once per PHP request.
+        static $has_lookup_table = null;
+        $lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
+        if ( $has_lookup_table === null ) {
+            $has_lookup_table = ( $wpdb->get_var( "SHOW TABLES LIKE '{$lookup_table}'" ) === $lookup_table ); // phpcs:ignore WordPress.DB
+        }
+        if ( $has_lookup_table ) { // phpcs:ignore WordPress.DB
+            $wpdb->replace( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $lookup_table,
+                [
+                    'product_id'     => $post_id,
+                    'sku'            => sanitize_text_field( $row['sku'] ?: $row['model'] ),
+                    'virtual'        => 0,
+                    'downloadable'   => 0,
+                    'min_price'      => $price,
+                    'max_price'      => $price,
+                    'onsale'         => 0,
+                    'stock_quantity' => $qty,
+                    'stock_status'   => ( $status === 'instock' ) ? 1 : 0,
+                    'rating_count'   => 0,
+                    'average_rating' => '0.00',
+                    'total_sales'    => 0,
+                    'tax_status'     => 'taxable',
+                    'tax_class'      => '',
+                ],
+                [ '%d', '%s', '%d', '%d', '%f', '%f', '%d', '%f', '%d', '%d', '%s', '%d', '%s', '%s' ]
+            );
+        }
+
         $wpdb->query( 'COMMIT' );
+
+        // Import images AFTER commit: the product is safely persisted before any
+        // sideload attempt.  If media_handle_sideload() fails the product remains
+        // intact; the repair path in processProduct() will retry the thumbnail on
+        // the next run without re-creating the product.
+        $this->assignImages( $post_id, $featured_oc_path, $oc_images );
 
         $this->logger->info( "[products] Created WC product #{$post_id} ({$product_type}) from OC #{$oc_id}: \"{$name}\"" );
 
@@ -414,12 +496,12 @@ class ProductMigrator extends AbstractMigrator {
         array  $oc_images,
         array  $oc_options,
         array  $oc_specials,
-        string $name_ar      = '',
-        string $desc_ar      = '',
-        string $metatitle_ar = '',
-        string $metadesc_ar  = '',
-        string $short_ar     = '',
-        string $metakw_ar    = ''
+        string $sec_name      = '',
+        string $sec_desc      = '',
+        string $sec_metatitle = '',
+        string $sec_metadesc  = '',
+        string $sec_short     = '',
+        string $sec_metakw    = ''
     ): bool {
         $oc_id = (int) $row['product_id'];
 
@@ -442,24 +524,25 @@ class ProductMigrator extends AbstractMigrator {
         // Sync tax class.
         $this->applyTaxClass( $wc_post_id, (int) ( $row['tax_class_id'] ?? 0 ) );
 
-        // Arabic / secondary-language meta (keep in sync on update).
-        if ( $name_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_name_ar', $name_ar );
+        // Secondary-language meta (keep in sync on update).
+        $sfx = $this->secLangSuffix();
+        if ( $sec_name ) {
+            update_post_meta( $wc_post_id, '_octowoo_name' . $sfx, $sec_name );
         }
-        if ( $desc_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_description_ar', $desc_ar );
+        if ( $sec_desc ) {
+            update_post_meta( $wc_post_id, '_octowoo_description' . $sfx, $sec_desc );
         }
-        if ( $short_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_short_description_ar', $short_ar );
+        if ( $sec_short ) {
+            update_post_meta( $wc_post_id, '_octowoo_short_description' . $sfx, $sec_short );
         }
-        if ( $metatitle_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_metatitle_ar', $metatitle_ar );
+        if ( $sec_metatitle ) {
+            update_post_meta( $wc_post_id, '_octowoo_metatitle' . $sfx, $sec_metatitle );
         }
-        if ( $metadesc_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_metadesc_ar', $metadesc_ar );
+        if ( $sec_metadesc ) {
+            update_post_meta( $wc_post_id, '_octowoo_metadesc' . $sfx, $sec_metadesc );
         }
-        if ( $metakw_ar ) {
-            update_post_meta( $wc_post_id, '_octowoo_metakw_ar', $metakw_ar );
+        if ( $sec_metakw ) {
+            update_post_meta( $wc_post_id, '_octowoo_metakw' . $sfx, $sec_metakw );
         }
 
         // English SEO meta (keep in sync on update).
@@ -474,13 +557,48 @@ class ProductMigrator extends AbstractMigrator {
         }
 
         // Keep OC image path meta in sync so the multilingual pass can re-attempt
-        // image import for Arabic translations if _thumbnail_id is missing.
+        // image import for secondary-language translations if _thumbnail_id is missing.
         $featured_oc_path = $row['image'] ?? '';
         if ( $featured_oc_path !== '' ) {
             update_post_meta( $wc_post_id, '_octowoo_oc_image_path', $featured_oc_path );
         }
+        // Re-assign images on update: re-sets _thumbnail_id and _product_image_gallery.
+        // This repairs products whose featured image was missing from the initial run.
+        $this->assignImages( $wc_post_id, $featured_oc_path, $oc_images );
+
+        // Keep wc_product_meta_lookup in sync — wp_update_post() alone does not
+        // trigger WC_Product::save(), so price/stock filters in WC admin stay stale.
+        global $wpdb;
+        static $has_lookup_table_upd = null;
+        $lookup_table_upd = $wpdb->prefix . 'wc_product_meta_lookup';
+        if ( $has_lookup_table_upd === null ) {
+            $has_lookup_table_upd = ( $wpdb->get_var( "SHOW TABLES LIKE '{$lookup_table_upd}'" ) === $lookup_table_upd ); // phpcs:ignore WordPress.DB
+        }
+        if ( $has_lookup_table_upd ) {
+            $qty_upd    = (int) $row['quantity'];
+            $price_upd  = (float) $row['price'];
+            $status_upd = $this->mapStockStatus( (int) $row['stock_status_id'], $qty_upd );
+            $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $lookup_table_upd,
+                [
+                    'sku'            => sanitize_text_field( $row['sku'] ?: $row['model'] ),
+                    'min_price'      => $price_upd,
+                    'max_price'      => $price_upd,
+                    'stock_quantity' => $qty_upd,
+                    'stock_status'   => ( $status_upd === 'instock' ) ? 1 : 0,
+                ],
+                [ 'product_id' => $wc_post_id ],
+                [ '%s', '%f', '%f', '%f', '%d' ],
+                [ '%d' ]
+            );
+        }
 
         wc_delete_product_transients( $wc_post_id );
+
+        // Re-assign categories on update so products that were migrated before
+        // categories were available, or whose category mapping changed, are
+        // automatically corrected on the next Products run.
+        $this->assignCategories( $wc_post_id, $oc_categories );
 
         $this->logger->info( "[products] Updated WC product #{$wc_post_id} (OC #{$oc_id})." );
         return true;
@@ -683,15 +801,18 @@ class ProductMigrator extends AbstractMigrator {
     // ── Images ────────────────────────────────────────────────────────────────
 
     private function assignImages( int $post_id, string $featured_oc_path, array $oc_images ): void {
-        // Featured image.
+        $thumbnail_set = false;
+
+        // Featured image — from oc_product.image.
         if ( $featured_oc_path ) {
             $attachment_id = $this->imageMigrator->importByOcPath( $featured_oc_path );
             if ( $attachment_id && $attachment_id > 0 ) {
                 set_post_thumbnail( $post_id, $attachment_id );
+                $thumbnail_set = true;
             }
         }
 
-        // Gallery images.
+        // Gallery images — from oc_product_image.
         $gallery_ids = [];
         foreach ( $oc_images as $img ) {
             if ( empty( $img['image'] ) ) {
@@ -701,6 +822,14 @@ class ProductMigrator extends AbstractMigrator {
             if ( $att_id && $att_id > 0 ) {
                 $gallery_ids[] = $att_id;
             }
+        }
+
+        // Fallback: when oc_product.image is empty (or failed to import),
+        // promote the first gallery image to featured so products never
+        // show the WooCommerce grey placeholder.
+        if ( ! $thumbnail_set && ! empty( $gallery_ids ) ) {
+            set_post_thumbnail( $post_id, $gallery_ids[0] );
+            array_shift( $gallery_ids );
         }
 
         if ( ! empty( $gallery_ids ) ) {

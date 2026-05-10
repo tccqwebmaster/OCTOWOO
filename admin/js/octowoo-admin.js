@@ -22,6 +22,13 @@
     let isRunning      = false;
     let isPausedState  = false;
     let currentMigrator = '';
+    // Epoch counter incremented every time a NEW migration session starts.
+    // Each runNextChunk() call captures the epoch at dispatch time; the .done
+    // callback discards the response if the epoch has since changed.  This
+    // prevents a slow in-flight chunk from a previous run (e.g. a full
+    // migration that was running while the user clicks a recovery button) from
+    // clobbering currentRunId and firing unwanted migrators.
+    let migrationEpoch = 0;
 
     /* ── DOM refs (populated in init) ────────────────────────────────────── */
     let $progressTable, $logContainer, $statusBanner, $btnStart, $btnResume, $btnAbort, $btnPause, $btnSkip, $btnReset;
@@ -62,6 +69,8 @@
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
+        $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
+        $('#ow-btn-repair-order-items').on('click', repairOrderItems);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -630,7 +639,8 @@
      */
     function buildMigrators() {
         const ENTITY_MAP = {
-            'products':      ['products', 'related'],
+            'products':      ['products'],
+            'related':       ['related'],
             'reviews':       ['reviews'],
             'bundles':       ['bundles'],
             'categories':    ['categories'],
@@ -658,24 +668,35 @@
         return list.join(',');
     }
 
-    function startMigration(resume, isDemo, forcedMigrators, customModeLabel) {
+    function startMigration(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders) {
         if (isRunning) { return; }
 
-        if (resume && (isPausedState || currentRunId)) {
+        // Resume: always call octowoo_resume_migration so the server can
+        // re-activate aborted checkpoints back to pending.  Use activeRunId
+        // first, then fall back to lastRunId so an accidentally aborted run
+        // (where the active lock was already cleared) can still be recovered.
+        if (resume && (isPausedState || currentRunId || octoWoo.lastRunId)) {
+            const resumeRunId = currentRunId || octoWoo.activeRunId || octoWoo.lastRunId || '';
             $.post(octoWoo.ajaxUrl, {
                 action: 'octowoo_resume_migration',
                 nonce:  octoWoo.nonce,
-                run_id: currentRunId,
-            }).always(function () {
-                startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel);
+                run_id: resumeRunId,
+            }).always(function (res) {
+                // Use the server-returned run_id if provided (covers the last_run fallback).
+                if (res && res.success && res.data && res.data.run_id) {
+                    currentRunId = res.data.run_id;
+                } else if (resumeRunId) {
+                    currentRunId = resumeRunId;
+                }
+                startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders);
             });
             return;
         }
 
-        startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel);
+        startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders);
     }
 
-    function startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel) {
+    function startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders) {
         if (isRunning) { return; }
 
         isPausedState = false;
@@ -686,7 +707,10 @@
             const modeStr = isDemo
                 ? 'Demo Migration (first 20 items per entity)'
                 : (customModeLabel || 'Full Migration');
-            if (!confirm('Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.')) { return; }
+            const confirmMsg = noClearOrders
+                ? 'Start ' + modeStr + '?'
+                : 'Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.';
+            if (!confirm(confirmMsg)) { return; }
         }
 
         chunkMigrators  = forcedMigrators || buildMigrators();
@@ -695,7 +719,8 @@
         // Read the on_duplicate selection live from the DOM so the user's
         // current choice always applies without needing to save settings first.
         chunkOnDuplicate = $('select[name="octowoo[migration][on_duplicate]"]').val() || 'skip';
-        chunkClearOrdersPending = !resume;
+        // Recovery runs must never clear orders — only a full fresh migration should.
+        chunkClearOrdersPending = !resume && !noClearOrders;
 
         setButtonState('running');
         setBannerRunning();
@@ -707,6 +732,7 @@
         }
         chunkFailCount = 0;
         isRunning = true;
+        migrationEpoch++; // invalidate any in-flight responses from previous sessions
         // NOTE: polling is started AFTER the first chunk response sets a valid
         // currentRunId.  Starting it here with an empty run_id causes a race:
         // the poll hits the server before markRunActive() runs, the server
@@ -718,25 +744,89 @@
     function startImagesOnlyRecovery() {
         // Re-import all images: product images (ImageMigrator), category thumbnails
         // (CategoryMigrator), and brand/manufacturer logos (ManufacturerMigrator).
-        startMigration(false, false, 'images,categories,manufacturers', 'Images-Only Recovery');
+        startMigration(false, false, 'images,categories,manufacturers', 'Images-Only Recovery', true);
     }
 
     function startProductsImagesRecovery() {
         // Recovery mode: refresh product-image linking and gallery imports
         // without running unrelated entities.
-        startMigration(false, false, 'products,images,related', 'Products + Images Recovery');
+        startMigration(false, false, 'products,images,related', 'Products + Images Recovery', true);
     }
 
     function startCategoriesManufacturersRecovery() {
         // Recovery mode for taxonomy/brand terms and their media,
         // without touching orders/customers/coupons.
-        startMigration(false, false, 'categories,manufacturers', 'Categories + Manufacturers Recovery');
+        startMigration(false, false, 'categories,manufacturers', 'Categories + Manufacturers Recovery', true);
     }
 
     function startMultilingualRecovery() {
         // Re-run only the WPML/Polylang translation pass without re-migrating
         // primary entities. Useful after fixing Arabic/multilingual issues.
-        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery');
+        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', true);
+    }
+
+    /**
+     * Delete placeholder ('octowoo-ar-new-…') and duplicate WPML category terms
+     * left over from failed/retried chunk runs.  One-shot AJAX — not a migration.
+     */
+    function cleanupMlTerms() {
+        const $btn = $('#ow-btn-cleanup-ml-terms');
+        if ($btn.prop('disabled')) { return; }
+        $btn.prop('disabled', true).text('🧹 Cleaning…');
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_cleanup_ml_terms',
+            nonce:  octoWoo.nonce,
+        })
+        .done(function (res) {
+            if (res && res.success) {
+                alert(res.data.message || 'Cleanup complete.');
+            } else {
+                alert('Cleanup failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
+            }
+        })
+        .fail(function () {
+            alert('Cleanup request failed. Check the server logs.');
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('🧹 Fix Orphan Categories');
+        });
+    }
+
+    function repairOrderItems() {
+        const $btn = $('#ow-btn-repair-order-items');
+        if ($btn.prop('disabled')) { return; }
+        $btn.prop('disabled', true);
+
+        let totalRelinked = 0;
+
+        function runBatch(isFirst) {
+            $btn.text('🔗 Repairing… (' + totalRelinked + ' linked)');
+            $.post(octoWoo.ajaxUrl, {
+                action: 'octowoo_repair_order_items',
+                nonce:  octoWoo.nonce,
+                reset:  isFirst ? 1 : 0,
+            })
+            .done(function (res) {
+                if (!res || !res.success) {
+                    alert('Repair failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
+                    $btn.prop('disabled', false).text('🔗 Repair Order Items');
+                    return;
+                }
+                totalRelinked += (res.data.relinked || 0);
+                if (res.data.done) {
+                    alert('Repair complete. Re-linked ' + totalRelinked + ' order item(s) to current products.');
+                    $btn.prop('disabled', false).text('🔗 Repair Order Items');
+                } else {
+                    runBatch(false);
+                }
+            })
+            .fail(function () {
+                alert('Repair request failed. Check the server logs.');
+                $btn.prop('disabled', false).text('🔗 Repair Order Items');
+            });
+        }
+
+        runBatch(true);
     }
 
     function runNextChunk() {
@@ -745,6 +835,10 @@
         const shouldClearOrders = chunkClearOrdersPending ? 1 : 0;
         // Send clear_orders only once at the beginning of a new run.
         chunkClearOrdersPending = false;
+
+        // Capture epoch at dispatch time so the .done handler can detect if
+        // this response is stale (a newer migration session has started).
+        const dispatchEpoch = migrationEpoch;
 
         $.post(octoWoo.ajaxUrl, {
             action:       'octowoo_run_chunk',
@@ -758,6 +852,8 @@
             migrators:    chunkMigrators,
         })
         .done(function (res) {
+            // Discard responses from a previous migration session.
+            if (dispatchEpoch !== migrationEpoch) { return; }
             if (!res.success) {
                 // If this is a DB connection error, give a helpful message.
                 var msg = (res.data && res.data.message) ? res.data.message : 'Chunk error.';
@@ -956,6 +1052,10 @@
                 currentRunId = '';
                 currentMigrator = '';
                 isPausedState = false;
+                setButtonState('idle');
+                $btnResume.prop('disabled', true);
+                $('#ow-btn-resume-bg').prop('disabled', true);
+                $('#ow-active-run-banner').hide();
             } else {
                 setBannerError(res.data.message);
             }
@@ -1231,7 +1331,8 @@
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
         const $btnDemo     = $('#ow-btn-demo');
-        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual');
+        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual, #ow-btn-cleanup-ml-terms, #ow-btn-repair-order-items');
+        const $btnBgStart  = $('#ow-btn-start-bg, #ow-btn-resume-bg');
 
         if (state === 'running') {
             $btnStart.prop('disabled', true)
@@ -1242,6 +1343,9 @@
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', false);
             $btnSkip.prop('disabled', false);
+            // Prevent user from launching a second (background) run in parallel,
+            // which caused duplicate categories/products in the past.
+            $btnBgStart.prop('disabled', true);
         } else if (state === 'paused') {
             $btnStart.prop('disabled', true).text('▶ Start Full Migration');
             $btnDemo.prop('disabled', true);
@@ -1250,6 +1354,9 @@
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', false);
+            // Allow resuming via background mode when paused.
+            $('#ow-btn-start-bg').prop('disabled', true);
+            $('#ow-btn-resume-bg').prop('disabled', false);
         } else {
             $btnStart.prop('disabled', false).text('▶ Start Full Migration');
             $btnDemo.prop('disabled', false);
@@ -1258,6 +1365,9 @@
             $btnAbort.prop('disabled', true);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', true);
+            // Re-enable background start; disable background resume (nothing to resume in idle).
+            $('#ow-btn-start-bg').prop('disabled', false);
+            $('#ow-btn-resume-bg').prop('disabled', true);
         }
     }
 

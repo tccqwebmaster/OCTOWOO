@@ -96,6 +96,11 @@ class OrderMigrator extends AbstractMigrator {
         // Duplicate check.
         $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
         if ( $existing_wc_id ) {
+            // On update strategy: re-link order items to current product IDs (by SKU)
+            // without touching amounts, addresses, or status.
+            if ( $this->onDuplicate() === 'update' ) {
+                $this->relinkOrderItems( $existing_wc_id, $order_products[ $oc_id ] ?? [] );
+            }
             $this->logger->debug( "[orders] Already migrated OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;
         }
@@ -271,15 +276,29 @@ class OrderMigrator extends AbstractMigrator {
     // ── Order items ───────────────────────────────────────────────────────────
 
     private function addOrderItem( \WC_Order $order, array $oc_item ): void {
-        $name    = $this->sanitizeText( $oc_item['name'] ?? 'Unknown Product' );
-        $qty     = max( 1, (int) $oc_item['quantity'] );
-        $price   = (float) $oc_item['price'];
-        $tax     = (float) $oc_item['tax'];
-        $oc_prod = (int) $oc_item['product_id'];
+        $name     = $this->sanitizeText( $oc_item['name'] ?? 'Unknown Product' );
+        $qty      = max( 1, (int) $oc_item['quantity'] );
+        $price    = (float) $oc_item['price'];
+        $tax      = (float) $oc_item['tax'];
+        $oc_prod  = (int) $oc_item['product_id'];
+        $oc_model = trim( (string) ( $oc_item['model'] ?? '' ) );
 
         // Try to link to the migrated WC product.
+        // Strategy 1: id_map lookup (fastest when id_map is warm).
         $wc_product_id = $this->checkpoint->getWcId( 'product', $oc_prod );
         $product       = $wc_product_id ? wc_get_product( $wc_product_id ) : null;
+
+        // Strategy 2: SKU / model fallback — used when the id_map points to a
+        // product that was deleted after the initial migration (re-migration scenario).
+        // Also used when the Products step hasn't run yet (e.g. order-first import).
+        if ( ! $product && $oc_model !== '' ) {
+            $product = $this->findProductBySku( $oc_model );
+            if ( $product ) {
+                // Back-fill the id_map so subsequent order-item lookups use the fast path.
+                $this->checkpoint->saveIdMap( 'product', $oc_prod, $product->get_id() );
+                $this->logger->debug( "[orders] Linked OC product #{$oc_prod} to WC #{" . $product->get_id() . "} via SKU '{$oc_model}'." );
+            }
+        }
 
         $item = new \WC_Order_Item_Product();
         $item->set_name( $name );
@@ -289,13 +308,142 @@ class OrderMigrator extends AbstractMigrator {
         $item->set_subtotal_tax( $tax * $qty );
         $item->set_total_tax( $tax * $qty );
 
+        // Always store the OC product reference so the repair tool can re-link
+        // after products are deleted and re-migrated.
+        $item->add_meta_data( '_octowoo_oc_product_id', $oc_prod, true );
+        if ( $oc_model !== '' ) {
+            $item->add_meta_data( '_octowoo_oc_product_model', $oc_model, true );
+        }
+
         if ( $product ) {
             $item->set_product( $product );
-        } else {
-            $item->add_meta_data( '_octowoo_oc_product_id', $oc_prod );
         }
 
         $order->add_item( $item );
+    }
+
+    /**
+     * Look up a WooCommerce product by SKU, querying wp_postmeta directly so
+     * we never depend on the wc_product_meta_lookup table which can be stale.
+     */
+    private function findProductBySku( string $sku ): ?\WC_Product {
+        global $wpdb;
+
+        $id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT pm.post_id
+                 FROM {$wpdb->postmeta} pm
+                 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                 WHERE pm.meta_key   = '_sku'
+                   AND pm.meta_value = %s
+                   AND p.post_type  IN ('product','product_variation')
+                   AND p.post_status != 'trash'
+                 LIMIT 1",
+                $sku
+            )
+        );
+
+        return $id > 0 ? wc_get_product( $id ) : null;
+    }
+
+    /**
+     * Re-link order items in an already-migrated WC order to their current
+     * WC product IDs using id_map → SKU fallback.
+     *
+     * Called on `on_duplicate=update` so that after products are deleted and
+     * re-migrated (getting new WC post IDs), a second Orders run corrects all
+     * order item product_id references without re-creating the order.
+     */
+    private function relinkOrderItems( int $wc_order_id, array $oc_products ): void {
+        global $wpdb;
+
+        if ( empty( $oc_products ) ) {
+            return;
+        }
+
+        $order = wc_get_order( $wc_order_id );
+        if ( ! $order ) {
+            return;
+        }
+
+        // Build a map: oc_product_id → best WC product (id_map then SKU).
+        $resolve = function ( int $oc_prod, string $model ): ?\WC_Product {
+            $wc_id   = $this->checkpoint->getWcId( 'product', $oc_prod );
+            $product = $wc_id ? wc_get_product( $wc_id ) : null;
+            if ( ! $product && $model !== '' ) {
+                $product = $this->findProductBySku( $model );
+                if ( $product ) {
+                    $this->checkpoint->saveIdMap( 'product', $oc_prod, $product->get_id() );
+                }
+            }
+            return $product;
+        };
+
+        // Index OC items by oc_product_id.
+        $oc_by_id = [];
+        foreach ( $oc_products as $oc_item ) {
+            $oc_by_id[ (int) $oc_item['product_id'] ] = $oc_item;
+        }
+
+        $relinked = 0;
+        foreach ( $order->get_items() as $item_id => $item ) {
+            if ( ! ( $item instanceof \WC_Order_Item_Product ) ) {
+                continue;
+            }
+
+            $oc_prod  = (int) $item->get_meta( '_octowoo_oc_product_id', true );
+            $oc_model = (string) $item->get_meta( '_octowoo_oc_product_model', true );
+
+            // Back-fill model from OC data if not yet stored on the item.
+            if ( $oc_prod > 0 && $oc_model === '' && isset( $oc_by_id[ $oc_prod ] ) ) {
+                $oc_model = trim( (string) ( $oc_by_id[ $oc_prod ]['model'] ?? '' ) );
+            }
+
+            if ( $oc_prod <= 0 ) {
+                continue; // Not an OctoWoo-migrated item.
+            }
+
+            $product = $resolve( $oc_prod, $oc_model );
+            if ( ! $product ) {
+                continue;
+            }
+
+            $new_wc_id = $product->get_id();
+            $old_wc_id = (int) $item->get_product_id();
+
+            if ( $new_wc_id === $old_wc_id && $product instanceof \WC_Product ) {
+                continue; // Already pointing to a valid product.
+            }
+
+            // Update _product_id and _variation_id directly in order item meta.
+            $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prefix . 'woocommerce_order_itemmeta',
+                [ 'meta_value' => $new_wc_id ],
+                [ 'order_item_id' => $item_id, 'meta_key' => '_product_id' ]
+            );
+            $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prefix . 'woocommerce_order_itemmeta',
+                [ 'meta_value' => 0 ],
+                [ 'order_item_id' => $item_id, 'meta_key' => '_variation_id' ]
+            );
+
+            // Also update OctoWoo model meta if back-filled.
+            if ( $oc_model !== '' ) {
+                $existing = $item->get_meta( '_octowoo_oc_product_model', true );
+                if ( $existing === '' ) {
+                    wc_update_order_item_meta( $item_id, '_octowoo_oc_product_model', $oc_model );
+                }
+            }
+
+            $relinked++;
+            $this->logger->debug( "[orders] Re-linked order #{$wc_order_id} item #{$item_id}: product_id {$old_wc_id} → {$new_wc_id} (OC SKU '{$oc_model}')." );
+        }
+
+        if ( $relinked > 0 ) {
+            // Bust order caches so updated product data shows immediately.
+            $order->get_data_store()->clear_caches( $order );
+            $this->logger->info( "[orders] Re-linked {$relinked} item(s) in WC order #{$wc_order_id}." );
+        }
     }
 
     // ── Order totals ──────────────────────────────────────────────────────────
