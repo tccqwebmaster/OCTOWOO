@@ -71,6 +71,7 @@
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
+        $('#ow-btn-rerun-seo').on('click', rerunSeo);
 
         $('#ow-btn-test-conn').on('click', testConnection);
         $('#ow-btn-autodetect').on('click', function () {
@@ -792,6 +793,45 @@
         });
     }
 
+    /**
+     * Reset the SEO checkpoint + clear stored redirects, then immediately
+     * resume the migration so only the SEO migrator re-runs.
+     */
+    function rerunSeo() {
+        const $btn = $('#ow-btn-rerun-seo');
+        if ($btn.prop('disabled')) { return; }
+
+        if (!confirm('This will reset the SEO migrator and clear all stored redirect rules, then re-run SEO to rebuild correct product/category slugs and 301 redirects.\n\nIMPORTANT: Make sure WordPress permalinks are set to "Post name" in Settings \u2192 Permalinks BEFORE continuing.\n\nContinue?')) {
+            return;
+        }
+
+        $btn.prop('disabled', true).text('\ud83d\udd0d Resetting\u2026');
+
+        $.post(octoWoo.ajaxUrl, {
+            action: 'octowoo_rerun_seo',
+            nonce:  octoWoo.nonce,
+        })
+        .done(function (res) {
+            if (res && res.success) {
+                if (res.data.permalink_plain) {
+                    alert('WARNING: WordPress permalink structure is still "Plain".\n\nGo to WP Admin \u2192 Settings \u2192 Permalinks \u2192 Post name \u2192 Save Changes FIRST, then click Resume to re-run SEO.');
+                } else {
+                    alert(res.data.message || 'SEO checkpoint reset. Click Resume to re-run.');
+                    // Auto-resume: trigger the migration loop in resume mode so only SEO runs.
+                    startMigration(true, false);
+                }
+            } else {
+                alert('Failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
+            }
+        })
+        .fail(function () {
+            alert('Request failed. Check the server logs.');
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('\ud83d\udd0d Rerun SEO Migrator');
+        });
+    }
+
     function repairOrderItems() {
         const $btn = $('#ow-btn-repair-order-items');
         if ($btn.prop('disabled')) { return; }
@@ -1331,7 +1371,7 @@
     /* ── Button state helpers ────────────────────────────────────────────── */
     function setButtonState(state) {
         const $btnDemo     = $('#ow-btn-demo');
-        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual, #ow-btn-cleanup-ml-terms, #ow-btn-repair-order-items');
+        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual, #ow-btn-cleanup-ml-terms, #ow-btn-repair-order-items, #ow-btn-rerun-seo');
         const $btnBgStart  = $('#ow-btn-start-bg, #ow-btn-resume-bg');
 
         if (state === 'running') {

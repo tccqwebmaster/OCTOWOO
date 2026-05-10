@@ -82,6 +82,19 @@ class SeoMigrator extends AbstractMigrator {
             $this->checkpoint->init( self::KEY, $total );
             $this->checkpoint->start( self::KEY );
             $this->logger->info( "[seo] Starting SEO migration: total={$total}, chunk_mode=" . ( $chunk_mode ? 'yes' : 'no' ) );
+
+            // Critical: warn if WordPress permalink structure is "Plain".
+            // When Plain, get_permalink() / get_term_link() return ?post_type=product&p=ID
+            // so redirect targets stored in wp_options and .htaccess will be wrong.
+            // User MUST go to WP Admin → Settings → Permalinks → Post name → Save first.
+            if ( empty( get_option( 'permalink_structure' ) ) ) {
+                $this->logger->warning(
+                    '[seo] WordPress permalink structure is set to "Plain". ' .
+                    'Product URLs will appear as ?post_type=product&p=ID instead of pretty URLs. ' .
+                    'Go to WP Admin → Settings → Permalinks → select "Post name" → Save Changes, ' .
+                    'then use the "Rerun SEO Migrator" button to rebuild correct redirects.'
+                );
+            }
         }
 
         if ( $offset >= $total ) {
@@ -185,7 +198,12 @@ class SeoMigrator extends AbstractMigrator {
      */
     private function processSeoRow( array $row ): ?bool {
         $query   = trim( $row['query'] );
-        $keyword = sanitize_title( $row['keyword'] );
+
+        // sanitize_title() strips Arabic/Unicode characters entirely.
+        // sanitize_title_with_dashes() with context 'save' percent-encodes Unicode
+        // (e.g. Arabic منتج → %d9%85%d9%86%d8%aa%d8%ac) which is a valid WP slug
+        // and resolves correctly in browsers as the native-script character.
+        $keyword = sanitize_title_with_dashes( rawurldecode( trim( $row['keyword'] ) ), '', 'save' );
 
         if ( empty( $keyword ) ) {
             return null;
@@ -234,14 +252,29 @@ class SeoMigrator extends AbstractMigrator {
         }
 
         // Build redirect from old OC URL to new WC URL.
-        $oc_shop_url = rtrim( $this->config['opencart']['shop_url'] ?? '', '/' );
-        $old_path    = "/index.php?route=product/product&product_id={$oc_id}";
-        $new_url     = get_permalink( $wc_id );
+        $old_path = "/index.php?route=product/product&product_id={$oc_id}";
+
+        // Clear per-post cache so get_permalink reflects the just-updated slug.
+        clean_post_cache( $wc_id );
+        $new_url = get_permalink( $wc_id );
+
+        // Fallback: when WP permalink structure is "Plain", get_permalink() returns
+        // ?post_type=product&p=ID instead of a pretty URL. Build the correct URL
+        // directly from the slug so redirect targets are always accurate.
+        if ( ! $new_url || false !== strpos( (string) $new_url, '?' ) ) {
+            $wc_permalinks = function_exists( 'wc_get_permalink_structure' ) ? wc_get_permalink_structure() : [];
+            $product_base  = trim( $wc_permalinks['product_base'] ?? '/product', '/' );
+            // Strip any %product_cat%/ prefix (category-based product URL structure).
+            $product_base  = (string) preg_replace( '#%[^%]+%/?#', '', $product_base );
+            $product_base  = trim( $product_base, '/' ) ?: 'product';
+            $new_url       = trailingslashit( home_url( '/' . $product_base . '/' . $slug ) );
+        }
 
         if ( $new_url ) {
-            $this->redirect_map[ $old_path ]         = $new_url;
-            // Also handle the SEO URL form.
-            $this->redirect_map[ '/' . $old_slug ]   = $new_url;
+            $this->redirect_map[ $old_path ] = $new_url;
+            // Redirect from old OC SEO path (/oc-keyword) to new WC pretty URL.
+            // Use $slug (the OC keyword), not $old_slug (the pre-update WP slug).
+            $this->redirect_map[ '/' . $slug ] = $new_url;
         }
 
         return true;
@@ -271,9 +304,19 @@ class SeoMigrator extends AbstractMigrator {
         $old_path = "/index.php?route=product/category&path={$oc_id}";
         $new_url  = get_term_link( $wc_term_id, 'product_cat' );
 
-        if ( ! is_wp_error( $new_url ) ) {
-            $this->redirect_map[ $old_path ]       = $new_url;
-            $this->redirect_map[ '/' . $old_slug ] = $new_url;
+        // Fallback: when WP permalink structure is "Plain", get_term_link() returns
+        // a query-string URL. Build the correct URL from the slug directly.
+        if ( is_wp_error( $new_url ) || false !== strpos( (string) $new_url, '?' ) ) {
+            $wc_permalinks = function_exists( 'wc_get_permalink_structure' ) ? wc_get_permalink_structure() : [];
+            $cat_base      = trim( $wc_permalinks['category_base'] ?? '/product-category', '/' );
+            $cat_base      = trim( $cat_base, '/' ) ?: 'product-category';
+            $new_url       = trailingslashit( home_url( '/' . $cat_base . '/' . $slug ) );
+        }
+
+        if ( $new_url && ! is_wp_error( $new_url ) ) {
+            $this->redirect_map[ $old_path ] = $new_url;
+            // Redirect from old OC SEO path (/oc-category-keyword) to new WC URL.
+            $this->redirect_map[ '/' . $slug ] = $new_url;
         }
 
         return true;

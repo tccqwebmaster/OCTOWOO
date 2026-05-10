@@ -4,7 +4,7 @@ Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 2.4.68
+Stable tag: 2.4.69
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -183,6 +183,15 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
+
+= 2.4.69 =
+* **Fixed:** SEO migrator stripped Arabic (and all non-ASCII) keywords entirely via `sanitize_title()` — products with Arabic OC SEO keywords never had their WC slug updated. Now uses `sanitize_title_with_dashes($keyword, '', 'save')` which percent-encodes Unicode characters (Arabic `منتج` → `%d9%85%d9%86%d8%aa%d8%ac`) producing valid WordPress slugs that browsers display as the original script.
+* **Fixed:** When WordPress permalink structure was "Plain" at migration time, `get_permalink()` and `get_term_link()` returned `?post_type=product&p=ID` query-string URLs. These wrong URLs were stored as redirect targets in `octowoo_redirects` and `.htaccess`. Both handlers now fall back to constructing the correct pretty URL from the slug and the WooCommerce permalink structure.
+* **Fixed:** SEO redirect source for the OC keyword path used `$old_slug` (the old WP-generated slug) instead of `$slug` (the actual OC SEO keyword). Old OC bookmarked paths like `/oc-product-name` were not being redirected. Fixed to use `$slug` as the redirect source key.
+* **Fixed:** Same redirect key bug corrected in `handleCategorySeo()`.
+* **Added:** Permalink structure warning logged at WARNING level when SeoMigrator runs while WordPress is set to "Plain" permalinks, with instructions to fix before re-running.
+* **Added:** `octowoo_rerun_seo` AJAX action — resets only the SEO checkpoint and clears stored redirect rules without requiring a full "Reset Progress", allowing SEO to be rebuilt independently after fixing WordPress permalink settings.
+* **Added:** **Rerun SEO Migrator** admin button — resets SEO checkpoint, clears `octowoo_redirects`, and automatically resumes the migration so only the SEO step re-runs.
 
 = 2.4.68 =
 * **Added:** SKU/model fallback for order-item product linking. `addOrderItem()` now stores `_octowoo_oc_product_model` (the OpenCart model/SKU) on every order line item and uses it as a fallback when the id_map lookup fails or the originally-linked WC product has been deleted and re-migrated.

@@ -72,6 +72,7 @@ class AjaxHandler {
             'octowoo_skip_migrator',
             'octowoo_cleanup_ml_terms',
             'octowoo_repair_order_items',
+            'octowoo_rerun_seo',
         ];
 
         foreach ( $actions as $action ) {
@@ -213,6 +214,10 @@ class AjaxHandler {
 
             case 'octowoo_repair_order_items':
                 $this->actionRepairOrderItems();
+                break;
+
+            case 'octowoo_rerun_seo':
+                $this->actionRerunSeo();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -983,6 +988,58 @@ class AjaxHandler {
                 $page,
                 $relinked
             ),
+        ] );
+    }
+
+    /**
+     * Reset the SEO migrator checkpoint and clear stored redirect maps so
+     * the SEO pass can be re-run without doing a full "Reset Progress".
+     *
+     * After this action the user clicks "Resume" and the migration loop will
+     * find only the SEO checkpoint as pending (all others remain completed)
+     * and re-run it — rebuilding all product/category slugs and redirects.
+     */
+    private function actionRerunSeo(): void {
+        // Refuse if a migration is currently running.
+        if ( CheckpointManager::getActiveRunId() ) {
+            wp_send_json_error( [
+                'message' => __( 'A migration is currently running. Please wait for it to finish or abort it first.', 'octowoo' ),
+            ] );
+            return;
+        }
+
+        $run_id = get_option( 'octowoo_last_run_id', '' );
+
+        if ( ! $run_id ) {
+            wp_send_json_error( [
+                'message' => __( 'No previous migration found. Run a full migration first.', 'octowoo' ),
+            ] );
+            return;
+        }
+
+        // Warn if WordPress permalink structure is still "Plain".
+        $permalink_plain = empty( get_option( 'permalink_structure' ) );
+
+        // Reset SEO checkpoint: sets status → pending, last_oc_id → 0, processed_count → 0.
+        $chk = new CheckpointManager( $run_id );
+        $chk->init( 'seo', 0 );
+
+        // Clear previously stored redirect maps — they may contain wrong query-string targets.
+        delete_option( 'octowoo_redirects' );
+
+        // Re-activate the run so "Resume" works immediately.
+        $chk->markRunActive();
+
+        $message = __( 'SEO checkpoint reset and redirect map cleared. Click "Resume" to re-run the SEO migrator.', 'octowoo' );
+
+        if ( $permalink_plain ) {
+            $message .= ' ' . __( 'WARNING: WordPress permalink structure is still "Plain". Go to Settings → Permalinks → Post name → Save Changes BEFORE resuming, otherwise URLs will still be wrong.', 'octowoo' );
+        }
+
+        wp_send_json_success( [
+            'message'         => $message,
+            'run_id'          => $run_id,
+            'permalink_plain' => $permalink_plain,
         ] );
     }
 
