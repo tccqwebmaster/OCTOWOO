@@ -111,8 +111,10 @@ class PolylangIntegration {
 			$this->setPostLanguage( $post_id, $this->primary_lang );
 
 			// Retrieve secondary-language data stored by ProductMigrator.
-			$sec_title   = (string) get_post_meta( $post_id, '_octowoo_sec_title',   true );
-			$sec_content = (string) get_post_meta( $post_id, '_octowoo_sec_content', true );
+			$sfx = $this->sfx();
+			// InformationMigrator writes _octowoo_title{sfx} and _octowoo_desc{sfx}
+			$sec_title   = (string) get_post_meta( $post_id, '_octowoo_title' . $sfx, true );
+			$sec_content = (string) get_post_meta( $post_id, '_octowoo_desc'  . $sfx, true );
 			$sec_excerpt = (string) get_post_meta( $post_id, '_octowoo_sec_excerpt', true );
 
 			if ( ! $sec_title ) {
@@ -156,6 +158,12 @@ class PolylangIntegration {
 			// Copy WooCommerce product meta to the translation.
 			$this->copyProductMeta( $post_id, $translated_id );
 
+			// Write secondary-language SEO meta to the translated post.
+			if ( ! empty( $sec_meta_title ) ) { update_post_meta( $translated_id, '_yoast_wpseo_title',    $sec_meta_title ); }
+			if ( ! empty( $sec_meta_desc  ) ) { update_post_meta( $translated_id, '_yoast_wpseo_metadesc', $sec_meta_desc  ); }
+			if ( ! empty( $sec_meta_kw    ) ) { update_post_meta( $translated_id, '_yoast_wpseo_focuskw',  $sec_meta_kw    ); }
+			\OctoWoo\Core\RankMathHelper::writePostMeta( $translated_id, $sec_meta_title ?? '', $sec_meta_desc ?? '', $sec_meta_kw ?? '' );
+
 			$this->checkpoint->saveIdMap( 'product_sec', $oc_id, $translated_id );
 
 			$stats['processed']++;
@@ -189,8 +197,13 @@ class PolylangIntegration {
 			pll_set_term_language( $term_id, $this->primary_lang );
 
 			// Secondary-language data stored by CategoryMigrator.
-			$sec_name = (string) get_term_meta( $term_id, '_octowoo_sec_name', true );
-			$sec_desc = (string) get_term_meta( $term_id, '_octowoo_sec_description', true );
+			$sfx = $this->sfx();
+			// Use SAME keys as CategoryMigrator writes
+			$sec_name       = (string) get_term_meta( $term_id, '_octowoo_name' . $sfx,        true );
+			$sec_desc       = (string) get_term_meta( $term_id, '_octowoo_description' . $sfx, true );
+			$sec_meta_title = (string) get_term_meta( $term_id, '_octowoo_metatitle' . $sfx, true );
+			$sec_meta_desc  = (string) get_term_meta( $term_id, '_octowoo_metadesc'  . $sfx, true );
+			$sec_meta_kw    = (string) get_term_meta( $term_id, '_octowoo_metakw'    . $sfx, true );
 
 			if ( ! $sec_name ) {
 				$stats['skipped']++;
@@ -257,8 +270,10 @@ class PolylangIntegration {
 
 			$this->setPostLanguage( $post_id, $this->primary_lang );
 
-			$sec_title   = (string) get_post_meta( $post_id, '_octowoo_sec_title',   true );
-			$sec_content = (string) get_post_meta( $post_id, '_octowoo_sec_content', true );
+			$sfx = $this->sfx();
+			// InformationMigrator writes _octowoo_title{sfx} and _octowoo_desc{sfx}
+			$sec_title   = (string) get_post_meta( $post_id, '_octowoo_title' . $sfx, true );
+			$sec_content = (string) get_post_meta( $post_id, '_octowoo_desc'  . $sfx, true );
 
 			if ( ! $sec_title ) {
 				$stats['skipped']++;
@@ -319,7 +334,9 @@ class PolylangIntegration {
 
 			pll_set_term_language( $term_id, $this->primary_lang );
 
-			$sec_name = (string) get_term_meta( $term_id, '_octowoo_sec_name', true );
+			$sfx = $this->sfx();
+			// Use SAME keys as CategoryMigrator writes
+			$sec_name       = (string) get_term_meta( $term_id, '_octowoo_name' . $sfx,        true );
 
 			if ( ! $sec_name ) {
 				$stats['skipped']++;

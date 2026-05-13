@@ -55,10 +55,19 @@ class ProductMigrator extends AbstractMigrator {
 
         $total_callback = fn() => $this->oc->count( 'product' );
 
+        // v2.5.1: Added manufacturer_id, date_available, minimum, upc, ean, jan, isbn, mpn
+        // to capture all meaningful OC fields that have WC equivalents.
+        $oc_major = $this->ocMajor();
+        // OC1 may not have upc/ean/jan/isbn/mpn columns — use COALESCE for safe compat.
+        $extra_cols = ( $oc_major >= 2 )
+            ? "upc, ean, jan, isbn, mpn, date_available"
+            : "'' AS upc, '' AS ean, '' AS jan, '' AS isbn, '' AS mpn, date_added AS date_available";
+
         $batch_callback = fn( int $offset, int $limit ) => $this->oc->fetchBatch(
-            "SELECT product_id, model, sku, quantity, stock_status_id, image,
+            "SELECT product_id, manufacturer_id, model, sku, quantity, stock_status_id, image,
                     price, subtract, sort_order, status, date_added, date_modified,
-                    tax_class_id, weight, weight_class_id, length, width, height, minimum
+                    tax_class_id, weight, weight_class_id, length, width, height, minimum,
+                    {$extra_cols}
              FROM `{$pfx}product`
              ORDER BY product_id ASC",
             [],
@@ -411,6 +420,26 @@ class ProductMigrator extends AbstractMigrator {
         );
         $this->assignCategories( $post_id, $oc_categories );
 
+        // Assign brand / manufacturer term to product (if ManufacturerMigrator has run).
+        $this->assignManufacturerTerm( $post_id, (int) ( $row['manufacturer_id'] ?? 0 ) );
+
+        // Write extra identifiers as WC product meta.
+        if ( ! empty( $row['upc']  ) ) { update_post_meta( $post_id, '_octowoo_upc',  sanitize_text_field( $row['upc']  ) ); }
+        if ( ! empty( $row['ean']  ) ) { update_post_meta( $post_id, '_octowoo_ean',  sanitize_text_field( $row['ean']  ) ); }
+        if ( ! empty( $row['jan']  ) ) { update_post_meta( $post_id, '_octowoo_jan',  sanitize_text_field( $row['jan']  ) ); }
+        if ( ! empty( $row['isbn'] ) ) { update_post_meta( $post_id, '_octowoo_isbn', sanitize_text_field( $row['isbn'] ) ); }
+        if ( ! empty( $row['mpn']  ) ) { update_post_meta( $post_id, '_octowoo_mpn',  sanitize_text_field( $row['mpn']  ) ); }
+
+        // Minimum purchase quantity (OC 'minimum' field).
+        if ( (int) ( $row['minimum'] ?? 1 ) > 1 ) {
+            update_post_meta( $post_id, '_wc_min_qty_product', (int) $row['minimum'] );
+        }
+
+        // Date available (OC pre-order / availability date).
+        if ( ! empty( $row['date_available'] ) && $row['date_available'] !== '0000-00-00' ) {
+            update_post_meta( $post_id, '_octowoo_date_available', sanitize_text_field( $row['date_available'] ) );
+        }
+
         // Store the OC image path so the multilingual pass (and future update runs)
         // can re-attempt the import if _thumbnail_id is missing (e.g. image was
         // unavailable during the primary migration pass).
@@ -613,6 +642,14 @@ class ProductMigrator extends AbstractMigrator {
         // categories were available, or whose category mapping changed, are
         // automatically corrected on the next Products run.
         $this->assignCategories( $wc_post_id, $oc_categories );
+
+        // Also re-assign brand on update in case ManufacturerMigrator ran after last product update.
+        $this->assignManufacturerTerm( $wc_post_id, (int) ( $row['manufacturer_id'] ?? 0 ) );
+
+        // Update extra identifiers.
+        if ( ! empty( $row['upc']  ) ) { update_post_meta( $wc_post_id, '_octowoo_upc',  sanitize_text_field( $row['upc']  ) ); }
+        if ( ! empty( $row['ean']  ) ) { update_post_meta( $wc_post_id, '_octowoo_ean',  sanitize_text_field( $row['ean']  ) ); }
+        if ( ! empty( $row['mpn']  ) ) { update_post_meta( $wc_post_id, '_octowoo_mpn',  sanitize_text_field( $row['mpn']  ) ); }
 
         $this->logger->info( "[products] Updated WC product #{$wc_post_id} (OC #{$oc_id})." );
         return true;
@@ -853,19 +890,111 @@ class ProductMigrator extends AbstractMigrator {
 
     // ── Category assignment ───────────────────────────────────────────────────
 
+    /**
+     * Assign WooCommerce product categories to a product.
+     *
+     * v2.5.1 fixes:
+     * - Falls back to DB meta lookup when in-memory ID map is cold (resume, wrong order).
+     * - In update mode: APPENDS categories (preserves manually-added ones).
+     * - Logs a clear warning when OC category IDs cannot be resolved.
+     */
     private function assignCategories( int $post_id, array $oc_category_ids ): void {
-        $wc_term_ids = [];
+        if ( empty( $oc_category_ids ) ) {
+            return;
+        }
+
+        $wc_term_ids    = [];
+        $unresolved_ids = [];
 
         foreach ( $oc_category_ids as $oc_cat_id ) {
-            $wc_term_id = $this->checkpoint->getWcId( 'category', (int) $oc_cat_id );
-            if ( $wc_term_id ) {
-                $wc_term_ids[] = (int) $wc_term_id;
+            $oc_cat_id  = (int) $oc_cat_id;
+            $wc_term_id = $this->checkpoint->getWcId( 'category', $oc_cat_id );
+
+            // DB fallback: if in-memory cache is cold, check _octowoo_oc_id term meta.
+            if ( ! $wc_term_id ) {
+                global $wpdb;
+                $wc_term_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT tm.term_id
+                     FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     WHERE tm.meta_key = '_octowoo_oc_id'
+                       AND tm.meta_value = %s
+                       AND tt.taxonomy = 'product_cat'
+                     LIMIT 1",
+                    (string) $oc_cat_id
+                ) );
+
+                if ( $wc_term_id > 0 ) {
+                    // Warm the in-memory cache so subsequent products in this batch skip the DB hit.
+                    $this->checkpoint->saveIdMap( 'category', $oc_cat_id, $wc_term_id );
+                }
+            }
+
+            if ( $wc_term_id > 0 ) {
+                $wc_term_ids[] = $wc_term_id;
+            } else {
+                $unresolved_ids[] = $oc_cat_id;
             }
         }
 
-        if ( ! empty( $wc_term_ids ) ) {
-            wp_set_object_terms( $post_id, $wc_term_ids, 'product_cat' );
+        if ( ! empty( $unresolved_ids ) ) {
+            $this->logger->warning(
+                "[products] WC post #{$post_id}: could not resolve OC category IDs [" .
+                implode( ',', $unresolved_ids ) .
+                "] — CategoryMigrator may not have run yet, or these categories were inactive in OC. Run CategoryMigrator first, then re-run with on_duplicate=update."
+            );
         }
+
+        if ( ! empty( $wc_term_ids ) ) {
+            // append=false (replace) on create, append=true on update to preserve manual additions.
+            $append = ( $this->onDuplicate() === 'update' );
+            wp_set_object_terms( $post_id, array_unique( $wc_term_ids ), 'product_cat', $append );
+        }
+    }
+
+    /**
+     * Assign the WooCommerce brand term to a product (if ManufacturerMigrator has run).
+     *
+     * @param int $post_id        WC product post ID.
+     * @param int $oc_manufacturer_id  OpenCart manufacturer_id (0 = no manufacturer).
+     */
+    private function assignManufacturerTerm( int $post_id, int $oc_manufacturer_id ): void {
+        if ( $oc_manufacturer_id <= 0 ) {
+            return;
+        }
+
+        $wc_term_id = $this->checkpoint->getWcId( 'manufacturer', $oc_manufacturer_id );
+
+        // DB fallback.
+        if ( ! $wc_term_id ) {
+            global $wpdb;
+            $wc_term_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT tm.term_id
+                 FROM {$wpdb->termmeta} tm
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                 WHERE tm.meta_key = '_octowoo_oc_id'
+                   AND tm.meta_value = %s
+                   AND tt.taxonomy NOT IN ('product_cat','product_type','product_shipping_class','product_tag')
+                 LIMIT 1",
+                (string) $oc_manufacturer_id
+            ) );
+
+            if ( $wc_term_id > 0 ) {
+                $this->checkpoint->saveIdMap( 'manufacturer', $oc_manufacturer_id, $wc_term_id );
+            }
+        }
+
+        if ( $wc_term_id <= 0 ) {
+            return;
+        }
+
+        // Find the taxonomy this term belongs to.
+        $term = get_term( $wc_term_id );
+        if ( ! $term || is_wp_error( $term ) ) {
+            return;
+        }
+
+        wp_set_object_terms( $post_id, [ $wc_term_id ], $term->taxonomy, true );
     }
 
     // ── Special price helper ──────────────────────────────────────────────────

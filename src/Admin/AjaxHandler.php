@@ -78,6 +78,7 @@ class AjaxHandler {
             'octowoo_import_settings',
             // v2.5.0 additions.
             'octowoo_run_cron_now',
+            'octowoo_repair_categories',
         ];
 
         foreach ( $actions as $action ) {
@@ -254,6 +255,10 @@ class AjaxHandler {
 
             case 'octowoo_run_cron_now':
                 $this->actionRunCronNow();
+                break;
+
+            case 'octowoo_repair_categories':
+                $this->actionRepairCategories();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -1705,6 +1710,103 @@ class AjaxHandler {
 
         wp_send_json_success( [
             'message' => __( 'Cron migration triggered. Check the Logs tab for progress.', 'octowoo' ),
+        ] );
+    }
+
+
+    // ── Action: repair product→category assignments ───────────────────────────
+
+    /**
+     * Re-assigns WooCommerce product categories for ALL products imported by OctoWoo.
+     *
+     * This fixes the common problem where categories were migrated AFTER products
+     * (wrong order), leaving products uncategorised. Safe to run multiple times.
+     * Uses the octowoo_id_map table to resolve OC category IDs → WC term IDs,
+     * with a DB meta fallback for terms created before the map was built.
+     *
+     * Works in pages of 50 products; returns done=false until all are processed.
+     */
+    private function actionRepairCategories(): void {
+        global $wpdb;
+
+        $page  = max( 1, (int) filter_input( INPUT_POST, 'page', FILTER_VALIDATE_INT ) );
+        $limit = 50;
+        $offset = ( $page - 1 ) * $limit;
+
+        // Fetch products with their OC IDs.
+        $products = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT p.ID AS post_id, pm.meta_value AS oc_id
+             FROM {$wpdb->posts} p
+             JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
+             WHERE p.post_type IN ('product','product_variation')
+               AND p.post_status != 'trash'
+             ORDER BY p.ID ASC
+             LIMIT %d OFFSET %d",
+            $limit,
+            $offset
+        ), ARRAY_A );
+
+        if ( empty( $products ) ) {
+            wp_send_json_success( [ 'done' => true, 'repaired' => 0, 'page' => $page ] );
+        }
+
+        $total_repaired = 0;
+
+        foreach ( $products as $prod ) {
+            $post_id   = (int) $prod['post_id'];
+            $oc_prod_id = (int) $prod['oc_id'];
+
+            // Fetch OC product-to-category assignments.
+            $oc_cat_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT category_id FROM {$wpdb->prefix}octowoo_id_map
+                 WHERE entity_type = 'oc_product_category' AND oc_id = %d",
+                $oc_prod_id
+            ) );
+
+            // If not in id_map, try oc_product_to_category directly (local import or remote).
+            if ( empty( $oc_cat_ids ) ) {
+                // Skip if we can't determine OC categories.
+                continue;
+            }
+
+            $wc_term_ids = [];
+            foreach ( $oc_cat_ids as $oc_cat_id ) {
+                $wc_term_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map
+                     WHERE entity_type = 'category' AND oc_id = %d LIMIT 1",
+                    (int) $oc_cat_id
+                ) );
+
+                if ( ! $wc_term_id ) {
+                    // Term meta fallback.
+                    $wc_term_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT tm.term_id FROM {$wpdb->termmeta} tm
+                         JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                         WHERE tm.meta_key = '_octowoo_oc_id' AND tm.meta_value = %s
+                           AND tt.taxonomy = 'product_cat' LIMIT 1",
+                        (string) $oc_cat_id
+                    ) );
+                }
+
+                if ( $wc_term_id > 0 ) {
+                    $wc_term_ids[] = $wc_term_id;
+                }
+            }
+
+            if ( ! empty( $wc_term_ids ) ) {
+                $current = wp_get_object_terms( $post_id, 'product_cat', [ 'fields' => 'ids' ] );
+                $current = is_wp_error( $current ) ? [] : $current;
+                $merged  = array_unique( array_merge( $current, $wc_term_ids ) );
+                wp_set_object_terms( $post_id, $merged, 'product_cat' );
+                $total_repaired++;
+            }
+        }
+
+        $is_done = count( $products ) < $limit;
+        wp_send_json_success( [
+            'done'     => $is_done,
+            'repaired' => $total_repaired,
+            'page'     => $page,
         ] );
     }
 

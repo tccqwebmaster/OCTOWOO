@@ -350,6 +350,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="button" id="ow-btn-repair-order-items" class="ow-btn ow-btn-secondary">
                     🔗 <?php esc_html_e( 'Repair Order Items', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-repair-categories" class="ow-btn ow-btn-secondary">
+                    🏷️ <?php esc_html_e( 'Repair Product Categories', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-rerun-seo" class="ow-btn ow-btn-secondary">
                     🔍 <?php esc_html_e( 'Rerun SEO Migrator', 'octowoo' ); ?>
                 </button>

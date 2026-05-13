@@ -187,6 +187,7 @@
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
         $('#ow-btn-rerun-seo').on('click', rerunSeoMigrator);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
+        $('#ow-btn-repair-categories').on('click', repairCategories);
 
         // Connection test.
         $('#ow-btn-test-connection').on('click', testConnection);
@@ -1093,6 +1094,57 @@
         })
         .fail(function () { $('#ow-scan-panel').html('<span style="color:#c62828;">Scan request failed.</span>'); })
         .always(function () { $btn.prop('disabled', false).text('🔍 Scan Source'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       REPAIR PRODUCT CATEGORIES (v2.5.1)
+       Re-assigns category terms for all OctoWoo products.
+       Fixes silent failures when ProductMigrator ran before CategoryMigrator.
+    ════════════════════════════════════════════════════════════════════ */
+    function repairCategories() {
+        var $btn = $('#ow-btn-repair-categories');
+        if ($btn.prop('disabled')) { return; }
+
+        owConfirm(
+            'This will re-scan all migrated products and re-assign their WooCommerce categories using the current ID map.\n\nRun this if products appear uncategorised after migration.',
+            'Yes, repair categories',
+            'Cancel'
+        ).then(function (confirmed) {
+            if (!confirmed) { return; }
+            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Repairing…');
+
+            var totalRepaired = 0;
+
+            function runPage(page) {
+                $.post(octoWoo.ajaxUrl, {
+                    action: 'octowoo_repair_categories',
+                    nonce:  octoWoo.nonce,
+                    page:   page,
+                })
+                .done(function (res) {
+                    if (!res || !res.success) {
+                        showToast('Category repair failed: ' + ((res && res.data && res.data.message) || 'Unknown error'), 'error');
+                        $btn.prop('disabled', false).text('🏷️ Repair Product Categories');
+                        return;
+                    }
+                    totalRepaired += (res.data.repaired || 0);
+                    $btn.html('<span class="ow-spinner dark"></span>&nbsp; Page ' + page + '… (' + totalRepaired + ' repaired)');
+
+                    if (res.data.done) {
+                        showToast('Category repair complete. ' + totalRepaired + ' product(s) updated.', 'success', 7000);
+                        $btn.prop('disabled', false).text('🏷️ Repair Product Categories');
+                    } else {
+                        runPage(page + 1);
+                    }
+                })
+                .fail(function () {
+                    showToast('Repair request failed. Check server logs.', 'error');
+                    $btn.prop('disabled', false).text('🏷️ Repair Product Categories');
+                });
+            }
+
+            runPage(1);
+        });
     }
 
     /* ════════════════════════════════════════════════════════════════════

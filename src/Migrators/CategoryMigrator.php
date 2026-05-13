@@ -188,16 +188,45 @@ class CategoryMigrator extends AbstractMigrator {
             }
         }
 
-        // Last-resort guard: even if id_map and OC-meta are both empty (e.g. after
-        // a Reset, or when the store already had a matching category), look up the
-        // WC taxonomy directly by name + parent to prevent creating a real duplicate.
+        // Robust duplicate guard — three independent lookups in priority order:
+        // 1. By _octowoo_oc_id term meta (most reliable — survives parent changes).
+        // 2. By name + correct parent (exact parent match).
+        // 3. By name across ANY parent (catches moves/re-parents).
         if ( ! $existing_wc_id ) {
+            global $wpdb;
+            // Check 1: term meta lookup — ignores parent so survives category re-parenting.
+            $by_meta = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT tm.term_id FROM {$wpdb->termmeta} tm
+                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                 WHERE tm.meta_key = '_octowoo_oc_id' AND tm.meta_value = %s
+                   AND tt.taxonomy = 'product_cat' LIMIT 1",
+                (string) $oc_id
+            ) );
+            if ( $by_meta > 0 ) {
+                $existing_wc_id = $by_meta;
+                $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );
+                $this->logger->info( "[categories] Found existing WC term #{$existing_wc_id} by _octowoo_oc_id meta for OC #{$oc_id} – backfilled id_map." );
+            }
+        }
+
+        if ( ! $existing_wc_id ) {
+            // Check 2: name + exact parent.
             $existing_term = term_exists( $name, 'product_cat', $wc_parent );
             if ( ! empty( $existing_term['term_id'] ) ) {
                 $existing_wc_id = (int) $existing_term['term_id'];
-                // Backfill the map so future lookups are instant.
                 $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );
-                $this->logger->info( "[categories] Found existing WC term #{$existing_wc_id} by name for OC #{$oc_id} – backfilled id_map." );
+                $this->logger->info( "[categories] Found WC term #{$existing_wc_id} by name+parent for OC #{$oc_id} – backfilled id_map." );
+            }
+        }
+
+        if ( ! $existing_wc_id && $wc_parent === 0 ) {
+            // Check 3: name with ANY parent (catches terms that were reparented
+            // after initial creation with pending_parent_oc_id).
+            $existing_term_any = term_exists( $name, 'product_cat' );
+            if ( ! empty( $existing_term_any['term_id'] ) ) {
+                $existing_wc_id = (int) $existing_term_any['term_id'];
+                $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );
+                $this->logger->info( "[categories] Found WC term #{$existing_wc_id} by name (any parent) for OC #{$oc_id} – backfilled id_map." );
             }
         }
 
@@ -495,12 +524,11 @@ class CategoryMigrator extends AbstractMigrator {
     private function fetchAllCategoriesTopological(): array {
         // Cache the sorted result in a short-lived transient so that repeated
         // calls within a chunked AJAX migration (one call per HTTP request) do
-        // not re-query the OC database and do not repeat orphan warnings on
-        // every chunk.  TTL of 2 hours is well beyond any realistic migration run.
-        // Key uses 'cat_all' (not 'cat_topo') to bust any cache built by the
-        // old status=1-filtered query.
-        $transient_key = 'octowoo_cat_all_' . md5( $this->pfx() );
-        $cached = get_transient( $transient_key );
+        // not re-query the OC database and do not repeat orphan warnings on every chunk.
+        // Key incorporates resume_id so a fresh run (resume_id=0) always fetches fresh data.
+        $resume_id     = $this->checkpoint->getLastId( self::KEY );
+        $transient_key = 'octowoo_cat_all_' . md5( $this->pfx() . '_' . ( $resume_id === 0 ? 'fresh' : 'resume' ) );
+        $cached = ( $resume_id > 0 ) ? get_transient( $transient_key ) : false;
         if ( is_array( $cached ) && ! empty( $cached ) ) {
             return $cached;
         }
