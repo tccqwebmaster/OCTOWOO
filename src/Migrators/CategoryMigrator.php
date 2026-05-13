@@ -380,6 +380,14 @@ class CategoryMigrator extends AbstractMigrator {
         if ( ! empty( $desc['meta_keyword'] ) ) {
             update_term_meta( $wc_term_id, '_yoast_wpseo_focuskw', $this->sanitizeText( $desc['meta_keyword'] ) );
         }
+        // Rank Math SEO (auto-detected – safe to call even when Rank Math is not active).
+        \OctoWoo\Core\RankMathHelper::writeTermMeta(
+            $wc_term_id,
+            'product_cat',
+            $this->sanitizeText( $desc['meta_title']       ?? '' ),
+            $this->sanitizeText( $desc['meta_description'] ?? '' ),
+            $this->sanitizeText( $desc['meta_keyword']     ?? '' )
+        );
 
         // Secondary-language data for WPML / Polylang translation pass.
         if ( ! empty( $sec_desc ) ) {

@@ -3,9 +3,13 @@
  * Filter migrator.
  *
  * Reads OpenCart filter groups and filters and creates WooCommerce product
- * attributes (informational – NOT used for variations).  Each filter group
+ * attributes (informational – NOT used for variations). Each filter group
  * becomes a "pa_" global attribute; each filter becomes a term in that
  * taxonomy; product-to-filter assignments are then applied.
+ *
+ * Fix v2.4.70: Taxonomy names now truncated to 32 chars (WP register_taxonomy limit)
+ *              before any DB or WP operations. Previously long filter group names
+ *              caused silent failures or DB errors.
  *
  * OpenCart tables used:
  *   oc_filter_group             – filter_group_id, sort_order
@@ -25,41 +29,47 @@ defined( 'ABSPATH' ) || exit;
 
 class FilterMigrator extends AbstractMigrator {
 
-    private const KEY = 'filters';
+	private const KEY = 'filters';
 
-    // ── Entry point ───────────────────────────────────────────────────────────
+	/**
+	 * WordPress hard limit for taxonomy name length.
+	 * register_taxonomy() will fail silently or throw a WP_Error if exceeded.
+	 */
+	private const MAX_TAXONOMY_LENGTH = 32;
 
-    public function migrate(): array {
-        $resume_id = $this->checkpoint->getLastId( self::KEY );
+	// ── Entry point ───────────────────────────────────────────────────────────
 
-        if ( $resume_id === PHP_INT_MAX ) {
-            $this->logger->info( '[filters] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
-        }
+	public function migrate(): array {
+		$resume_id = $this->checkpoint->getLastId( self::KEY );
 
-        // Phase 1: Build filter-group → WC attribute map.
-        $group_map = $this->migrateFilterGroups();   // oc filter_group_id => WC attribute slug (no "pa_" prefix)
+		if ( $resume_id === PHP_INT_MAX ) {
+			$this->logger->info( '[filters] Already completed – skipping.' );
+			return array( 'processed' => 0, 'skipped' => 0, 'failed' => 0 );
+		}
 
-        // Phase 2: Build filter → WC term map.
-        $term_map  = $this->migrateFilters( $group_map );  // oc filter_id => WC term_id
+		// Phase 1: Build filter-group → WC attribute map.
+		$group_map = $this->migrateFilterGroups();
 
-        // Phase 3: Assign filter terms to products (group_map needed to derive pa_ taxonomy).
-        return $this->migrateProductFilters( $term_map, $group_map );
-    }
+		// Phase 2: Build filter → WC term map.
+		$term_map = $this->migrateFilters( $group_map );
 
-    // ── Phase 1: Filter groups → WC attributes ────────────────────────────────
+		// Phase 3: Assign filter terms to products.
+		return $this->migrateProductFilters( $term_map, $group_map );
+	}
 
-    /**
-     * @return array<int, string>  oc_filter_group_id → WC attribute slug (without "pa_" prefix)
-     */
-    private function migrateFilterGroups(): array {
-        $pfx     = $this->pfx();
-        $lang_id = $this->langId();
-        $map     = [];
+	// ── Phase 1: Filter groups → WC attributes ────────────────────────────────
 
-        $groups = $this->oc->fetchAll(
-            "SELECT fg.filter_group_id, fg.sort_order,
-                    COALESCE( fgd_lang.name, fgd_any.name ) AS name
+	/**
+	 * @return array<int, string>  oc_filter_group_id → WC attribute slug (without "pa_" prefix)
+	 */
+	private function migrateFilterGroups(): array {
+		$pfx     = $this->pfx();
+		$lang_id = $this->langId();
+		$map     = array();
+
+		$groups = $this->oc->fetchAll(
+			"SELECT fg.filter_group_id, fg.sort_order,
+                COALESCE( fgd_lang.name, fgd_any.name ) AS name
              FROM `{$pfx}filter_group` fg
              LEFT JOIN `{$pfx}filter_group_description` fgd_lang
                     ON fgd_lang.filter_group_id = fg.filter_group_id
@@ -70,48 +80,50 @@ class FilterMigrator extends AbstractMigrator {
                  GROUP BY filter_group_id
              ) fgd_any ON fgd_any.filter_group_id = fg.filter_group_id
              ORDER BY fg.sort_order ASC, fg.filter_group_id ASC",
-            []
-        );
+			array()
+		);
 
-        foreach ( $groups as $group ) {
-            $gid  = (int) $group['filter_group_id'];
-            $name = $this->sanitizeText( $group['name'] ?? "Filter Group {$gid}" );
-            $slug = 'filter-' . $this->toSlug( $name );
+		foreach ( $groups as $group ) {
+			$gid  = (int) $group['filter_group_id'];
+			$name = $this->sanitizeText( $group['name'] ?? "Filter Group {$gid}" );
+			$slug = $this->buildFilterSlug( $name, $gid );
 
-            if ( $this->isDry() ) {
-                $map[ $gid ] = $slug;
-                $this->logger->debug( "[DRY-RUN] Would create WC attribute: {$name} (slug: pa_{$slug})" );
-                continue;
-            }
+			if ( $this->isDry() ) {
+				$map[ $gid ] = $slug;
+				$this->logger->debug( "[DRY-RUN] Would create WC attribute: {$name} (slug: pa_{$slug})" );
+				continue;
+			}
 
-            $attr_id = $this->ensureProductAttribute( $name, $slug );
-            if ( $attr_id ) {
-                $map[ $gid ] = $slug;
-                $this->logger->debug( "[filters] Ensured WC attribute [{$name}] (pa_{$slug})" );
-            }
-        }
+			$attr_id = $this->ensureProductAttribute( $name, $slug );
+			if ( $attr_id ) {
+				$map[ $gid ] = $slug;
+				$this->logger->debug( "[filters] Ensured WC attribute [{$name}] (pa_{$slug})" );
+			} else {
+				$this->logger->warning( "[filters] Failed to create/find WC attribute for group #{$gid} [{$name}]" );
+			}
+		}
 
-        return $map;
-    }
+		return $map;
+	}
 
-    // ── Phase 2: Filters → WC attribute terms ────────────────────────────────
+	// ── Phase 2: Filters → WC attribute terms ────────────────────────────────
 
-    /**
-     * @param  array<int, string> $group_map
-     * @return array<int, int>    oc_filter_id → WC term_id
-     */
-    private function migrateFilters( array $group_map ): array {
-        $pfx     = $this->pfx();
-        $lang_id = $this->langId();
-        $map     = [];
+	/**
+	 * @param  array<int, string> $group_map
+	 * @return array<int, int>    oc_filter_id → WC term_id
+	 */
+	private function migrateFilters( array $group_map ): array {
+		$pfx     = $this->pfx();
+		$lang_id = $this->langId();
+		$map     = array();
 
-        if ( empty( $group_map ) ) {
-            return $map;
-        }
+		if ( empty( $group_map ) ) {
+			return $map;
+		}
 
-        $filters = $this->oc->fetchAll(
-            "SELECT f.filter_id, f.filter_group_id, f.sort_order,
-                    COALESCE( fd_lang.name, fd_any.name ) AS name
+		$filters = $this->oc->fetchAll(
+			"SELECT f.filter_id, f.filter_group_id, f.sort_order,
+                COALESCE( fd_lang.name, fd_any.name ) AS name
              FROM `{$pfx}filter` f
              LEFT JOIN `{$pfx}filter_description` fd_lang
                     ON fd_lang.filter_id = f.filter_id
@@ -120,176 +132,221 @@ class FilterMigrator extends AbstractMigrator {
                  SELECT filter_id, name FROM `{$pfx}filter_description` GROUP BY filter_id
              ) fd_any ON fd_any.filter_id = f.filter_id
              ORDER BY f.filter_group_id ASC, f.sort_order ASC, f.filter_id ASC",
-            []
-        );
+			array()
+		);
 
-        foreach ( $filters as $filter ) {
-            $fid   = (int) $filter['filter_id'];
-            $gid   = (int) $filter['filter_group_id'];
-            $name  = $this->sanitizeText( $filter['name'] ?? "Filter {$fid}" );
+		foreach ( $filters as $filter ) {
+			$fid  = (int) $filter['filter_id'];
+			$gid  = (int) $filter['filter_group_id'];
+			$name = $this->sanitizeText( $filter['name'] ?? "Filter {$fid}" );
 
-            if ( ! isset( $group_map[ $gid ] ) ) {
-                continue; // Parent group wasn't mapped.
-            }
+			if ( ! isset( $group_map[ $gid ] ) ) {
+				continue; // Parent group wasn't mapped.
+			}
 
-            $taxonomy = 'pa_' . $group_map[ $gid ];
+			$taxonomy = 'pa_' . $group_map[ $gid ];
 
-            if ( $this->isDry() ) {
-                $this->logger->debug( "[DRY-RUN] Would create term [{$name}] in {$taxonomy}" );
-                continue;
-            }
+			// Safety: validate taxonomy exists before operating on it.
+			if ( ! taxonomy_exists( $taxonomy ) ) {
+				// Try to register it on-the-fly if the attribute exists but taxonomy isn't registered yet.
+				$this->ensureProductAttribute( wc_attribute_label( $taxonomy ) ?: ucwords( str_replace( '-', ' ', $group_map[ $gid ] ) ), $group_map[ $gid ] );
+				if ( ! taxonomy_exists( $taxonomy ) ) {
+					$this->logger->warning( "[filters] Taxonomy {$taxonomy} does not exist — skipping filter #{$fid}." );
+					continue;
+				}
+			}
 
-            // Check for existing term.
-            $existing_term = get_term_by( 'name', $name, $taxonomy );
-            if ( $existing_term && ! is_wp_error( $existing_term ) ) {
-                $map[ $fid ] = (int) $existing_term->term_id;
-                continue;
-            }
+			if ( $this->isDry() ) {
+				$this->logger->debug( "[DRY-RUN] Would create term [{$name}] in {$taxonomy}" );
+				continue;
+			}
 
-            $term = wp_insert_term( $name, $taxonomy );
-            if ( is_wp_error( $term ) ) {
-                $this->logger->warning( "[filters] Could not create term [{$name}] in {$taxonomy}: " . $term->get_error_message() );
-                continue;
-            }
+			// Check for existing term.
+			$existing_term = get_term_by( 'name', $name, $taxonomy );
+			if ( $existing_term && ! is_wp_error( $existing_term ) ) {
+				$map[ $fid ] = (int) $existing_term->term_id;
+				continue;
+			}
 
-            $map[ $fid ] = (int) $term['term_id'];
-        }
+			$term = wp_insert_term( $name, $taxonomy );
+			if ( is_wp_error( $term ) ) {
+				// If the term exists under a different name form, try slug lookup.
+				$slug_term = get_term_by( 'slug', sanitize_title( $name ), $taxonomy );
+				if ( $slug_term ) {
+					$map[ $fid ] = (int) $slug_term->term_id;
+					continue;
+				}
+				$this->logger->warning( "[filters] Could not create term [{$name}] in {$taxonomy}: " . $term->get_error_message() );
+				continue;
+			}
 
-        return $map;
-    }
+			$map[ $fid ] = (int) $term['term_id'];
+		}
 
-    // ── Phase 3: Product-filter assignments ───────────────────────────────────
+		return $map;
+	}
 
-    /**
-     * @param  array<int, int>    $term_map   oc_filter_id → WC term_id
-     * @param  array<int, string> $group_map  oc_filter_group_id → WC attribute slug (no "pa_" prefix)
-     * @return array{processed: int, skipped: int, failed: int}
-     */
-    private function migrateProductFilters( array $term_map, array $group_map ): array {
-        $pfx     = $this->pfx();
-        $resume_id = $this->checkpoint->getLastId( self::KEY );
+	// ── Phase 3: Product-filter assignments ───────────────────────────────────
 
-        $total_callback = function () use ( $pfx ): int {
-            return (int) $this->oc->fetchColumn(
-                "SELECT COUNT(DISTINCT product_id) FROM `{$pfx}product_filter`"
-            );
-        };
+	/**
+	 * @param  array<int, int>    $term_map   oc_filter_id → WC term_id
+	 * @param  array<int, string> $group_map  oc_filter_group_id → WC attribute slug (no "pa_" prefix)
+	 * @return array{processed: int, skipped: int, failed: int}
+	 */
+	private function migrateProductFilters( array $term_map, array $group_map ): array {
+		$pfx       = $this->pfx();
+		$resume_id = $this->checkpoint->getLastId( self::KEY );
 
-        // Iterate one product_id per batch row.
-        $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
-            return $this->oc->fetchBatch(
-                "SELECT DISTINCT product_id FROM `{$pfx}product_filter` ORDER BY product_id ASC",
-                [],
-                $limit,
-                $offset
-            );
-        };
+		$total_callback = function () use ( $pfx ): int {
+			return (int) $this->oc->fetchColumn(
+				"SELECT COUNT(DISTINCT product_id) FROM `{$pfx}product_filter`"
+			);
+		};
 
-        $item_callback = function ( array $row ) use ( $pfx, $term_map, $group_map ): bool {
-            return $this->assignProductFilters( (int) $row['product_id'], $pfx, $term_map, $group_map );
-        };
+		$batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
+			return $this->oc->fetchBatch(
+				"SELECT DISTINCT product_id FROM `{$pfx}product_filter` ORDER BY product_id ASC",
+				array(),
+				$limit,
+				$offset
+			);
+		};
 
-        return $this->batch->run(
-            total_callback:  $total_callback,
-            batch_callback:  $batch_callback,
-            item_callback:   $item_callback,
-            migrator:        self::KEY,
-            checkpoint:      $this->checkpoint,
-            resume_after_id: $resume_id,
-            id_field:        'product_id'
-        );
-    }
+		$item_callback = function ( array $row ) use ( $pfx, $term_map, $group_map ): bool {
+			return $this->assignProductFilters( (int) $row['product_id'], $pfx, $term_map, $group_map );
+		};
 
-    private function assignProductFilters( int $oc_product_id, string $pfx, array $term_map, array $group_map ): bool {
-        $wc_product_id = $this->checkpoint->getWcId( 'product', $oc_product_id );
-        if ( ! $wc_product_id ) {
-            return false;
-        }
+		return $this->batch->run(
+			total_callback:  $total_callback,
+			batch_callback:  $batch_callback,
+			item_callback:   $item_callback,
+			migrator:        self::KEY,
+			checkpoint:      $this->checkpoint,
+			resume_after_id: $resume_id,
+			id_field:        'product_id'
+		);
+	}
 
-        // Fetch all filter IDs for this product, including their group_id to derive the pa_ taxonomy.
-        $rows = $this->oc->fetchAll(
-            "SELECT pf.filter_id, f.filter_group_id
+	private function assignProductFilters( int $oc_product_id, string $pfx, array $term_map, array $group_map ): bool {
+		$wc_product_id = $this->checkpoint->getWcId( 'product', $oc_product_id );
+		if ( ! $wc_product_id ) {
+			return false;
+		}
+
+		$rows = $this->oc->fetchAll(
+			"SELECT pf.filter_id, f.filter_group_id
              FROM `{$pfx}product_filter` pf
              JOIN `{$pfx}filter` f ON f.filter_id = pf.filter_id
              WHERE pf.product_id = ?",
-            [ $oc_product_id ]
-        );
+			array( $oc_product_id )
+		);
 
-        if ( empty( $rows ) ) {
-            return false;
-        }
+		if ( empty( $rows ) ) {
+			return false;
+		}
 
-        if ( $this->isDry() ) {
-            $this->logger->debug( "[DRY-RUN] Would assign " . count( $rows ) . " filter(s) to WC product #{$wc_product_id}" );
-            return true;
-        }
+		if ( $this->isDry() ) {
+			$this->logger->debug( "[DRY-RUN] Would assign " . count( $rows ) . " filter(s) to WC product #{$wc_product_id}" );
+			return true;
+		}
 
-        // Group WC term IDs by their correct pa_* attribute taxonomy.
-        $by_taxonomy = [];
-        foreach ( $rows as $row ) {
-            $filter_id = (int) $row['filter_id'];
-            $group_id  = (int) $row['filter_group_id'];
+		// Group WC term IDs by their correct pa_* attribute taxonomy.
+		$by_taxonomy = array();
+		foreach ( $rows as $row ) {
+			$filter_id = (int) $row['filter_id'];
+			$group_id  = (int) $row['filter_group_id'];
 
-            if ( ! isset( $term_map[ $filter_id ] ) || ! isset( $group_map[ $group_id ] ) ) {
-                continue;
-            }
+			if ( ! isset( $term_map[ $filter_id ] ) || ! isset( $group_map[ $group_id ] ) ) {
+				continue;
+			}
 
-            $taxonomy                  = 'pa_' . $group_map[ $group_id ];
-            $by_taxonomy[ $taxonomy ][] = $term_map[ $filter_id ];
-        }
+			$taxonomy                   = 'pa_' . $group_map[ $group_id ];
+			$by_taxonomy[ $taxonomy ][] = $term_map[ $filter_id ];
+		}
 
-        if ( empty( $by_taxonomy ) ) {
-            return false;
-        }
+		if ( empty( $by_taxonomy ) ) {
+			return false;
+		}
 
-        // Assign terms per taxonomy (append, preserve any existing terms).
-        foreach ( $by_taxonomy as $taxonomy => $term_ids ) {
-            wp_set_object_terms( (int) $wc_product_id, array_unique( $term_ids ), $taxonomy, true );
-        }
+		foreach ( $by_taxonomy as $taxonomy => $term_ids ) {
+			wp_set_object_terms( (int) $wc_product_id, array_unique( $term_ids ), $taxonomy, true );
+		}
 
-        // Ensure _product_attributes meta is present so the Attributes tab shows on the frontend.
-        $this->updateProductAttributesMeta( (int) $wc_product_id, $by_taxonomy );
+		$this->updateProductAttributesMeta( (int) $wc_product_id, $by_taxonomy );
 
-        $this->logger->debug(
-            "[filters] Assigned " . array_sum( array_map( 'count', $by_taxonomy ) ) .
-            " filter term(s) across " . count( $by_taxonomy ) . " attribute(s) to WC product #{$wc_product_id}"
-        );
+		$this->logger->debug(
+			"[filters] Assigned " . array_sum( array_map( 'count', $by_taxonomy ) ) .
+			" filter term(s) across " . count( $by_taxonomy ) . " attribute(s) to WC product #{$wc_product_id}"
+		);
 
-        return true;
-    }
+		return true;
+	}
 
-    /**
-     * Ensure _product_attributes meta contains an entry for each migrated filter attribute
-     * so that the Attributes tab is visible on the product frontend.
-     *
-     * @param  int                    $product_id     WC post ID.
-     * @param  array<string, int[]>   $terms_by_tax   taxonomy → [WC term_ids]  (already grouped).
-     */
-    private function updateProductAttributesMeta( int $product_id, array $terms_by_tax ): void {
-        if ( empty( $terms_by_tax ) ) {
-            return;
-        }
+	/**
+	 * Ensure _product_attributes meta contains entries for migrated filter attributes.
+	 *
+	 * @param  int                    $product_id
+	 * @param  array<string, int[]>   $terms_by_tax
+	 */
+	private function updateProductAttributesMeta( int $product_id, array $terms_by_tax ): void {
+		if ( empty( $terms_by_tax ) ) {
+			return;
+		}
 
-        $attributes = get_post_meta( $product_id, '_product_attributes', true ) ?: [];
+		$attributes = get_post_meta( $product_id, '_product_attributes', true ) ?: array();
 
-        foreach ( $terms_by_tax as $taxonomy => $ids ) {
-            $slug      = str_replace( 'pa_', '', $taxonomy );
-            $attr_name = wc_attribute_label( $taxonomy ) ?: ucwords( str_replace( '-', ' ', $slug ) );
+		foreach ( $terms_by_tax as $taxonomy => $ids ) {
+			$slug      = str_replace( 'pa_', '', $taxonomy );
+			$attr_name = wc_attribute_label( $taxonomy ) ?: ucwords( str_replace( '-', ' ', $slug ) );
 
-            if ( ! isset( $attributes[ $taxonomy ] ) ) {
-                $attributes[ $taxonomy ] = [
-                    'name'         => $attr_name,
-                    'value'        => '',
-                    'position'     => 0,
-                    'is_visible'   => 1,
-                    'is_variation' => 0,
-                    'is_taxonomy'  => 1,
-                ];
-            } else {
-                $attributes[ $taxonomy ]['is_visible'] = 1;
-            }
-        }
+			if ( ! isset( $attributes[ $taxonomy ] ) ) {
+				$attributes[ $taxonomy ] = array(
+					'name'         => $attr_name,
+					'value'        => '',
+					'position'     => 0,
+					'is_visible'   => 1,
+					'is_variation' => 0,
+					'is_taxonomy'  => 1,
+				);
+			} else {
+				$attributes[ $taxonomy ]['is_visible'] = 1;
+			}
+		}
 
-        update_post_meta( $product_id, '_product_attributes', $attributes );
-    }
+		update_post_meta( $product_id, '_product_attributes', $attributes );
+	}
+
+	// ── Slug builder with 32-char truncation ──────────────────────────────────
+
+	/**
+	 * Build a safe WC attribute slug for a filter group.
+	 *
+	 * The pa_ prefix + slug must fit within WordPress's 32-char taxonomy name limit.
+	 * "pa_" = 3 chars, so slug can be at most 29 chars.
+	 * We prefix with "filter-" (7 chars) leaving 22 chars for the group name.
+	 *
+	 * @param  string $name  Raw filter group name from OpenCart.
+	 * @param  int    $gid   Filter group ID (used as fallback suffix for uniqueness).
+	 * @return string        Slug without "pa_" prefix. Max 29 chars.
+	 */
+	private function buildFilterSlug( string $name, int $gid ): string {
+		$base_slug = 'filter-' . $this->toSlug( $name );
+
+		// "pa_" prefix will be added by WooCommerce, so our slug must be ≤ 29 chars.
+		$max_slug = self::MAX_TAXONOMY_LENGTH - 3; // 29
+
+		if ( strlen( $base_slug ) <= $max_slug ) {
+			return $base_slug;
+		}
+
+		// Truncate: reserve space for "-ID" suffix to maintain uniqueness.
+		$id_suffix = '-' . $gid;
+		$truncated = substr( $base_slug, 0, $max_slug - strlen( $id_suffix ) ) . $id_suffix;
+
+		$this->logger->debug(
+			"[filters] Slug truncated for group #{$gid}: [{$base_slug}] → [{$truncated}] (32-char limit)"
+		);
+
+		return $truncated;
+	}
 }

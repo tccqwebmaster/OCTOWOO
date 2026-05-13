@@ -402,6 +402,13 @@ class ProductMigrator extends AbstractMigrator {
         if ( ! empty( $desc['meta_keyword'] ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_focuskw', $this->sanitizeText( $desc['meta_keyword'] ) );
         }
+        // Rank Math SEO (auto-detected – safe to call even when Rank Math is not active).
+        \OctoWoo\Core\RankMathHelper::writePostMeta(
+            $post_id,
+            $this->sanitizeText( $desc['meta_title']       ?? '' ),
+            $this->sanitizeText( $desc['meta_description'] ?? '' ),
+            $this->sanitizeText( $desc['meta_keyword']     ?? '' )
+        );
         $this->assignCategories( $post_id, $oc_categories );
 
         // Store the OC image path so the multilingual pass (and future update runs)
@@ -555,6 +562,13 @@ class ProductMigrator extends AbstractMigrator {
         if ( ! empty( $desc['meta_keyword'] ) ) {
             update_post_meta( $wc_post_id, '_yoast_wpseo_focuskw',  $this->sanitizeText( $desc['meta_keyword'] ) );
         }
+        // Rank Math SEO (auto-detected – safe to call even when Rank Math is not active).
+        \OctoWoo\Core\RankMathHelper::writePostMeta(
+            $wc_post_id,
+            $this->sanitizeText( $desc['meta_title']       ?? '' ),
+            $this->sanitizeText( $desc['meta_description'] ?? '' ),
+            $this->sanitizeText( $desc['meta_keyword']     ?? '' )
+        );
 
         // Keep OC image path meta in sync so the multilingual pass can re-attempt
         // image import for secondary-language translations if _thumbnail_id is missing.

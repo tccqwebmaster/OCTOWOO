@@ -391,3 +391,139 @@
 #ow-remote-db-card {
     transition: opacity .2s;
 }
+
+/* ============================================================
+   OctoWoo Admin CSS — v2.4.70 additions
+   Append this entire block to admin/css/octowoo-admin.css
+   ============================================================ */
+
+/* ── Toast notification container ──────────────────────────── */
+#ow-toast-container {
+    position: fixed;
+    top: 40px;
+    right: 20px;
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 380px;
+    pointer-events: none;
+}
+
+#ow-toast-container > div {
+    pointer-events: all;
+}
+
+/* ── In-page confirm dialog ──────────────────────────────────── */
+.ow-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .45);
+    z-index: 99998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ow-confirm-box {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px 28px;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .2);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* ── ETA display in progress table ──────────────────────────── */
+.ow-eta {
+    font-size: 11px;
+    color: var(--ow-muted, #888);
+    margin-left: 6px;
+    font-style: italic;
+    white-space: nowrap;
+}
+
+/* ── Progress bar states ─────────────────────────────────────── */
+.ow-progress-bar-wrap {
+    background: #e0e0e0;
+    border-radius: 4px;
+    height: 8px;
+    overflow: hidden;
+    min-width: 100px;
+}
+
+.ow-progress-bar {
+    height: 100%;
+    background: var(--ow-primary, #7952b3);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.ow-progress-bar.done {
+    background: #4caf50;
+}
+
+.ow-progress-bar.failed {
+    background: #ef4444;
+}
+
+.ow-progress-bar.running {
+    background: var(--ow-primary, #7952b3);
+    animation: ow-bar-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ow-bar-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .6; }
+}
+
+/* ── Report panel ────────────────────────────────────────────── */
+#ow-report-panel {
+    display: none;
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--ow-light, #f7f7f7);
+    border: 1px solid var(--ow-border, #ddd);
+    border-radius: var(--ow-radius, 6px);
+}
+
+/* ── Settings export/import buttons ─────────────────────────── */
+.ow-settings-io-bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--ow-border, #ddd);
+}
+
+/* ── Download logs button ────────────────────────────────────── */
+#ow-btn-download-logs {
+    margin-left: 8px;
+}
+
+/* ── Field error highlight ───────────────────────────────────── */
+.ow-field-error {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, .2) !important;
+}
+
+/* ── Scan panel ──────────────────────────────────────────────── */
+#ow-scan-panel {
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+/* ── Responsive adjustments ──────────────────────────────────── */
+@media (max-width: 782px) {
+    #ow-toast-container {
+        left: 10px;
+        right: 10px;
+        max-width: none;
+        top: 50px;
+    }
+}

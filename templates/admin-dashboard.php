@@ -416,6 +416,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
             </table>
         </div>
 
+        <!-- Migration Report (rendered by JS after completion) -->
+        <div id="ow-report-panel" class="ow-card" style="display:none;margin-top:0;"></div>
+
     </div><!-- /tab-migration -->
 
 
@@ -589,7 +592,7 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 </div>
 
                 <div style="margin-top:12px;">
-                    <button type="button" id="ow-btn-test-conn" class="ow-btn ow-btn-secondary">
+                    <button type="button" id="ow-btn-test-connection" class="ow-btn ow-btn-secondary">
                         🔌 <?php esc_html_e( 'Test Connection', 'octowoo' ); ?>
                     </button>
                     <span id="ow-conn-result" style="margin-left:10px; font-size:13px;"></span>
@@ -813,13 +816,34 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 <button type="submit" id="ow-btn-save-settings" class="ow-btn ow-btn-primary">
                     💾 <?php esc_html_e( 'Save Settings', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-autodetect" class="ow-btn ow-btn-secondary" style="margin-left:8px;">
+                <button type="button" id="ow-btn-auto-detect" class="ow-btn ow-btn-secondary" style="margin-left:8px;">
                     🔎 <?php esc_html_e( 'Auto-detect Image Path & Logs', 'octowoo' ); ?>
                 </button>
             </div>
         </form>
 
-        <!-- ── Purge Imported Data ──────────────────────────────────────── -->
+
+        <!-- ── Settings Export / Import ─────────────────────────────────── -->
+        <div class="ow-card" style="margin-top:20px;">
+            <h2><?php esc_html_e( '📤 Settings Export / Import', 'octowoo' ); ?></h2>
+            <p style="font-size:13px;color:#555;margin:0 0 12px;">
+                <?php esc_html_e( 'Export your full configuration as a JSON file to back it up or use on another WordPress installation. The database password is NOT exported for security — you must re-enter it after import.', 'octowoo' ); ?>
+            </p>
+            <div class="ow-settings-io-bar">
+                <button type="button" id="ow-btn-export-settings" class="ow-btn ow-btn-secondary">
+                    📤 <?php esc_html_e( 'Export Settings', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-import-settings-trigger" class="ow-btn ow-btn-secondary">
+                    📥 <?php esc_html_e( 'Import Settings', 'octowoo' ); ?>
+                </button>
+                <input type="file" id="ow-import-settings-file" accept=".json" style="display:none;">
+                <span style="font-size:11px;color:#888;">
+                    <?php esc_html_e( 'JSON files only. Re-enter your DB password after import.', 'octowoo' ); ?>
+                </span>
+            </div>
+        </div>
+
+                <!-- ── Purge Imported Data ──────────────────────────────────────── -->
         <div class="ow-card" style="border:1px solid #dc3545; margin-top:24px;">
             <h2 style="color:#c62828;">⚠️ <?php esc_html_e( 'Purge Imported Data', 'octowoo' ); ?></h2>
             <p style="margin:0 0 14px; font-size:13px; color:#555;">
@@ -850,10 +874,10 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
             </div>
 
             <div style="margin-bottom:14px; font-size:13px;">
-                <button type="button" id="ow-btn-select-all" class="ow-btn" style="padding:4px 12px; font-size:12px;">
+                <button type="button" id="ow-btn-select-all-purge" class="ow-btn" style="padding:4px 12px; font-size:12px;">
                     &#9745; <?php esc_html_e( 'Select All', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-deselect-all" class="ow-btn" style="padding:4px 12px; font-size:12px; margin-left:6px;">
+                <button type="button" id="ow-btn-deselect-all-purge" class="ow-btn" style="padding:4px 12px; font-size:12px; margin-left:6px;">
                     &#9744; <?php esc_html_e( 'Deselect All', 'octowoo' ); ?>
                 </button>
             </div>
@@ -863,7 +887,7 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                     🗑 <?php esc_html_e( 'Purge Selected', 'octowoo' ); ?>
                 </button>
                 <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; color:#c62828; font-weight:600;">
-                    <input type="checkbox" id="ow-force-purge" value="1">
+                    <input type="checkbox" id="ow-purge-force" value="1">
                     <?php esc_html_e( '☢ Force Purge All WooCommerce Data (ignores OctoWoo tag)', 'octowoo' ); ?>
                 </label>
                 <button type="button" id="ow-btn-purge-everything" class="ow-btn ow-btn-danger" style="background:#7b1fa2; border-color:#7b1fa2;">
@@ -899,6 +923,9 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 </select>
                 <button type="button" id="ow-btn-refresh-logs" class="ow-btn ow-btn-secondary">
                     ⟳ <?php esc_html_e( 'Refresh', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-download-logs" class="ow-btn ow-btn-secondary">
+                    ⬇ <?php esc_html_e( 'Download Logs', 'octowoo' ); ?>
                 </button>
                 <button type="button" id="ow-btn-clear-logs" class="ow-btn ow-btn-secondary">
                     🗑 <?php esc_html_e( 'Clear Display', 'octowoo' ); ?>

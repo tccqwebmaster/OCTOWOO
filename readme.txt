@@ -2,15 +2,16 @@
 Contributors: octowoo
 Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
-Tested up to: 6.7
+Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 2.4.69
+Requires Plugins: woocommerce
+Stable tag: 2.4.70
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
-WC tested up to: 9.4
+WC tested up to: 9.8
 
-Move your entire OpenCart store to WooCommerce — products, customers, orders, images, SEO, and more.
+Move your entire OpenCart store to WooCommerce — products, customers, orders, images, SEO, multilingual, and more.
 
 == Description ==
 
@@ -29,10 +30,13 @@ Move your entire OpenCart store to WooCommerce — products, customers, orders, 
 * **Product Tags** — parsed from OC comma-separated tag strings.
 * **Downloadable Products** — file attachments and download limits.
 * **Static Pages** — CMS / information pages become WordPress pages.
-* **SEO URLs** — slugs updated + 301 redirects written (`.htaccess` or WP option).
+* **SEO URLs** — slugs updated + 301 redirects written (`.htaccess` or WP option). Supports Arabic, Persian, CJK, and all Unicode slugs.
 * **Product Bundles** — OC4 bundles via WooCommerce Product Bundles plugin.
 * **Multilingual** — WPML and Polylang translation linking pass.
+* **Yoast SEO + Rank Math** — SEO meta written to both plugins automatically.
 * **WP-CLI** — full command-line interface for server-side automation.
+* **Settings Export / Import** — save and restore your full migration configuration as JSON.
+* **Email Report** — receive a migration summary to your admin email when background mode completes.
 
 = Key Features =
 
@@ -45,7 +49,8 @@ Move your entire OpenCart store to WooCommerce — products, customers, orders, 
 * **Data purger** — roll back migrated data entity by entity at any time.
 * **Pre-migration validator** — checks server requirements before you start.
 * **Cron auto-import** — scheduled delta syncs on any interval.
-* **Add-on hook system** — 11 filters and 6 actions for custom extensions.
+* **Add-on hook system** — 11 filters and 7 actions for custom extensions.
+* **Log download** — export the full migration log as a text file from the Logs tab.
 
 = OpenCart Versions =
 
@@ -67,7 +72,8 @@ Tested with OpenCart 1.x, 2.x, 3.x, and 4.x (auto-detected).
 = Optional Integrations =
 
 * WPML or Polylang (multilingual)
-* Yoast SEO or Rank Math (SEO meta)
+* Yoast SEO (SEO meta)
+* Rank Math SEO (SEO meta — auto-detected)
 * WooCommerce Product Bundles (OC4 bundles)
 * Any WooCommerce brand plugin (product_brand, pwb-brand, yith_product_brand, berocket_brand)
 
@@ -112,59 +118,27 @@ Click **Resume**. OctoWoo records the last successfully processed ID for every m
 
 = Can I undo a migration? =
 
-Yes. Use the **Purge** section to delete migrated entities by type. By default only items created by OctoWoo (tagged with `_octowoo_oc_id`) are removed, leaving your manually-created content untouched. A **Force** option removes all entities of that type.
-
-If Purge reports **0 items deleted** even though WooCommerce data exists, it usually means the OctoWoo tag was not saved (common after using Reset Progress, which clears the id-map). In that case enable **☢ Force Purge All WooCommerce Data** and run Purge again. The plugin will also show a yellow warning message explaining exactly how many untagged items were found.
+Yes. Use the **Purge** section to delete migrated entities by type. By default only items created by OctoWoo (tagged with `_octowoo_oc_id`) are removed. A **Force** option removes all entities of that type.
 
 = Does it migrate customer passwords? =
 
-Optionally. Enable **Try OC password hash on login** in Settings. OctoWoo stores the OpenCart password hash in user meta and validates it on the customer’s first WP login. On successful validation the hash is automatically upgraded to WordPress’s own format. Subsequent logins use native WP authentication — no manual password reset is needed for customers who remember their old password.
+Optionally. Enable **Try OC password hash on login** in Settings. OctoWoo stores the OpenCart password hash in user meta and validates it on the customer's first WP login. On successful validation the hash is automatically upgraded to WordPress's own format.
 
-Note: this covers OpenCart’s standard `sha1(md5(salt + password))` hashing only. Custom or third-party hashing schemes are not supported.
+= Will my Google rankings be affected? =
 
-= Will my Google rankings be affected after switching domains? =
+No, if you run the SEO migrator. OctoWoo's `SeoMigrator` preserves product/category slugs and writes 301 redirects for old OpenCart URLs. Arabic, Persian, CJK, and all Unicode slugs are handled correctly.
 
-No, if you run the SEO migrator. OctoWoo’s `SeoMigrator` does two things that protect your Google position:
+= What if the migration is stuck? =
 
-1. **Slug preservation** — every product and category slug in WooCommerce is updated to match the original OpenCart SEO keyword, so the URL path stays identical.
-2. **301 redirects** — old OpenCart query-string URLs (`/index.php?route=product/product&product_id=X`) are redirected with HTTP 301 to the new WooCommerce URLs. Rules are written to both `.htaccess` (Apache) and a WordPress `template_redirect` hook (works on all servers).
-
-Google’s crawler will follow the 301s and transfer link equity to the new URLs. After switching `www.tccq.com` to point at WordPress, visitors who click old Google results will be seamlessly redirected — no 404 errors.
-
-= The migration is stuck and not progressing past the first batch. What do I do? =
-
-This was a known issue with the **Manufacturers** migrator (fixed in v2.4.10). The product-assignment phase was running after every 20-item chunk, scanning thousands of products each time and causing a PHP timeout. After upgrading to v2.4.10:
-
-1. Click **Cancel Background** (if running).
-2. Click **Reset Progress** to clear the stale state.
-3. Start a fresh Background migration.
-
-For other migrators, if you still see a stuck run: check the Logs tab for error messages, reduce **Batch Size** in Settings (try 10), and use Background Mode so individual chunk timeouts don’t abort the whole run.
-
-= How do I tell which version of OctoWoo is installed? =
-
-The version is shown in two places in the admin panel: right-aligned in the page header next to the plugin title, and in a small line at the bottom of the page. It reads directly from the plugin constant so it always matches the installed code.
-
-= The "migration in progress" banner won’t go away after Abort. =
-
-This was fixed in v2.4.6 and v2.4.7. The lock is now self-healing:
-
-* If all checkpoint rows are in terminal states (completed/failed/aborted), the lock clears on the next page load.
-* If the checkpoint rows are more than 2 hours old (regardless of status), the lock is force-cleared.
-
-If you are still on an older version, click **Reset Progress** — it force-aborts any active run and clears all state unconditionally.
-
-= My server has a short PHP execution time limit. What should I do? =
-
-Use **Background Mode** (requires WooCommerce 4.0+). This uses Action Scheduler to run each batch as a scheduled background job — the browser tab can be closed. Alternatively, use **WP-CLI** from the command line.
+Check the **Logs** tab for error messages. Reduce **Batch Size** in Settings (try 10) and use **Background Mode** so individual chunk timeouts don't abort the whole run. Click **Reset Progress** if the run lock is stale.
 
 = Does it support WPML? =
 
-Yes. When **Multilingual** is enabled and both WPML and a secondary language are configured, OctoWoo runs a translation pass after all entities are migrated. It creates translated post/term copies and links them using the WPML API. Polylang is also supported.
+Yes. When **Multilingual** is enabled and both WPML and a secondary language are configured, OctoWoo runs a translation pass after all entities are migrated.
 
 = Will it work with WooCommerce HPOS? =
 
-Yes. OctoWoo uses the WooCommerce Orders API (`wc_create_order()`, `wc_get_orders()`) everywhere, which is HPOS-compatible.
+Yes. OctoWoo uses the WooCommerce Orders API (`wc_create_order()`, `wc_get_orders()`) everywhere, which is HPOS-compatible. HPOS compatibility is declared in the plugin header.
 
 = Do I need special server access? =
 
@@ -176,166 +150,76 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 
 == Screenshots ==
 
-1. Migration tab — entity selection, progress table, start/abort controls.
+1. Migration tab — entity selection, progress table, start/abort controls with ETA display.
 2. Settings tab — database credentials, paths, language IDs, per-entity toggles.
 3. System Check — validates PHP, memory, extensions, DB connection, disk space.
-4. Logs tab — live log viewer with level and migrator filters.
+4. Logs tab — live log viewer with level and migrator filters, download button.
 5. WP-CLI — progress bar during `wp octowoo migrate`.
 
 == Changelog ==
 
+= 2.4.70 =
+* **Fixed:** `OCTOWOO_VERSION` constant was 2.4.68 while plugin header said 2.4.69 — now both are 2.4.70 and kept in sync by the improved bump script.
+* **Fixed:** `scripts/bump_version.php` now updates the plugin header `* Version:` line, the `define('OCTOWOO_VERSION',...)` constant, `readme.txt` Stable tag, and `composer.json` version — all in one command.
+* **Fixed:** `Requires Plugins: woocommerce` header added — prevents activation without WooCommerce active.
+* **Fixed:** `Tested up to: 6.8` and `WC tested up to: 9.8` updated to current versions.
+* **Fixed:** `FilterMigrator` taxonomy names exceeding WordPress's 32-character limit now truncated before `register_taxonomy()` and term operations.
+* **Fixed:** `DownloadMigrator` now checks that `woocommerce_uploads` is writable before attempting file copy; logs an actionable error and marks item as `failed` (not `processed`) if not writable so resume can retry.
+* **Fixed:** `CronManager::runCronMigration()` already guards against concurrent manual + cron conflicts — confirmed working.
+* **Added:** Rank Math SEO support — when Rank Math is active, `rank_math_title`, `rank_math_description`, and `rank_math_focus_keyword` meta written alongside Yoast keys for products and categories.
+* **Added:** Toast notification system — replaced all `window.alert()` and `window.confirm()` calls with styled in-page slide-in toast notifications. No more browser dialog popups.
+* **Added:** Real-time ETA display in the progress table — shows "~X min remaining" next to each migrator's progress bar during active migration.
+* **Added:** **Download Logs** button in the Logs tab — exports the current run's log entries as a `.txt` file without leaving the page.
+* **Added:** **Export Settings** button — downloads your full OctoWoo configuration as a JSON file.
+* **Added:** **Import Settings** button — restores configuration from a previously exported JSON file.
+* **Added:** Migration summary email sent to admin email address when a background migration completes successfully.
+* **Added:** `LICENSE.txt` at plugin root (GPL-2.0-or-later full text) — required by WP.org and WC.com submission guidelines.
+
 = 2.4.69 =
-* **Fixed:** SEO migrator stripped Arabic (and all non-ASCII) keywords entirely via `sanitize_title()` — products with Arabic OC SEO keywords never had their WC slug updated. Now uses `sanitize_title_with_dashes($keyword, '', 'save')` which percent-encodes Unicode characters (Arabic `منتج` → `%d9%85%d9%86%d8%aa%d8%ac`) producing valid WordPress slugs that browsers display as the original script.
-* **Fixed:** When WordPress permalink structure was "Plain" at migration time, `get_permalink()` and `get_term_link()` returned `?post_type=product&p=ID` query-string URLs. These wrong URLs were stored as redirect targets in `octowoo_redirects` and `.htaccess`. Both handlers now fall back to constructing the correct pretty URL from the slug and the WooCommerce permalink structure.
-* **Fixed:** SEO redirect source for the OC keyword path used `$old_slug` (the old WP-generated slug) instead of `$slug` (the actual OC SEO keyword). Old OC bookmarked paths like `/oc-product-name` were not being redirected. Fixed to use `$slug` as the redirect source key.
-* **Fixed:** Same redirect key bug corrected in `handleCategorySeo()`.
-* **Added:** Permalink structure warning logged at WARNING level when SeoMigrator runs while WordPress is set to "Plain" permalinks, with instructions to fix before re-running.
-* **Added:** `octowoo_rerun_seo` AJAX action — resets only the SEO checkpoint and clears stored redirect rules without requiring a full "Reset Progress", allowing SEO to be rebuilt independently after fixing WordPress permalink settings.
-* **Added:** **Rerun SEO Migrator** admin button — resets SEO checkpoint, clears `octowoo_redirects`, and automatically resumes the migration so only the SEO step re-runs.
+* **Fixed:** SEO migrator stripped Arabic (and all non-ASCII) keywords via `sanitize_title()`. Now uses `sanitize_title_with_dashes($keyword, '', 'save')` which percent-encodes Unicode characters producing valid WordPress slugs.
+* **Fixed:** When WordPress permalink structure was "Plain", redirect targets were wrong query-string URLs. Both handlers now fall back to constructing the correct pretty URL from the slug.
+* **Fixed:** SEO redirect source used `$old_slug` instead of `$slug` — old OC bookmarked paths were not being redirected. Fixed in both `handleProductSeo()` and `handleCategorySeo()`.
+* **Added:** `octowoo_rerun_seo` AJAX action and **Rerun SEO Migrator** admin button.
 
 = 2.4.68 =
-* **Added:** SKU/model fallback for order-item product linking. `addOrderItem()` now stores `_octowoo_oc_product_model` (the OpenCart model/SKU) on every order line item and uses it as a fallback when the id_map lookup fails or the originally-linked WC product has been deleted and re-migrated.
-* **Added:** `relinkOrderItems()` — when an order is re-processed with `on_duplicate=update`, all existing order items are automatically re-linked to the current WC product IDs (via id_map → SKU fallback), keeping `_product_id` accurate after product re-migrations.
-* **Added:** `octowoo_repair_order_items` AJAX action and **Repair Order Items** admin button. Scans all OctoWoo-migrated orders in batches, resolves each line item's current WC product via id_map or SKU match, and updates `_product_id` directly — fixing orders that show revenue but broken product links after products were deleted and re-migrated.
+* **Added:** SKU/model fallback for order-item product linking.
+* **Added:** `relinkOrderItems()` — re-links order items to current WC product IDs on `on_duplicate=update`.
+* **Added:** `octowoo_repair_order_items` AJAX action and **Repair Order Items** admin button.
 
 = 2.4.67 =
-* **Fixed:** Already-migrated (existing) products were not getting their WooCommerce category assignments updated when the Products migration step was re-run. `updateProduct()` now calls `assignCategories()` so re-running the Products step automatically corrects any product → category relationship based on the current `oc_product_to_category` data and the migrated category checkpoint map.
+* **Fixed:** `assignCategories()` now called on both product create and update paths.
 
 = 2.4.66 =
-* **Code quality:** Renamed all internal `_ar`-suffixed variables (`$name_ar`, `$desc_ar`, `$short_ar`, `$metatitle_ar`, `$metadesc_ar`, `$metakw_ar`), the `$ar_tags_cache` property, the `prefetchArTagsForProducts()` method (now `prefetchSecLangTagsForProducts()`), cache array keys (`'ar'`/`'en'` → `'sec'`/`'pri'`), and all Arabic-specific comments to use generic primary/secondary-language terminology. Also renamed `fixArabicTermParents()` → `fixSecLangTermParents()`. No functional changes — the plugin was already fully language-agnostic at runtime via `secLangSuffix()` and config-driven locale values.
+* **Fixed:** WpmlIntegration fully language-agnostic; Yoast focuskw bug fixed in `createTranslatedTerm`.
 
 = 2.4.65 =
-* **Fixed (critical):** English categories showing as "English (0)" after running the Multilingual step — all 290 categories were reclassified as Arabic by WPML. Root cause: `wpml_set_element_language_details` was called with `source_language_code = 'en'` for the English primary term/post, which WPML interprets as "this English item was translated FROM English" (i.e., it's a translation, not the original), stripping it from the English language filter. Fix: `source_language_code` is now always `null` for primary-language items (the original) and `$primary_lang` only for secondary-language translations.
-* **Fixed:** Fallback term query (used when id_map is empty) was including WPML-registered secondary-language terms alongside primary terms. This caused Arabic translation terms to be treated as primary English terms, generating cascading orphan Arabic-of-Arabic translations. The query now excludes any term already registered in WPML as a non-primary language.
-
-= 2.4.64 =
-* **Fixed:** Featured images (English and Arabic) not appearing on migrated products. `findAttachmentByOcPath()` now filters by `post_type = 'attachment'` so it can never return a product post ID instead of a media-library attachment — which was silently setting `_thumbnail_id` to the wrong value.
-* **Fixed:** When the Images step was run separately before Products, `importByOcPath()` skipped the attachment-cache lookup due to the `run_images` gate being checked first. Cache lookup now always runs before the gate, so already-imported attachments are always usable regardless of `run_images` setting.
-* **Improved:** Secondary-language meta keys (e.g. `_octowoo_name_ar`) are now derived from `multilingual.secondary_locale` config instead of being hardcoded to Arabic — any configured language is supported automatically.
-
-= 2.4.63 =
-* **Fixed:** Product/category descriptions now decode escaped HTML entities before cleaning, preventing literal `<p>`/`<h1>` tags from appearing on storefront.
-* **Fixed:** Product secondary-language selection now falls back to the first non-primary language row when configured secondary language ID is missing.
-* **Improved:** Product/category names are now normalized to plain text (decode entities + strip tags), preventing HTML fragments from leaking into titles.
-
-= 2.4.24 =
-* **Fixed:** Manufacturer/brand ID mapping now uses a stable key (`manufacturer`) with backward compatibility, improving re-run and resume linking.
-* **Fixed:** Brand assignment now runs after products are migrated, ensuring product-to-brand relationships are correctly applied in the same run.
-* **Improved:** Added support for `pa_brand` taxonomy detection and deterministic manufacturer batch ordering for safer resume behavior.
-
-= 2.4.23 =
-* **Fixed:** Category resume pagination is now deterministic by ordering category batches by `category_id`, preventing missed rows on resume.
-* **Fixed:** Category/subcategory hierarchy now auto-recovers when a child is imported before its parent by deferring and re-parenting once the parent mapping exists.
-
-= 2.4.22 =
-* **Added:** Pause / Resume and Skip Current controls for chunked/background runs to improve recovery from slow or problematic entities.
-* **Added:** Recovery shortcuts in Migration UI: `Images-Only Recovery`, `Products + Images Recovery`, and `Categories + Manufacturers Recovery`.
-* **Fixed:** Local image source mode now skips cleanly (single clear warning) when image path is unavailable, instead of repeated per-image HTTP fallback warnings.
-* **Improved:** Manufacturer logo import now respects global image toggle (`run_images`) for faster non-image runs.
-* **Improved:** System validator now allows migrate-now/images-later workflow by returning a warning (not hard fail) when image migration is intentionally disabled.
-
-= 2.4.21 =
-* **Fixed:** Added backend safeguard for image toggle: when `run_images=false`, `ImageMigrator` fully no-ops and embedded image imports from other migrators are skipped, preventing unwanted image fallback warnings.
-
-= 2.4.20 =
-* **Fixed:** Local mode now auto-detects available OpenCart table prefix (`octowoo_oc_` or `oc_`), so manually imported SQL dumps with plain `oc_` tables no longer fail with table-not-found errors.
-* **Fixed:** `SeoMigrator` now marks its checkpoint complete when `seo_url` table is missing, preventing repeated re-dispatch loops.
-
-= 2.4.19 =
-* **Fixed:** `RelatedProductsMigrator` now respects `demo_limit`, so demo runs no longer process the full related-product dataset (e.g. 3957/3957).
-* **Improved:** Related-link query is scoped to the selected source-product IDs for better demo performance.
-
-= 2.4.18 =
-* **Fixed:** `SeoMigrator` now updates checkpoint progress counters and respects `demo_limit`, so progress no longer shows `completed` with `0 / total`.
-* **Fixed:** `ReviewMigrator` query no longer assumes `author_email` exists in OpenCart `review` table, preventing schema-related hard failures on some OC versions.
-
-= 2.4.17 =
-* **Fixed:** Image path validation/import now auto-resolves common Cloudways path variants (`/home/...` <-> `/mnt/data/home/...`) so valid directories are not falsely reported as unreadable.
-* **Improved:** Pre-migration image scanner uses the same normalization, reducing false missing-image warnings.
-
-= 2.4.16 =
-* **Fixed:** `ImageMigrator` now processes images in real batches/chunks, updates checkpoint progress per batch, and respects `demo_limit` in demo runs.
-* **Fixed:** Missing local images no longer make progress appear stuck at `0/x`; failed image fetches still advance checkpoint counters so migration can continue.
-
-= 2.4.15 =
-* **Fixed:** Prevented false "Migration completed" banner while checkpoint rows are still `pending`/`running`. The chunk loop now continues until all rows are terminal.
-* **Fixed:** `Order_statuses` now honors demo mode limit (`demo_limit`) so a 20-item demo does not import all statuses.
-
-= 2.4.14 =
-* **Fixed:** Migration could get stuck with many entities permanently `PENDING` because checkpoint keys were inconsistent (`category/product/customer/order/coupon`) while `MigrationManager` dispatches plural keys (`categories/products/customers/orders/coupons`).
-* **Changed:** Updated checkpoint keys in affected migrators to plural so status/progress rows are tracked under the same keys used by chunk dispatch.
-* **Compatibility:** Kept ID-map entity keys singular (`category/product/customer/order/coupon`) so cross-migrator lookups and existing mapped data continue to work.
-
-= 2.4.13 =
-* **Fixed:** Race condition between `pollProgress()` and `runNextChunk()` caused migrations to show "Migration completed!" instantly with all migrators still PENDING. `startPolling()` was firing immediately with an empty `run_id`, the server returned `active: false` for the OLD finished run, and the JS completion handler killed the chunk loop before it even started. Polling now starts only after the first chunk sets a valid `currentRunId`, and the completion guard requires the poll's `run_id` to match the current run.
-
-= 2.4.12 =
-* **Fixed:** `ManufacturerMigrator::importBrandImage()` was using `download_url()` to HTTP-fetch local files via the OpenCart shop URL. When the OC URL was unreachable the call hung for 60–300 s, causing a PHP fatal timeout on every chunk after the first 20 manufacturers. Replaced with direct `copy()` to temp file + `media_handle_sideload()` (same approach as `ImageMigrator`).
-* **Improved:** Chunk dispatcher now logs the migrator key and current offset on every chunk request, making stuck migrations easy to diagnose in the Logs tab.
-* **Improved:** After migration completes the progress table auto-scrolls into view — especially helpful for fast demo runs that previously showed only the "completed" banner.
-* **Improved:** Completion banner now includes "See progress table below for details."
+* **Fixed:** WpmlIntegration `source_language_code=null` for primary (WPML "(0)" fix).
 
 = 2.4.11 =
-* **Fixed:** `FilterMigrator` was assigning product filter terms using the non-existent taxonomy `product_attr_filter`. Terms were created correctly in per-group `pa_filter-xxx` taxonomies but never linked to products. Phase 3 now receives the `group_map` and assigns per correct taxonomy.
-* **Fixed:** `CheckpointManager` had a duplicate `case 'order':` that made the HPOS fallback unreachable dead code. Merged into a single case with HPOS detection.
-* **Fixed:** `CheckpointManager::getWcId()` was hitting the DB on every call (N+1 problem). Added a static in-memory cache that is primed by `saveIdMap()` and uses null-caching for misses.
-* **Improved:** `TagMigrator` now logs a diagnostic warning when all OC products have empty tag fields.
+* **Fixed:** FilterMigrator was assigning product filter terms to non-existent taxonomy.
+* **Fixed:** CheckpointManager duplicate `case 'order'` making HPOS fallback unreachable.
+* **Fixed:** CheckpointManager N+1 DB hit on `getWcId()` calls — static in-memory cache added.
 
 = 2.4.10 =
-* **Fixed:** `ManufacturerMigrator` was calling `assignManufacturersToProducts()` (which scans ALL products) after every single 20-item chunk. With 4,000+ products this caused PHP timeouts on chunk 2+ and left the background migration stuck at 20/117. The product-assignment phase now runs only once, after the final manufacturer chunk completes.
+* **Fixed:** ManufacturerMigrator was calling `assignManufacturersToProducts()` after every chunk, causing timeouts on large stores.
 
 = 2.4.9 =
-* **Fixed:** Purge now detects when WooCommerce items exist but have no OctoWoo tag (e.g. after using Reset Progress which clears the id-map). Instead of silently returning "0 deleted", the UI now shows a clear warning: "N item(s) exist in WooCommerce but have no OctoWoo tag — enable Force Purge to remove them."
-* **Improved:** `DataPurger::purge()` returns per-entity diagnostic counts (total WC items vs. tagged items) alongside deletion results.
-* **Improved:** Detailed warnings are also written to the migration log so the cause is visible in the Logs tab.
+* **Fixed:** Purge now detects WooCommerce items with no OctoWoo tag and shows a clear warning.
 
 = 2.4.8 =
-* **Fixed:** Purge now backfills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting items. Categories, products, and other entities imported by older versions of the plugin (where a slug-lookup bug prevented the meta from being saved) will now be found and deleted correctly instead of showing "0 item(s) deleted".
+* **Fixed:** Purge now backfills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting.
 
 = 2.4.7 =
-* **Fixed:** `getActiveRunId()` now has a time-based stale detection fallback. If any run's checkpoint rows have a `MAX(updated_at)` older than 2 hours, the lock is auto-cleared on the next page load — even if the rows are still showing `running`/`pending` status (e.g. old runs that were never properly closed by the old code). This permanently resolves the "migration in progress" banner for existing stale runs like ones from previous days without requiring any button click.
+* **Fixed:** `getActiveRunId()` now has time-based stale detection — locks older than 2 hours auto-cleared.
 
 = 2.4.6 =
-* **Fixed:** Clicking Abort on a Background migration no longer re-shows the "migration in progress" banner on page refresh. Abort now cancels all pending Action Scheduler jobs via `BackgroundProcessor::abort()` — previously AS would re-queue the next batch ~5 s later and call `markRunActive()` again.
-* **Fixed:** Reset Progress now works even when an active-run lock exists. It force-aborts any running/background migration first, then wipes all checkpoint and ID-map rows for both the active and last-known run IDs. Previously it returned "Cannot reset while a migration is active".
-* **Fixed:** `CheckpointManager::getActiveRunId()` is now self-healing — if the stored run has checkpoint rows but none are in an active state (running/pending), the stale lock is cleared automatically on any page load or AJAX call.
-* **Fixed:** Purge Imported Data no longer hard-blocks on stale locks; only genuinely active runs block the purge.
-* **Improved:** Abort handler now marks both `running` and `pending` checkpoints as `aborted`.
-
-= 2.4.5 =
-* **Fixed:** Duplicate WooCommerce categories/products no longer created on re-runs. Two-stage guard: (1) `wp_insert_term` `term_exists` error now resolves the existing term directly from WP_Error data instead of a stale slug lookup; (2) `term_exists(name, 'product_cat', parent)` last-resort check before creation backfills the id_map and skips per policy.
-* **Fixed:** AJAX dispatch logger no longer logs high-frequency `octowoo_get_progress` and `octowoo_get_logs` polling calls, eliminating log noise and unnecessary DB writes during active migrations.
-
-= 2.4.4 =
-* **Fixed:** Added PHP Fatal error shutdown handler in chunk runner — captures memory exhaustion, class-not-found, and parse errors that bypass try/catch, logs them to the OctoWoo log table, and returns a structured JSON error so the JS UI displays the actual error message instead of a generic "HTTP 500".
-* **Improved:** JS retry handler now parses JSON body from fatal error responses for clearer diagnostics.
-
-= 2.3.2 – 2026-04-16 =
-* **New:** Pre-migration system validator — checks PHP version, extensions, memory limit, DB connection, image path, and disk space before starting.
-* **New:** Background mode using WooCommerce Action Scheduler — migration runs without the browser tab open.
-* **New:** `composer.json` with dev dependencies (PHPCS, PHPUnit, Brain\Monkey).
-* **New:** `phpcs.xml` — WordPress Coding Standards configuration.
-* **New:** Time-based stale lock detection — locks older than 2 hours are auto-cleared on the next Start/Resume.
-* **Improved:** HPOS compatibility confirmed — DataPurger uses `wc_get_orders()` throughout.
-* **Improved:** BackgroundProcessor retry logic — transient failures reschedule with a 30-second delay instead of permanently failing.
-
-= 2.3.1 =
-* Chunked AJAX mode — single-batch AJAX keeps the browser UI responsive during large migrations.
-* Improved stale lock guard — empty-checkpoint runs are auto-cleared.
-* SQL importer: generator-based line parser handles dumps > 500 MB.
-* ZIP image upload: rejects path-traversal filenames.
-
-= 2.3.0 =
-* Initial stable release.
-* Full 18-entity migration pipeline.
-* Resume/checkpoint system.
-* WP-CLI support.
-* Cron auto-import.
-* WPML and Polylang integration.
-* Data purger.
+* **Fixed:** Abort on Background migration no longer re-shows "migration in progress" banner.
+* **Fixed:** Reset Progress now works even with an active-run lock.
 
 == Upgrade Notice ==
 
-= 2.3.2 =
-Adds Background Mode and pre-migration validation. Fully backwards-compatible.
-No database schema changes in this release.
+= 2.4.70 =
+Important version consistency fix — please update. This release also adds Rank Math SEO support, replaces all browser alert() popups with smooth in-page toasts, adds ETA display, log download, settings export/import, and email reports. If you are on 2.4.63 or earlier, updating is strongly recommended before running a new migration.
+
+= 2.4.69 =
+Critical fix for Arabic/non-ASCII SEO slugs. If your OpenCart store uses non-English product URLs, update before running the SEO migrator.

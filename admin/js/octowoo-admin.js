@@ -1,41 +1,154 @@
 /**
- * OctoWoo – Admin Dashboard JavaScript
+ * OctoWoo – Admin Dashboard JavaScript  v2.4.70
  *
- * Handles:
- *  - Tab switching (Migration / Settings / Logs)
- *  - Start / Resume / Abort migration via AJAX
- *  - Progress polling (every 3 s while running)
- *  - Log viewer with live refresh + level filter
- *  - Progress bar rendering
- *  - Test DB connection
+ * Fixes in this version:
+ *  - Replaced ALL window.alert() / window.confirm() with in-page toast notifications
+ *  - Added real-time ETA ("~X min remaining") in the progress table
+ *  - Added "Download Logs" button (Blob download, no page reload)
+ *  - Added "Export Settings" / "Import Settings" buttons
+ *  - Fixed polling race condition (poll starts only AFTER first chunk sets run_id)
+ *  - Fixed JS crash when repair-order-items response has no data.done
  */
 /* global octoWoo, jQuery */
 (function ($) {
     'use strict';
 
     /* ── State ───────────────────────────────────────────────────────────── */
-    let pollTimer      = null;
-    let currentRunId   = octoWoo.activeRunId || octoWoo.lastRunId || '';
-    // isRunning = true only when THIS page's JS is actively firing chunks.
-    // An activeRunId in the DB just means a run can be resumed; it does NOT
-    // mean this JS instance is sending requests.
-    let isRunning      = false;
-    let isPausedState  = false;
-    let currentMigrator = '';
-    // Epoch counter incremented every time a NEW migration session starts.
-    // Each runNextChunk() call captures the epoch at dispatch time; the .done
-    // callback discards the response if the epoch has since changed.  This
-    // prevents a slow in-flight chunk from a previous run (e.g. a full
-    // migration that was running while the user clicks a recovery button) from
-    // clobbering currentRunId and firing unwanted migrators.
-    let migrationEpoch = 0;
+    let pollTimer        = null;
+    let currentRunId     = octoWoo.activeRunId || octoWoo.lastRunId || '';
+    let isRunning        = false;
+    let isPausedState    = false;
+    let currentMigrator  = '';
+    let migrationEpoch   = 0;
+    let chunkStartTimes  = {};   // migrator => Date.now() when it started
+    let chunkItemRates   = {};   // migrator => items/sec rolling average
 
-    /* ── DOM refs (populated in init) ────────────────────────────────────── */
-    let $progressTable, $logContainer, $statusBanner, $btnStart, $btnResume, $btnAbort, $btnPause, $btnSkip, $btnReset;
+    /* ── chunk params ────────────────────────────────────────────────────── */
+    let chunkMigrators          = '';
+    let chunkDryRun             = 0;
+    let chunkDemoLimit          = 0;
+    let chunkFailCount          = 0;
+    let chunkOnDuplicate        = 'skip';
+    let chunkClearOrdersPending = false;
 
-    /* ── Init ────────────────────────────────────────────────────────────── */
+    /* ── DOM refs ────────────────────────────────────────────────────────── */
+    let $progressTable, $logContainer, $statusBanner, $btnStart, $btnResume,
+        $btnAbort, $btnPause, $btnSkip, $btnReset;
+
+    /* ════════════════════════════════════════════════════════════════════
+       TOAST NOTIFICATION SYSTEM
+       Replaces all window.alert() / window.confirm() calls.
+    ════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * Show a slide-in toast notification.
+     * @param {string} msg    Message text
+     * @param {string} type   'success' | 'error' | 'warning' | 'info'
+     * @param {number} ms     Auto-dismiss delay (0 = stay until clicked)
+     */
+    function showToast(msg, type, ms) {
+        type = type || 'info';
+        ms   = (ms === undefined) ? 4000 : ms;
+
+        var colors = {
+            success: { bg: '#edf7ed', border: '#4caf50', text: '#1b5e20', icon: '✔' },
+            error:   { bg: '#fef2f2', border: '#ef4444', text: '#7f1d1d', icon: '✘' },
+            warning: { bg: '#fffbeb', border: '#f59e0b', text: '#78350f', icon: '⚠' },
+            info:    { bg: '#e8f4fd', border: '#2196f3', text: '#0d3349', icon: 'ℹ' },
+        };
+        var c = colors[type] || colors.info;
+
+        // Ensure container exists.
+        if (!$('#ow-toast-container').length) {
+            $('body').append(
+                '<div id="ow-toast-container" style="position:fixed;top:40px;right:20px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:380px;"></div>'
+            );
+        }
+
+        var $toast = $('<div>')
+            .css({
+                background:    c.bg,
+                border:        '1px solid ' + c.border,
+                color:         c.text,
+                borderRadius:  '6px',
+                padding:       '10px 36px 10px 14px',
+                fontSize:      '13px',
+                lineHeight:    '1.5',
+                boxShadow:     '0 4px 12px rgba(0,0,0,.15)',
+                position:      'relative',
+                cursor:        'pointer',
+                wordBreak:     'break-word',
+                opacity:       0,
+                transform:     'translateX(20px)',
+                transition:    'opacity .2s,transform .2s',
+            })
+            .html('<strong style="margin-right:6px;">' + c.icon + '</strong>' + $('<span>').text(msg).html())
+            .append(
+                $('<span>').text('×').css({
+                    position: 'absolute', top: '8px', right: '10px',
+                    fontSize: '16px', fontWeight: 'bold', opacity: '.6', cursor: 'pointer',
+                }).on('click', function () { dismiss($toast); })
+            )
+            .on('click', function () { dismiss($toast); });
+
+        $('#ow-toast-container').append($toast);
+
+        // Animate in.
+        setTimeout(function () {
+            $toast.css({ opacity: 1, transform: 'translateX(0)' });
+        }, 10);
+
+        if (ms > 0) {
+            setTimeout(function () { dismiss($toast); }, ms);
+        }
+
+        function dismiss($t) {
+            $t.css({ opacity: 0, transform: 'translateX(20px)' });
+            setTimeout(function () { $t.remove(); }, 220);
+        }
+
+        return $toast;
+    }
+
+    /**
+     * In-page confirm dialog (async, returns Promise<bool>).
+     * Replaces window.confirm() throughout the codebase.
+     */
+    function owConfirm(msg, okLabel, cancelLabel) {
+        okLabel     = okLabel     || 'OK';
+        cancelLabel = cancelLabel || 'Cancel';
+        return new Promise(function (resolve) {
+            var $overlay = $('<div>').css({
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
+                zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            });
+            var $box = $('<div>').css({
+                background: '#fff', borderRadius: '8px', padding: '24px 28px',
+                maxWidth: '420px', width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,.2)',
+                fontFamily: 'inherit', fontSize: '14px', lineHeight: '1.6',
+            });
+            $box.append(
+                $('<p>').css({ margin: '0 0 20px', color: '#1d2327' }).text(msg),
+                $('<div>').css({ display: 'flex', gap: '10px', justifyContent: 'flex-end' }).append(
+                    $('<button>').addClass('button').text(cancelLabel).on('click', function () {
+                        $overlay.remove();
+                        resolve(false);
+                    }),
+                    $('<button>').addClass('button button-primary').text(okLabel).on('click', function () {
+                        $overlay.remove();
+                        resolve(true);
+                    })
+                )
+            );
+            $overlay.append($box);
+            $('body').append($overlay);
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       INIT
+    ════════════════════════════════════════════════════════════════════ */
     function init() {
-        // Cache DOM refs.
         $progressTable = $('#ow-progress-table');
         $logContainer  = $('#ow-log-container');
         $statusBanner  = $('#ow-status-banner');
@@ -46,73 +159,44 @@
         $btnSkip       = $('#ow-btn-skip');
         $btnReset      = $('#ow-btn-reset');
 
-        // Tab navigation (query-string approach for back-button support).
+        // Tab navigation.
         $(document).on('click', '.ow-tab-btn', function (e) {
             e.preventDefault();
             switchTab($(this).data('tab'));
         });
 
-        // Activate correct tab on load.
-        const urlParams = new URLSearchParams(window.location.search);
+        var urlParams = new URLSearchParams(window.location.search);
         switchTab(urlParams.get('tab') || 'migration');
 
-        // Button handlers.
-        $btnStart.on('click', function () { startMigration(false, false); });
-        $btnResume.on('click', function () { startMigration(true,  false); });
+        // ── Migration buttons ──────────────────────────────────────────────
+        $btnStart.on('click',  function () { startMigration(false, false); });
+        $btnResume.on('click', function () { startMigration(true, false); });
+
         $btnAbort.on('click', abortMigration);
         $btnPause.on('click', pauseMigration);
-        $btnSkip.on('click', skipCurrentMigrator);
+        $btnSkip.on('click',  skipCurrentMigrator);
         $btnReset.on('click', resetMigration);
 
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
+
+        // Recovery buttons.
         $('#ow-btn-images-only').on('click', startImagesOnlyRecovery);
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
+        $('#ow-btn-rerun-seo').on('click', rerunSeoMigrator);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
-        $('#ow-btn-rerun-seo').on('click', rerunSeo);
 
-        $('#ow-btn-test-conn').on('click', testConnection);
-        $('#ow-btn-autodetect').on('click', function () {
-            const $btn = $(this);
-            $btn.prop('disabled', true).text('🔎 Detecting…');
-            $.post(octoWoo.ajaxUrl, {
-                action: 'octowoo_prescan',
-                nonce:  octoWoo.nonce,
-            })
-            .done(function (res) {
-                if (!res.success) {
-                    alert('Auto-detect failed: ' + (res.data && res.data.message ? res.data.message : 'Unknown'));
-                    return;
-                }
-                const data = res.data || {};
-                // If scanner found a local images dir, populate hidden input and visible field.
-                if (data.images && data.images.detected_path) {
-                    $('#ow-image-source-input').val('local');
-                    $('#ow-tab-settings').find('input[name="octowoo[opencart][image_path]"]').val(data.images.detected_path);
-                }
-                // If logger writable info returned, inform the admin.
-                let msg = 'Auto-detect complete.';
-                if (data.logs) {
-                    msg += ' Logs dir: ' + (data.logs.path || 'unknown') + ' (' + (data.logs.writable ? 'writable' : 'not writable') + ')';
-                }
-                alert(msg);
-            })
-            .fail(function (xhr) {
-                alert('Auto-detect request failed: ' + xhr.statusText);
-            })
-            .always(function () {
-                $btn.prop('disabled', false).text('🔎 Auto-detect Image Path & Logs');
-            });
-        });
+        // Connection test.
+        $('#ow-btn-test-connection').on('click', testConnection);
 
+        // Prescan.
+        $('#ow-btn-auto-detect').on('click', autoDetect);
         $('#ow-btn-scan').on('click', scanSourceCounts);
-
-        // System (pre-migration) check.
         $('#ow-btn-validate').on('click', runSystemCheck);
 
-        // Background mode (Action Scheduler).
+        // Background mode.
         $('#ow-btn-start-bg').on('click', function () { startBackgroundMigration(false); });
         $('#ow-btn-resume-bg').on('click', function () { startBackgroundMigration(true); });
         $('#ow-btn-cancel-bg').on('click', cancelBackgroundMigration);
@@ -121,525 +205,75 @@
         $('#ow-log-level-filter').on('change', function () { refreshLogs(); });
         $('#ow-btn-refresh-logs').on('click', function () { refreshLogs(); });
         $('#ow-btn-clear-logs').on('click', function () { $logContainer.empty(); });
+        $('#ow-btn-download-logs').on('click', downloadLogs);
 
-        // If there's a run (active or last), show its progress immediately.
-        if (currentRunId) {
-            pollProgress();
-        }
+        // Settings export / import.
+        $('#ow-btn-export-settings').on('click', exportSettings);
+        $('#ow-btn-import-settings-trigger').on('click', function () {
+            $('#ow-import-settings-file').trigger('click');
+        });
+        $('#ow-import-settings-file').on('change', function () {
+            var file = this.files[0];
+            if (file) { importSettings(file); }
+        });
 
-        // If there's an active run in the DB (interrupted), start continuous
-        // polling so the table stays live — and enable Abort.
+        // SQL upload.
+        $('#ow-btn-import-sql').on('click', importSql);
+        $(document).on('click', '#ow-btn-drop-sql', dropSql);
+        $('#ow-btn-import-images').on('click', importImages);
+
+        // Purge.
+        $('#ow-btn-select-all-purge').on('click',   function () { $('.ow-purge-chk').prop('checked', true); });
+        $('#ow-btn-deselect-all-purge').on('click', function () { $('.ow-purge-chk').prop('checked', false); });
+        $('#ow-btn-purge').on('click',              runPurge);
+        $('#ow-btn-purge-force').on('click',        function () { runPurge(true); });
+        $('#ow-btn-purge-everything').on('click',   runPurgeEverything);
+
+        // Source mode toggle.
+        $('input[name="octowoo[source]"]').on('change', function () {
+            var isLocal = $(this).val() === 'local';
+            $('#ow-local-import-area').toggle(isLocal);
+            $('#ow-remote-db-card').css({ opacity: isLocal ? 0.5 : 1, pointerEvents: isLocal ? 'none' : '' });
+            $('.ow-source-btn').removeClass('active');
+            $(this).closest('.ow-source-btn').addClass('active');
+            $('#ow-image-source-input').val(isLocal ? 'local' : 'remote');
+        });
+        $('input[name="octowoo[source]"]:checked').trigger('change');
+
+        // Settings live validation.
+        $('#octowoo-settings-form').on('input change', 'input, select', validateSettingsForm);
+
+        // Resume active run on page load.
+        if (currentRunId) { pollProgress(); }
         if (octoWoo.activeRunId) {
             startPolling();
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', false);
             $btnSkip.prop('disabled', false);
         }
-
-        // Settings: live validation feedback.
-        $('#octowoo-settings-form').on('input change', 'input, select', validateSettingsForm);
-
-        // ── Source mode (remote vs local import) ──────────────────────────
-        $('input[name="octowoo[source]"]').on('change', function () {
-            const isLocal = $(this).val() === 'local';
-            $('#ow-local-import-area').toggle(isLocal);
-            $('#ow-remote-db-card').css({
-                opacity: isLocal ? 0.5 : 1,
-                pointerEvents: isLocal ? 'none' : ''
-            });
-            $('.ow-source-btn').removeClass('active');
-            $(this).closest('.ow-source-btn').addClass('active');
-            // Keep hidden image_source input in sync.
-            $('#ow-image-source-input').val(isLocal ? 'local' : 'remote');
-        });
-
-        // Trigger once on page load to honour the saved value.
-        $('input[name="octowoo[source]"]:checked').trigger('change');
-
-        // ── SQL import button ─────────────────────────────────────────────
-        $('#ow-btn-import-sql').on('click', function () {
-            var file = document.getElementById('ow-sql-file').files[0];
-            if (!file) { alert('Please select a SQL or .sql.gz file first.'); return; }
-            var prefix = $('#ow-sql-prefix').val() || 'oc_';
-            var fd = new FormData();
-            fd.append('action', 'octowoo_import_sql');
-            fd.append('nonce', octoWoo.nonce);
-            fd.append('sql_file', file);
-            fd.append('source_prefix', prefix);
-            $('#ow-sql-progress').show();
-            $('#ow-sql-progress-bar').css('width', '0%');
-            $('#ow-sql-status').text('Uploading…');
-            $('#ow-sql-result').text('').css('color', '#555');
-            $('#ow-btn-import-sql').prop('disabled', true).text('Importing…');
-            $.ajax({
-                url: octoWoo.ajaxUrl,
-                type: 'POST',
-                data: fd,
-                processData: false,
-                contentType: false,
-                xhr: function () {
-                    var xhr = new window.XMLHttpRequest();
-                    xhr.upload.addEventListener('progress', function (e) {
-                        if (e.lengthComputable) {
-                            var pct = Math.round(e.loaded / e.total * 100);
-                            $('#ow-sql-progress-bar').css('width', pct + '%');
-                            $('#ow-sql-status').text('Uploading: ' + pct + '%');
-                        }
-                    }, false);
-                    return xhr;
-                }
-            })
-            .done(function (res) {
-                if (res.success) {
-                    $('#ow-sql-result').text('✔ ' + res.data.message).css('color', '#2e7d32');
-                    $('#ow-sql-progress-bar').css('width', '100%').addClass('done');
-                    $('#ow-sql-status').text('Done');                    // Refresh the persistent status banner without a page reload.
-                    var d = res.data;
-                    var tables   = d.tables   || 0;
-                    var filename = d.filename || '';
-                    var $status  = $('#ow-sql-imported-status');
-                    if (tables > 0) {
-                        var html = '\u2714 <strong>SQL data ready:</strong> ' + tables + ' tables imported';
-                        if (filename) { html += ' \u2014 <code>' + $('<span>').text(filename).html() + '</code>'; }
-                        html += ' <span style="float:right;"><a href="#" id="ow-btn-drop-sql" style="color:#c62828;font-size:11px;">\u2715 Clear</a></span>';
-                        $status.html(html)
-                               .css({'background':'#edf7ed','border-color':'#4caf50','color':'#1b5e20','display':'block'});
-                    }                } else {
-                    $('#ow-sql-result').text('✘ ' + (res.data && res.data.message ? res.data.message : 'Import failed.')).css('color', '#c62828');
-                }
-            })
-            .fail(function (xhr) {
-                $('#ow-sql-result').text('✘ Request failed: ' + xhr.statusText).css('color', '#c62828');
-            })
-            .always(function () {
-                $('#ow-btn-import-sql').prop('disabled', false).text('⬆ Import SQL');
-                setTimeout(function () { $('#ow-sql-progress').hide(); }, 2000);
-            });
-        });
-
-        // ── Drop imported SQL tables (Clear button) ───────────────────────
-        $(document).on('click', '#ow-btn-drop-sql', function (e) {
-            e.preventDefault();
-            if (!confirm('This will drop all imported OpenCart tables (octowoo_oc_*) from this WordPress database. Continue?')) { return; }
-            $.post(octoWoo.ajaxUrl, {
-                action: 'octowoo_drop_sql',
-                nonce:  octoWoo.nonce,
-            })
-            .done(function (res) {
-                if (res.success) {
-                    $('#ow-sql-imported-status').hide();
-                    $('#ow-sql-result').text('\u2714 ' + res.data.message).css('color', '#2e7d32');
-                } else {
-                    alert((res.data && res.data.message) ? res.data.message : 'Drop failed.');
-                }
-            });
-        });
-
-        // ── Images ZIP upload button ──────────────────────────────────────
-        $('#ow-btn-import-images').on('click', function () {
-            var file = document.getElementById('ow-images-zip').files[0];
-            if (!file) { alert('Please select a ZIP file first.'); return; }
-            var fd = new FormData();
-            fd.append('action', 'octowoo_import_images');
-            fd.append('nonce', octoWoo.nonce);
-            fd.append('images_zip', file);
-            $('#ow-images-result').text('Uploading and extracting…').css('color', '#555');
-            $('#ow-btn-import-images').prop('disabled', true).text('Extracting…');
-            $.ajax({
-                url: octoWoo.ajaxUrl,
-                type: 'POST',
-                data: fd,
-                processData: false,
-                contentType: false
-            })
-            .done(function (res) {
-                if (res.success) {
-                    $('#ow-images-result').text('✔ ' + res.data.message).css('color', '#2e7d32');
-                } else {
-                    $('#ow-images-result').text('✘ ' + (res.data && res.data.message ? res.data.message : 'Upload failed.')).css('color', '#c62828');
-                }
-            })
-            .fail(function (xhr) {
-                $('#ow-images-result').text('✘ ' + xhr.statusText).css('color', '#c62828');
-            })
-            .always(function () {
-                $('#ow-btn-import-images').prop('disabled', false).text('🖼 Upload & Extract');
-            });
-        });
-
-        // ── Step 2 Additional Options — Select All / Deselect All ─────────
-        $('#ow-opt-select-all').on('click', function () {
-            $('.ow-step2-opt').prop('checked', true);
-        });
-        $('#ow-opt-deselect-all').on('click', function () {
-            $('.ow-step2-opt').prop('checked', false);
-        });
-
-        // ── Purge imported data ───────────────────────────────────────────
-
-        // Select All / Deselect All toggles.
-        $('#ow-btn-select-all').on('click', function () {
-            $('.ow-purge-chk').prop('checked', true);
-        });
-        $('#ow-btn-deselect-all').on('click', function () {
-            $('.ow-purge-chk').prop('checked', false);
-        });
-
-        // Helper: fire a purge AJAX call with given entities + force flag.
-        function doPurge( entities, force, $btn, originalLabel ) {
-            const $result = $('#ow-purge-result');
-            $btn.prop('disabled', true).text('Purging…');
-            $result.text('').css('color', '#555');
-
-            $.post(octoWoo.ajaxUrl, {
-                action:   'octowoo_purge_imported',
-                nonce:    octoWoo.nonce,
-                entities: entities,
-                force:    force ? '1' : '0',
-            })
-            .done(function (res) {
-                if (res.success) {
-                    const breakdown = Object.entries(res.data.results || {})
-                        .map(([k, v]) => k + ': ' + v)
-                        .join(', ');
-                    let msg = '✔ ' + res.data.message + (breakdown ? ' (' + breakdown + ')' : '');
-                    $result.text(msg).css('color', '#2e7d32');
-
-                    // Show diagnostic hints when 0 items were deleted but WC has data.
-                    const hints = res.data.hints || [];
-                    if (hints.length > 0) {
-                        const $hint = $('<div style="margin-top:6px;color:#b45309;font-size:12px;"></div>');
-                        hints.forEach(function (h) {
-                            $hint.append($('<p style="margin:2px 0;">⚠ ' + h + '</p>'));
-                        });
-                        $result.after($hint);
-                        $('#ow-btn-purge').one('click', function () { $hint.remove(); });
-                    }
-
-                    // Uncheck boxes after success.
-                    $('.ow-purge-chk').prop('checked', false);
-                } else {
-                    $result.text('✘ ' + (res.data.message || 'Purge failed.')).css('color', '#c62828');
-                }
-            })
-            .fail(function (xhr) {
-                $result.text('✘ ' + (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message
-                    ? xhr.responseJSON.data.message
-                    : xhr.statusText)).css('color', '#c62828');
-            })
-            .always(function () {
-                $btn.prop('disabled', false).text(originalLabel);
-            });
-        }
-
-        // Purge Selected button.
-        $('#ow-btn-purge').on('click', function () {
-            const entities = [];
-            $('.ow-purge-chk:checked').each(function () { entities.push($(this).val()); });
-            if (entities.length === 0) {
-                alert('Please select at least one entity type to purge.');
-                return;
-            }
-            const force    = $('#ow-force-purge').is(':checked');
-            const listStr  = entities.join(', ');
-            const modeStr  = force
-                ? '⚠ FORCE mode: ALL WooCommerce data regardless of OctoWoo tag.'
-                : 'Only OctoWoo-imported items (tagged by this plugin).';
-            const confirmMsg = force
-                ? '☢ FORCE PURGE WARNING ☢\n\nThis will permanently delete ALL WooCommerce data for:\n\n' + listStr + '\n\n' + modeStr + '\n\nThis cannot be undone. Type "FORCE" to confirm:'
-                : '⚠ WARNING: This will permanently delete all OctoWoo-imported data for:\n\n' + listStr + '\n\nThis cannot be undone. Proceed?';
-
-            if ( force ) {
-                const typed = prompt( confirmMsg );
-                if ( typed === null || typed.trim().toUpperCase() !== 'FORCE' ) { return; }
-            } else {
-                if ( ! confirm( confirmMsg ) ) { return; }
-            }
-
-            doPurge( entities, force, $(this), '🗑 Purge Selected' );
-        });
-
-        // Purge Everything (Force) — selects all entities + force in one click.
-        $('#ow-btn-purge-everything').on('click', function () {
-            const allEntities = [];
-            $('.ow-purge-chk').each(function () { allEntities.push($(this).val()); });
-
-            const typed = prompt(
-                '☢ PURGE EVERYTHING ☢\n\n' +
-                'This will force-delete ALL of the following:\n' +
-                '  • Products, Variations, Images\n' +
-                '  • Categories, Tags, Brands, Filters\n' +
-                '  • Orders, Coupons\n' +
-                '  • Customers (OctoWoo-tagged only)\n' +
-                '  • Reviews\n' +
-                '  • Information Pages (WooCommerce shop/cart/checkout and home page are protected)\n' +
-                '  • Downloads\n\n' +
-                'Your theme, design, menus, WooCommerce settings, and admin users are NOT affected.\n\n' +
-                'This cannot be undone. Type "FORCE" to confirm:'
-            );
-            if ( typed === null || typed.trim().toUpperCase() !== 'FORCE' ) { return; }
-
-            doPurge( allEntities, true, $(this), '☢ Purge Everything (Force)' );
-        });
     }
 
-    /* ── Pre-migration system check ──────────────────────────────────── */
-    function runSystemCheck() {
-        const $btn    = $('#ow-btn-validate');
-        const $panel  = $('#ow-validate-results');
-
-        $btn.prop('disabled', true).html('<span class="ow-spinner"></span>&nbsp; Checking…');
-        $panel.html('<em style="color:#888;">Running checks…</em>').show();
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_validate',
-            nonce:  octoWoo.nonce,
-        })
-        .done(function (res) {
-            if (!res.success) {
-                $panel.html('<span style="color:#c62828;">✘ Validation request failed.</span>');
-                return;
-            }
-            const data    = res.data;
-            const results = data.results || {};
-            const asAvail = data.as_available;
-
-            // Show/hide Background button based on AS availability.
-            if (asAvail) {
-                $('.ow-bg-controls').show();
-                $('#ow-bg-as-notice').hide();
-            } else {
-                $('.ow-bg-controls').hide();
-                $('#ow-bg-as-notice').show();
-            }
-
-            const labelMap = {
-                woocommerce:    'WooCommerce',
-                php_version:    'PHP Version',
-                php_extensions: 'PHP Extensions',
-                memory_limit:   'Memory Limit',
-                upload_limit:   'Upload Limit',
-                max_execution:  'Execution Time',
-                db_connection:  'DB Connection',
-                image_path:     'Image Path',
-                log_directory:  'Log Directory',
-                disk_space:     'Disk Space',
-                hpos_compat:    'WC HPOS',
-            };
-
-            const iconMap = { pass: '✔', warning: '⚠', fail: '✘' };
-            const colorMap = { pass: '#2e7d32', warning: '#b45309', fail: '#c62828' };
-            const bgMap    = { pass: '#edf7ed', warning: '#fffbeb', fail: '#fef2f2' };
-
-            let html = '<table class="ow-validate-table" style="width:100%;border-collapse:collapse;font-size:13px;">';
-            html += '<thead><tr>';
-            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Check</th>';
-            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Status</th>';
-            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">Details</th>';
-            html += '<th style="text-align:left;padding:6px 10px;background:#f0f0f0;">How to fix</th>';
-            html += '</tr></thead><tbody>';
-
-            Object.entries(results).forEach(function ([key, check]) {
-                const status = check.status || 'pass';
-                const icon   = iconMap[status]  || '?';
-                const color  = colorMap[status] || '#333';
-                const bg     = bgMap[status]    || '#fff';
-                const label  = labelMap[key]    || key;
-
-                html += '<tr style="background:' + bg + ';border-bottom:1px solid #e5e5e5;">';
-                html += '<td style="padding:5px 10px;font-weight:600;">' + $('<span>').text(label).html() + '</td>';
-                html += '<td style="padding:5px 10px;color:' + color + ';font-weight:700;white-space:nowrap;">'  + icon + ' ' + $('<span>').text(status.toUpperCase()).html() + '</td>';
-                html += '<td style="padding:5px 10px;color:' + color + ';">' + $('<span>').text(check.message || '').html();
-                if (check.value) { html += ' <code style="font-size:11px;background:#f5f5f5;padding:1px 4px;border-radius:2px;">' + $('<span>').text(check.value).html() + '</code>'; }
-                html += '</td>';
-                html += '<td style="padding:5px 10px;font-size:11px;color:#666;">' + (check.fix ? $('<span>').text(check.fix).html() : '') + '</td>';
-                html += '</tr>';
-            });
-
-            html += '</tbody></table>';
-
-            // Summary banner.
-            let summaryHtml;
-            if (data.all_passed) {
-                summaryHtml = '<div style="padding:8px 12px;background:#edf7ed;border:1px solid #4caf50;color:#1b5e20;border-radius:4px;margin-bottom:8px;font-weight:600;">✔ All checks passed — your server is ready to migrate.</div>';
-            } else if (data.has_warnings) {
-                summaryHtml = '<div style="padding:8px 12px;background:#fffbeb;border:1px solid #f59e0b;color:#78350f;border-radius:4px;margin-bottom:8px;font-weight:600;">⚠ Some warnings detected — migration can proceed but review the notes below.</div>';
-            } else {
-                summaryHtml = '<div style="padding:8px 12px;background:#fef2f2;border:1px solid #ef4444;color:#7f1d1d;border-radius:4px;margin-bottom:8px;font-weight:600;">✘ One or more checks failed — fix these issues before migrating.</div>';
-            }
-
-            $panel.html(summaryHtml + html);
-        })
-        .fail(function (xhr) {
-            $panel.html('<span style="color:#c62828;">✘ System check request failed: ' + xhr.statusText + '</span>');
-        })
-        .always(function () {
-            $btn.prop('disabled', false).text('🔎 Run System Check');
-        });
-    }
-
-    /* ── Background mode migration ───────────────────────────────────── */
-    function startBackgroundMigration(resume) {
-        if (isRunning) { return; }
-
-        if (!resume) {
-            if (!confirm('Start migration in Background mode?\n\nWooCommerce Action Scheduler will process batches in the background.\nYou can close this tab — check back for progress.')) {
-                return;
-            }
-        }
-
-        const migrators  = buildMigrators();
-        const $btnBg     = $('#ow-btn-start-bg');
-        const $bgStatus  = $('#ow-bg-status');
-
-        $btnBg.prop('disabled', true).html('<span class="ow-spinner"></span>&nbsp; Queuing…');
-        $bgStatus.text('');
-
-        $.post(octoWoo.ajaxUrl, {
-            action:    'octowoo_start_background',
-            nonce:     octoWoo.nonce,
-            resume:    resume ? 1 : 0,
-            migrators: migrators,
-        })
-        .done(function (res) {
-            if (res.success) {
-                currentRunId = res.data.run_id || currentRunId;
-                $bgStatus.css('color', '#2e7d32').text('✔ ' + res.data.message);
-                setBannerInfo('Background migration queued. Progress updates every few seconds.');
-                startPolling();
-                // Enable the Cancel BG button.
-                $('#ow-btn-cancel-bg').prop('disabled', false);
-                $btnAbort.prop('disabled', false);
-                $btnPause.prop('disabled', false);
-                $btnSkip.prop('disabled', false);
-            } else {
-                $bgStatus.css('color', '#c62828').text('✘ ' + (res.data.message || 'Failed to queue.'));
-            }
-        })
-        .fail(function (xhr) {
-            $bgStatus.css('color', '#c62828').text('✘ Request failed: ' + xhr.statusText);
-        })
-        .always(function () {
-            $btnBg.prop('disabled', false).text('⚙ Start in Background');
-        });
-    }
-
-    function cancelBackgroundMigration() {
-        const runId = currentRunId || octoWoo.activeRunId;
-        if (!confirm('Cancel the background migration?')) { return; }
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_cancel_background',
-            nonce:  octoWoo.nonce,
-            run_id: runId,
-        })
-        .done(function (res) {
-            if (res.success) {
-                stopPolling();
-                setButtonState('idle');
-                setBannerInfo(res.data.message);
-                $('#ow-btn-cancel-bg').prop('disabled', true);
-                $btnPause.prop('disabled', true);
-                $btnSkip.prop('disabled', true);
-            } else {
-                setBannerError(res.data.message || 'Cancel failed.');
-            }
-        });
-    }
-
-    /* ── Source database scan ─────────────────────────────────────────── */
-    function scanSourceCounts() {
-        var $btn    = $('#ow-btn-scan');
-        var $result = $('#ow-scan-result');
-        $btn.prop('disabled', true).text('Scanning…');
-        $result.show().html('<em style="color:#888;">Connecting to source database…</em>');
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_scan_counts',
-            nonce:  octoWoo.nonce,
-        })
-        .done(function (res) {
-            $result.data('scanned', true);
-            if (res.success) {
-                var counts = res.data.counts;
-
-                // Populate count badges next to entity checkboxes.
-                $('.ow-count-badge[data-scan]').each(function () {
-                    var key = $(this).data('scan');
-                    var val = counts[key];
-                    if (val !== undefined && val !== -1) {
-                        $(this).text(parseInt(val, 10).toLocaleString()).show();
-                    }
-                });
-
-                // Inline summary line.
-                var parts = [];
-                var summary = {
-                    products: 'Products', categories: 'Categories', customers: 'Customers',
-                    orders: 'Orders', coupons: 'Coupons', reviews: 'Reviews',
-                    manufacturers: 'Manufacturers', information: 'Pages',
-                    tax_classes: 'Tax', tags: 'Tags',
-                };
-                $.each(summary, function (k, label) {
-                    var v = counts[k];
-                    if (v !== undefined && v !== -1) {
-                        parts.push('<strong>' + parseInt(v,10).toLocaleString() + '</strong>&nbsp;' + label);
-                    }
-                });
-                $result.html(
-                    '<span style="color:#2271b1;font-weight:600;">✔ Source scanned.</span>&nbsp;&nbsp;' +
-                    parts.join('&nbsp;&nbsp;·&nbsp;&nbsp;')
-                );
-            } else {
-                $result.html('<span style="color:#c62828;">✘ ' +
-                    ((res.data && res.data.message) ? res.data.message : 'Scan failed.') + '</span>');
-            }
-        })
-        .fail(function (xhr) {
-            $result.data('scanned', true);
-            $result.show().html('<span style="color:#c62828;">✘ ' + xhr.statusText + '</span>');
-        })
-        .always(function () {
-            $btn.prop('disabled', false).text('🔍 Scan Source DB');
-        });
-    }
-
-    /* ── Tab switching ───────────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       TAB SWITCHING
+    ════════════════════════════════════════════════════════════════════ */
     function switchTab(tab) {
-        $('.ow-tab-btn').removeClass('active');
         $('.ow-tab-pane').hide();
-        $('[data-tab="' + tab + '"]').addClass('active');
+        $('.ow-tab-btn').removeClass('active');
         $('#ow-tab-' + tab).show();
+        $('.ow-tab-btn[data-tab="' + tab + '"]').addClass('active');
 
-        // Refresh logs when switching to logs tab.
-        if (tab === 'logs') {
-            refreshLogs();
-        }
+        if (tab === 'logs' && currentRunId) { refreshLogs(); }
 
-        // Auto-scan when migration tab first opened.
-        if (tab === 'migration' && !$('#ow-scan-result').data('scanned')) {
-            scanSourceCounts();
-        }
-
-        // Update URL without reload.
-        const url = new URL(window.location.href);
+        var url = new URL(window.location.href);
         url.searchParams.set('tab', tab);
         window.history.replaceState({}, '', url.toString());
     }
 
-    /* ── Migration start / resume ────────────────────────────────────────── */
-    let chunkMigrators    = '';
-    let chunkDryRun        = 0;
-    let chunkDemoLimit     = 0;
-    let chunkFailCount     = 0;
-    let chunkOnDuplicate   = 'skip'; // 'skip' | 'update'
-    let chunkClearOrdersPending = false;
-
-    /**
-     * Build a comma-separated migrator list from the entity + option checkboxes.
-     */
+    /* ════════════════════════════════════════════════════════════════════
+       MIGRATION: START / RESUME / ABORT / PAUSE / SKIP / RESET
+    ════════════════════════════════════════════════════════════════════ */
     function buildMigrators() {
-        const ENTITY_MAP = {
+        var ENTITY_MAP = {
             'products':      ['products'],
             'related':       ['related'],
             'reviews':       ['reviews'],
@@ -653,14 +287,13 @@
             'coupons':       ['coupons'],
             'tags_filters':  ['tags', 'filters'],
         };
-        const list = [];
-        function add(m) { if (!list.includes(m)) list.push(m); }
+        var list = [];
+        function add(m) { if (list.indexOf(m) === -1) list.push(m); }
 
         $('.ow-entity-chk:checked').each(function () {
-            const key = $(this).val();
+            var key = $(this).val();
             if (ENTITY_MAP[key]) { ENTITY_MAP[key].forEach(add); }
         });
-
         if ($('#ow-opt-images').is(':checked'))       add('images');
         if ($('#ow-opt-seo').is(':checked'))          add('seo');
         if ($('#ow-opt-downloads').is(':checked'))    add('downloads');
@@ -672,213 +305,52 @@
     function startMigration(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders) {
         if (isRunning) { return; }
 
-        // Resume: always call octowoo_resume_migration so the server can
-        // re-activate aborted checkpoints back to pending.  Use activeRunId
-        // first, then fall back to lastRunId so an accidentally aborted run
-        // (where the active lock was already cleared) can still be recovered.
         if (resume && (isPausedState || currentRunId || octoWoo.lastRunId)) {
-            const resumeRunId = currentRunId || octoWoo.activeRunId || octoWoo.lastRunId || '';
+            var resumeRunId = currentRunId || octoWoo.activeRunId || octoWoo.lastRunId || '';
             $.post(octoWoo.ajaxUrl, {
                 action: 'octowoo_resume_migration',
                 nonce:  octoWoo.nonce,
                 run_id: resumeRunId,
             }).always(function (res) {
-                // Use the server-returned run_id if provided (covers the last_run fallback).
                 if (res && res.success && res.data && res.data.run_id) {
                     currentRunId = res.data.run_id;
                 } else if (resumeRunId) {
                     currentRunId = resumeRunId;
                 }
-                startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders);
+                _doStartMigration(true, isDemo, forcedMigrators, customModeLabel, noClearOrders);
             });
             return;
         }
 
-        startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders);
+        _doStartMigration(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders);
     }
 
-    function startMigrationInternal(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders) {
-        if (isRunning) { return; }
+    function _doStartMigration(resume, isDemo, forcedMigrators, customModeLabel, noClearOrders) {
+        chunkMigrators    = forcedMigrators || buildMigrators();
+        chunkDryRun       = $('#ow-opt-dry-run').is(':checked') ? 1 : 0;
+        chunkDemoLimit    = isDemo ? (parseInt(octoWoo.demoLimit, 10) || 20) : 0;
+        chunkOnDuplicate  = $('#ow-opt-on-duplicate').val() || 'skip';
+        chunkFailCount    = 0;
+        chunkClearOrdersPending = !noClearOrders && !resume && (chunkMigrators.indexOf('orders') !== -1);
 
-        isPausedState = false;
-
-        const demoLimitVal = isDemo ? 20 : 0;
-
-        if (!resume) {
-            const modeStr = isDemo
-                ? 'Demo Migration (first 20 items per entity)'
-                : (customModeLabel || 'Full Migration');
-            const confirmMsg = noClearOrders
-                ? 'Start ' + modeStr + '?'
-                : 'Start ' + modeStr + '?\n\nOpenCart data will be imported into your WooCommerce store.';
-            if (!confirm(confirmMsg)) { return; }
-        }
-
-        chunkMigrators  = forcedMigrators || buildMigrators();
-        chunkDryRun     = 0;
-        chunkDemoLimit  = demoLimitVal;
-        // Read the on_duplicate selection live from the DOM so the user's
-        // current choice always applies without needing to save settings first.
-        chunkOnDuplicate = $('select[name="octowoo[migration][on_duplicate]"]').val() || 'skip';
-        // Recovery runs must never clear orders — only a full fresh migration should.
-        chunkClearOrdersPending = !resume && !noClearOrders;
-
-        setButtonState('running');
-        setBannerRunning();
-
-        // For resume, keep the existing currentRunId; for a fresh start, clear it
-        // so the server assigns a new one on the first chunk.
-        if (!resume) {
-            currentRunId = '';
-        }
-        chunkFailCount = 0;
+        if (!resume) { currentRunId = ''; }
         isRunning = true;
-        migrationEpoch++; // invalidate any in-flight responses from previous sessions
-        // NOTE: polling is started AFTER the first chunk response sets a valid
-        // currentRunId.  Starting it here with an empty run_id causes a race:
-        // the poll hits the server before markRunActive() runs, the server
-        // returns active:false for the OLD finished run, and the JS callback
-        // shows "Migration completed!" before the first chunk even finishes.
+        migrationEpoch++;
+        chunkStartTimes = {};
+        chunkItemRates  = {};
+
+        var modeLabel = customModeLabel || (isDemo ? 'Demo (20 items)' : 'Full');
+        setBannerRunning(modeLabel);
+        setButtonState('running');
         runNextChunk();
-    }
-
-    function startImagesOnlyRecovery() {
-        // Re-import all images: product images (ImageMigrator), category thumbnails
-        // (CategoryMigrator), and brand/manufacturer logos (ManufacturerMigrator).
-        startMigration(false, false, 'images,categories,manufacturers', 'Images-Only Recovery', true);
-    }
-
-    function startProductsImagesRecovery() {
-        // Recovery mode: refresh product-image linking and gallery imports
-        // without running unrelated entities.
-        startMigration(false, false, 'products,images,related', 'Products + Images Recovery', true);
-    }
-
-    function startCategoriesManufacturersRecovery() {
-        // Recovery mode for taxonomy/brand terms and their media,
-        // without touching orders/customers/coupons.
-        startMigration(false, false, 'categories,manufacturers', 'Categories + Manufacturers Recovery', true);
-    }
-
-    function startMultilingualRecovery() {
-        // Re-run only the WPML/Polylang translation pass without re-migrating
-        // primary entities. Useful after fixing Arabic/multilingual issues.
-        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', true);
-    }
-
-    /**
-     * Delete placeholder ('octowoo-ar-new-…') and duplicate WPML category terms
-     * left over from failed/retried chunk runs.  One-shot AJAX — not a migration.
-     */
-    function cleanupMlTerms() {
-        const $btn = $('#ow-btn-cleanup-ml-terms');
-        if ($btn.prop('disabled')) { return; }
-        $btn.prop('disabled', true).text('🧹 Cleaning…');
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_cleanup_ml_terms',
-            nonce:  octoWoo.nonce,
-        })
-        .done(function (res) {
-            if (res && res.success) {
-                alert(res.data.message || 'Cleanup complete.');
-            } else {
-                alert('Cleanup failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
-            }
-        })
-        .fail(function () {
-            alert('Cleanup request failed. Check the server logs.');
-        })
-        .always(function () {
-            $btn.prop('disabled', false).text('🧹 Fix Orphan Categories');
-        });
-    }
-
-    /**
-     * Reset the SEO checkpoint + clear stored redirects, then immediately
-     * resume the migration so only the SEO migrator re-runs.
-     */
-    function rerunSeo() {
-        const $btn = $('#ow-btn-rerun-seo');
-        if ($btn.prop('disabled')) { return; }
-
-        if (!confirm('This will reset the SEO migrator and clear all stored redirect rules, then re-run SEO to rebuild correct product/category slugs and 301 redirects.\n\nIMPORTANT: Make sure WordPress permalinks are set to "Post name" in Settings \u2192 Permalinks BEFORE continuing.\n\nContinue?')) {
-            return;
-        }
-
-        $btn.prop('disabled', true).text('\ud83d\udd0d Resetting\u2026');
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_rerun_seo',
-            nonce:  octoWoo.nonce,
-        })
-        .done(function (res) {
-            if (res && res.success) {
-                if (res.data.permalink_plain) {
-                    alert('WARNING: WordPress permalink structure is still "Plain".\n\nGo to WP Admin \u2192 Settings \u2192 Permalinks \u2192 Post name \u2192 Save Changes FIRST, then click Resume to re-run SEO.');
-                } else {
-                    alert(res.data.message || 'SEO checkpoint reset. Click Resume to re-run.');
-                    // Auto-resume: trigger the migration loop in resume mode so only SEO runs.
-                    startMigration(true, false);
-                }
-            } else {
-                alert('Failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
-            }
-        })
-        .fail(function () {
-            alert('Request failed. Check the server logs.');
-        })
-        .always(function () {
-            $btn.prop('disabled', false).text('\ud83d\udd0d Rerun SEO Migrator');
-        });
-    }
-
-    function repairOrderItems() {
-        const $btn = $('#ow-btn-repair-order-items');
-        if ($btn.prop('disabled')) { return; }
-        $btn.prop('disabled', true);
-
-        let totalRelinked = 0;
-
-        function runBatch(isFirst) {
-            $btn.text('🔗 Repairing… (' + totalRelinked + ' linked)');
-            $.post(octoWoo.ajaxUrl, {
-                action: 'octowoo_repair_order_items',
-                nonce:  octoWoo.nonce,
-                reset:  isFirst ? 1 : 0,
-            })
-            .done(function (res) {
-                if (!res || !res.success) {
-                    alert('Repair failed: ' + ((res && res.data && res.data.message) || 'Unknown error'));
-                    $btn.prop('disabled', false).text('🔗 Repair Order Items');
-                    return;
-                }
-                totalRelinked += (res.data.relinked || 0);
-                if (res.data.done) {
-                    alert('Repair complete. Re-linked ' + totalRelinked + ' order item(s) to current products.');
-                    $btn.prop('disabled', false).text('🔗 Repair Order Items');
-                } else {
-                    runBatch(false);
-                }
-            })
-            .fail(function () {
-                alert('Repair request failed. Check the server logs.');
-                $btn.prop('disabled', false).text('🔗 Repair Order Items');
-            });
-        }
-
-        runBatch(true);
     }
 
     function runNextChunk() {
         if (!isRunning) { return; }
 
-        const shouldClearOrders = chunkClearOrdersPending ? 1 : 0;
-        // Send clear_orders only once at the beginning of a new run.
+        var shouldClearOrders = chunkClearOrdersPending ? 1 : 0;
         chunkClearOrdersPending = false;
-
-        // Capture epoch at dispatch time so the .done handler can detect if
-        // this response is stale (a newer migration session has started).
-        const dispatchEpoch = migrationEpoch;
+        var dispatchEpoch = migrationEpoch;
 
         $.post(octoWoo.ajaxUrl, {
             action:       'octowoo_run_chunk',
@@ -892,499 +364,479 @@
             migrators:    chunkMigrators,
         })
         .done(function (res) {
-            // Discard responses from a previous migration session.
             if (dispatchEpoch !== migrationEpoch) { return; }
+
             if (!res.success) {
-                // If this is a DB connection error, give a helpful message.
                 var msg = (res.data && res.data.message) ? res.data.message : 'Chunk error.';
                 if (res.data && res.data.db_error) {
-                    msg = '🔌 ' + msg + '\n\nPlease go to Settings tab and configure your OpenCart database credentials, then try again.';
+                    msg = '🔌 Database error: ' + msg + ' — Go to Settings → Database Connection.';
                 }
-                setBannerError(msg);
-                setButtonState('idle');
-                isRunning = false;
+                chunkFailCount++;
+                if (chunkFailCount >= 3) {
+                    isRunning = false;
+                    setButtonState('idle');
+                    setBannerError(msg);
+                    stopPolling();
+                    return;
+                }
+                showToast('Chunk failed (' + chunkFailCount + '/3): ' + msg, 'warning', 5000);
+                setTimeout(runNextChunk, 2000);
                 return;
             }
 
-            chunkFailCount = 0; // reset on any successful HTTP response
-            const d = res.data;
-            var wasFirstChunk = !currentRunId;
-            currentRunId = d.run_id || currentRunId;
-            currentMigrator = d.migrator || currentMigrator;
-            const checkpoints = d.checkpoints || [];
-            renderProgressTable(checkpoints);
+            chunkFailCount = 0;
+            var data = res.data;
 
-            if (d.paused) {
+            if (data.run_id && !currentRunId) {
+                currentRunId = data.run_id;
+                // Start polling only NOW we have a valid run_id.
+                startPolling();
+            }
+
+            if (data.migrator) { currentMigrator = data.migrator; }
+            if (data.checkpoints) {
+                renderProgressTable(data.checkpoints);
+                updateETA(data.checkpoints, data.migrator, data.chunk);
+            }
+
+            if (data.done_all) {
+                isRunning = false;
+                isPausedState = false;
+                stopPolling();
+                setButtonState('idle');
+                setBannerDone(data.report || null);
+                if (data.report) { renderReport(data.report); }
+                refreshLogs();
+                return;
+            }
+
+            if (data.aborted) {
+                isRunning = false;
+                isPausedState = false;
+                stopPolling();
+                setButtonState('idle');
+                setBannerInfo('Migration aborted.');
+                refreshLogs();
+                return;
+            }
+
+            if (data.paused) {
                 isRunning = false;
                 isPausedState = true;
                 stopPolling();
                 setButtonState('paused');
-                setBannerInfo('Migration paused. Click Resume to continue from the same checkpoint.');
+                setBannerInfo('Migration paused. Click Resume to continue.');
                 return;
             }
 
-            if (d.skipped && d.migrator) {
-                setBannerInfo('Skipped current entity: ' + d.migrator + '. Continuing with next entity...');
-            }
-
-            // Defensive guard: if backend reports done_all but checkpoints still
-            // have pending/running rows, keep chunking instead of showing a false
-            // "completed" banner.
-            if (d.done_all && hasNonTerminalCheckpoints(checkpoints)) {
-                setBannerInfo('Migration still has pending entities. Continuing...');
-                setTimeout(runNextChunk, 300);
-                return;
-            }
-
-            // Start fallback polling after the first chunk so we have a valid
-            // currentRunId — avoids the race condition where an immediate poll
-            // with an empty run_id sees the OLD finished run and kills the loop.
-            if (wasFirstChunk && currentRunId) {
-                startPolling();
-            }
-
-            if (d.done_all || d.aborted) {
-                isRunning = false;
-                isPausedState = false;
-                stopPolling();
-                setButtonState('idle');
-                $btnResume.prop('disabled', true);
-                $('#ow-active-run-banner').hide();
-                if (d.aborted) {
-                    setBannerInfo(octoWoo.i18n.aborted);
-                } else {
-                    setBannerDone(d.report);
-                }
-                // Scroll the progress table into view so the user sees the final
-                // state — especially important for fast demo runs where progress
-                // updates flash by in under a second.
-                var $table = $('#ow-progress-table');
-                if ($table.length) {
-                    $table[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-                refreshLogs();
-            } else {
-                // Fire next chunk immediately (no delay needed — each request is short).
-                setTimeout(runNextChunk, 50);
-            }
+            // Continue to next chunk.
+            setTimeout(runNextChunk, 50);
         })
         .fail(function (xhr) {
+            if (dispatchEpoch !== migrationEpoch) { return; }
             chunkFailCount++;
-            const httpStatus = xhr.status || 0;
-
-            // Try to parse JSON body from our shutdown handler.
-            let fatalMsg = '';
-            try {
-                const j = JSON.parse(xhr.responseText);
-                if (j && j.data && j.data.message) {
-                    fatalMsg = j.data.message;
-                }
-            } catch (e) { /* not JSON */ }
-
-            const preview = fatalMsg || (xhr.responseText || '').replace(/<[^>]*>/g, ' ').trim().substring(0, 300);
-
+            var statusMsg = xhr.status ? '(HTTP ' + xhr.status + ')' : '';
             if (chunkFailCount >= 3) {
-                // Too many failures — stop and show diagnostic.
-                const detail = httpStatus
-                    ? 'HTTP ' + httpStatus + (preview ? ': ' + preview : '')
-                    : (preview || 'No response — check server error log.');
-                setBannerError('Migration stopped after ' + chunkFailCount + ' failures. ' + detail);
-                setButtonState('idle');
                 isRunning = false;
+                setButtonState('idle');
+                setBannerError('Migration stopped after 3 consecutive HTTP failures ' + statusMsg + '. Check server error logs.');
+                stopPolling();
                 return;
             }
-
-            const retryIn = chunkFailCount * 4; // 4 s, 8 s
-            setBannerInfo(
-                'Chunk failed (HTTP ' + (httpStatus || '?') + ') — retrying in ' + retryIn + 's… (' + chunkFailCount + '/3)'
-            );
-            pollProgress(); // refresh table from DB so any completed rows stay visible
-            setTimeout(runNextChunk, retryIn * 1000);
+            showToast('Request failed ' + statusMsg + ' — retrying (' + chunkFailCount + '/3)…', 'warning', 4000);
+            setTimeout(runNextChunk, 3000);
         });
     }
+
+    function startImagesOnlyRecovery()           { startMigration(false, false, 'images,categories,manufacturers',  'Images-Only Recovery',          true); }
+    function startProductsImagesRecovery()       { startMigration(false, false, 'products,images,related',          'Products + Images Recovery',    true); }
+    function startCategoriesManufacturersRecovery() { startMigration(false, false, 'categories,manufacturers',      'Categories + Manufacturers',    true); }
+    function startMultilingualRecovery()         { startMigration(false, false, 'multilingual',                     'Multilingual-only Recovery',    true); }
 
     /* ── Abort ───────────────────────────────────────────────────────────── */
     function abortMigration() {
-        const runId = currentRunId || octoWoo.activeRunId;
-        if (!runId && !isRunning) { return; }
+        var runId = currentRunId || octoWoo.activeRunId;
+        if (!runId) { showToast('No active migration to abort.', 'warning'); return; }
 
-        if (!confirm(octoWoo.i18n.confirmAbort)) { return; }
-
-        isRunning = false; // stop chunk loop immediately
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_abort_migration',
-            nonce:  octoWoo.nonce,
-            run_id: runId || currentRunId,
-        })
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_abort_migration', nonce: octoWoo.nonce, run_id: runId })
         .done(function (res) {
-            if (res.success) {
-                stopPolling();
-                currentRunId = '';
-                currentMigrator = '';
-                isPausedState = false;
-                setButtonState('idle');
-                $btnResume.prop('disabled', true);
-                $('#ow-active-run-banner').hide();
-                setBannerInfo(res.data.message);
-            }
-        });
-    }
-
-    function pauseMigration() {
-        const runId = currentRunId || octoWoo.activeRunId;
-        if (!runId) { return; }
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_pause_migration',
-            nonce:  octoWoo.nonce,
-            run_id: runId,
-        })
-        .done(function (res) {
-            if (!res.success) {
-                setBannerError((res.data && res.data.message) ? res.data.message : 'Pause failed.');
-                return;
-            }
-            isRunning = false;
-            isPausedState = true;
+            isRunning     = false;
+            isPausedState = false;
             stopPolling();
-            setButtonState('paused');
-            setBannerInfo(res.data.message + ' Click Resume to continue.');
+            setButtonState('idle');
+            if (res.success) {
+                setBannerInfo('Migration aborted.');
+                showToast('Migration aborted.', 'warning');
+            } else {
+                setBannerError(res.data ? res.data.message : 'Abort failed.');
+            }
         });
     }
 
-    function skipCurrentMigrator() {
-        const runId = currentRunId || octoWoo.activeRunId;
+    /* ── Pause ───────────────────────────────────────────────────────────── */
+    function pauseMigration() {
+        var runId = currentRunId || octoWoo.activeRunId;
         if (!runId) { return; }
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_pause_migration', nonce: octoWoo.nonce, run_id: runId });
+    }
 
+    /* ── Skip current migrator ───────────────────────────────────────────── */
+    function skipCurrentMigrator() {
+        var runId = currentRunId || octoWoo.activeRunId;
+        if (!runId) { return; }
         $.post(octoWoo.ajaxUrl, {
             action:   'octowoo_skip_migrator',
             nonce:    octoWoo.nonce,
             run_id:   runId,
             migrator: currentMigrator,
-        })
-        .done(function (res) {
+        }).done(function (res) {
             if (!res.success) {
-                setBannerError((res.data && res.data.message) ? res.data.message : 'Skip failed.');
+                setBannerError(res.data ? res.data.message : 'Skip failed.');
                 return;
             }
-            setBannerInfo(res.data.message);
+            showToast(res.data.message || 'Skipped.', 'info');
         });
     }
 
     /* ── Reset ───────────────────────────────────────────────────────────── */
     function resetMigration() {
-        if (isRunning) {
-            alert('Abort the running migration before resetting.');
-            return;
-        }
+        if (isRunning) { showToast('Abort the running migration before resetting.', 'warning'); return; }
 
-        if (!confirm('This will delete all migration progress records. Continue?')) { return; }
-
-        $.post(octoWoo.ajaxUrl, {
-            action: 'octowoo_reset_migration',
-            nonce:  octoWoo.nonce,
-        })
-        .done(function (res) {
-            if (res.success) {
-                $progressTable.find('tbody').empty();
-                setBannerInfo(res.data.message);
-                currentRunId = '';
-                currentMigrator = '';
-                isPausedState = false;
-                setButtonState('idle');
-                $btnResume.prop('disabled', true);
-                $('#ow-btn-resume-bg').prop('disabled', true);
-                $('#ow-active-run-banner').hide();
-            } else {
-                setBannerError(res.data.message);
-            }
+        owConfirm('This will delete ALL migration progress records and the ID map. Are you sure?', 'Yes, reset', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_reset_migration', nonce: octoWoo.nonce })
+            .done(function (res) {
+                if (res.success) {
+                    $progressTable.find('tbody').html('<tr><td colspan="5" style="color:#888;">Start a migration to see progress.</td></tr>');
+                    currentRunId    = '';
+                    currentMigrator = '';
+                    isPausedState   = false;
+                    chunkStartTimes = {};
+                    chunkItemRates  = {};
+                    setButtonState('idle');
+                    $btnResume.prop('disabled', true);
+                    $('#ow-btn-resume-bg').prop('disabled', true);
+                    $('#ow-active-run-banner').hide();
+                    setBannerInfo(res.data.message || 'Migration reset.');
+                    showToast('Progress reset. Ready for a fresh migration.', 'success');
+                } else {
+                    setBannerError(res.data ? res.data.message : 'Reset failed.');
+                }
+            });
         });
     }
 
-    /* ── Progress polling ────────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       BACKGROUND MODE (Action Scheduler)
+    ════════════════════════════════════════════════════════════════════ */
+    function startBackgroundMigration(resume) {
+        if (isRunning) { return; }
+
+        var confirmMsg = resume
+            ? 'Resume migration in Background mode? WooCommerce Action Scheduler will continue the run.'
+            : 'Start migration in Background mode?\n\nBatches run in the background — you can close this tab. Check back for progress.';
+
+        owConfirm(confirmMsg, resume ? 'Resume in background' : 'Start in background', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+
+            var migrators = buildMigrators();
+            var $btn = resume ? $('#ow-btn-resume-bg') : $('#ow-btn-start-bg');
+            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Starting…');
+
+            $.post(octoWoo.ajaxUrl, {
+                action:       'octowoo_start_background',
+                nonce:        octoWoo.nonce,
+                resume:       resume ? 1 : 0,
+                run_id:       resume ? (currentRunId || octoWoo.activeRunId || '') : '',
+                migrators:    migrators,
+                on_duplicate: $('#ow-opt-on-duplicate').val() || 'skip',
+                dry_run:      $('#ow-opt-dry-run').is(':checked') ? 1 : 0,
+                demo_limit:   0,
+            })
+            .done(function (res) {
+                if (res.success) {
+                    currentRunId = res.data.run_id || currentRunId;
+                    showToast('Background migration started. Progress updates every few seconds.', 'success', 6000);
+                    setBannerInfo('Background migration running via Action Scheduler…');
+                    startPolling();
+                    $('#ow-btn-cancel-bg').prop('disabled', false);
+                } else {
+                    var msg = res.data ? res.data.message : 'Could not start background migration.';
+                    showToast(msg, 'error');
+                }
+            })
+            .fail(function () {
+                showToast('Background migration request failed. Check server logs.', 'error');
+            })
+            .always(function () {
+                $btn.prop('disabled', false).html(resume ? '⚙ Resume in Background' : '⚙ Start in Background');
+            });
+        });
+    }
+
+    function cancelBackgroundMigration() {
+        owConfirm('Cancel the background migration? Pending Action Scheduler jobs will be removed.', 'Cancel migration', 'Keep running')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_cancel_background', nonce: octoWoo.nonce, run_id: currentRunId || '' })
+            .done(function (res) {
+                stopPolling();
+                setButtonState('idle');
+                if (res.success) {
+                    showToast('Background migration cancelled.', 'warning');
+                    setBannerInfo('Background migration cancelled.');
+                } else {
+                    showToast(res.data ? res.data.message : 'Cancel failed.', 'error');
+                }
+                $('#ow-btn-cancel-bg').prop('disabled', true);
+            });
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       PROGRESS POLLING
+    ════════════════════════════════════════════════════════════════════ */
     function startPolling() {
         stopPolling();
+        pollProgress();
         pollTimer = setInterval(pollProgress, 3000);
-        pollProgress(); // immediate first tick
     }
 
     function stopPolling() {
-        if (pollTimer) {
-            clearInterval(pollTimer);
-            pollTimer = null;
-        }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
     function pollProgress() {
-        $.get(octoWoo.ajaxUrl, {
-            action: 'octowoo_get_progress',
-            nonce:  octoWoo.nonce,
-            run_id: currentRunId,
-        })
+        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: currentRunId })
         .done(function (res) {
             if (!res.success) { return; }
-
-            const data = res.data;
+            var data = res.data;
             isPausedState = !!data.paused;
-            renderProgressTable(data.checkpoints || []);
+            if (data.checkpoints) { renderProgressTable(data.checkpoints); }
 
-            if (isPausedState && !isRunning) {
-                setButtonState('paused');
-            }
+            if (isPausedState && !isRunning) { setButtonState('paused'); }
 
-            if (!data.active && isRunning && currentRunId && data.run_id === currentRunId) {
-                // Migration finished (server-side).
-                isRunning = false;
-                isPausedState = false;
-                stopPolling();
-                setButtonState('idle');
-                setBannerDone(null);
-                refreshLogs();
-            } else if (!data.active && !isRunning && currentRunId && data.run_id === currentRunId && !isPausedState) {
+            if (!data.active && !isRunning && currentRunId && data.run_id === currentRunId && !isPausedState) {
                 setButtonState('idle');
                 $('#ow-btn-cancel-bg').prop('disabled', true);
+                stopPolling();
             }
         });
     }
 
-    function hasNonTerminalCheckpoints(checkpoints) {
-        if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
-            return false;
+    /* ════════════════════════════════════════════════════════════════════
+       ETA CALCULATION
+    ════════════════════════════════════════════════════════════════════ */
+    function updateETA(checkpoints, activeMigrator, chunk) {
+        if (!activeMigrator || !chunk) { return; }
+
+        var processed = chunk.processed || 0;
+        var total     = chunk.total     || 0;
+        var remaining = total - processed;
+
+        if (!chunkStartTimes[activeMigrator]) {
+            chunkStartTimes[activeMigrator] = Date.now();
+            chunkItemRates[activeMigrator]  = { count: 0, startCount: processed };
         }
-        return checkpoints.some(function (cp) {
-            const status = String(cp.status || '').toLowerCase();
-            return status === 'pending' || status === 'running';
-        });
+
+        var elapsed   = (Date.now() - chunkStartTimes[activeMigrator]) / 1000; // seconds
+        var itemsDone = processed - (chunkItemRates[activeMigrator].startCount || 0);
+        var rate      = elapsed > 2 ? (itemsDone / elapsed) : 0; // items/sec
+
+        if (rate > 0 && remaining > 0) {
+            var etaSec = remaining / rate;
+            var etaStr = etaSec < 60
+                ? '~' + Math.ceil(etaSec) + 's remaining'
+                : '~' + Math.ceil(etaSec / 60) + ' min remaining';
+
+            // Inject into progress table row for this migrator.
+            $('#ow-progress-table tbody tr').each(function () {
+                if ($(this).data('migrator') === activeMigrator) {
+                    var $etaCell = $(this).find('.ow-eta');
+                    if ($etaCell.length) {
+                        $etaCell.text(etaStr);
+                    } else {
+                        $(this).find('td:last').append(' <span class="ow-eta" style="font-size:11px;color:#888;margin-left:6px;">' + etaStr + '</span>');
+                    }
+                }
+            });
+        }
     }
 
-    /* ── Progress table render ───────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       PROGRESS TABLE RENDERING
+    ════════════════════════════════════════════════════════════════════ */
+    var LABEL_MAP = {
+        tax:           'Tax Classes',
+        order_statuses:'Order Statuses',
+        categories:    'Categories',
+        images:        'Images',
+        products:      'Products',
+        manufacturers: 'Manufacturers / Brands',
+        related:       'Related Products',
+        bundles:       'Bundles',
+        customers:     'Customers',
+        orders:        'Orders',
+        coupons:       'Coupons',
+        seo:           'SEO URLs',
+        information:   'Information Pages',
+        tags:          'Tags',
+        filters:       'Product Filters',
+        downloads:     'Downloads',
+        reviews:       'Reviews',
+        multilingual:  'Multilingual (WPML/Polylang)',
+    };
+
     function renderProgressTable(checkpoints) {
-        const $tbody = $progressTable.find('tbody');
+        var $tbody = $progressTable.find('tbody');
         $tbody.empty();
 
-        if (!checkpoints.length) {
-            $tbody.append(
-                $('<tr>').append($('<td colspan="5">').text('No migration data yet.').css('color','#888'))
-            );
+        if (!checkpoints || !checkpoints.length) {
+            $tbody.append('<tr><td colspan="5" style="color:#888;">No migration data yet.</td></tr>');
             return;
         }
 
-        const runningCp = checkpoints.find(function (cp) { return cp.status === 'running'; })
-            || checkpoints.find(function (cp) { return cp.status === 'pending'; });
-        if (runningCp && runningCp.migrator) {
-            currentMigrator = runningCp.migrator;
-        }
+        var runningCp = checkpoints.filter(function (cp) { return cp.status === 'running'; })[0]
+                     || checkpoints.filter(function (cp) { return cp.status === 'pending'; })[0];
+        if (runningCp) { currentMigrator = runningCp.migrator; }
 
         checkpoints.forEach(function (cp) {
-            const processed = parseInt(cp.processed_count, 10) || 0;
-            const total     = parseInt(cp.total_count, 10)     || 0;
-            const safeProcessed = total > 0 ? Math.min(processed, total) : processed;
-            const pctRaw = total > 0 ? Math.round(safeProcessed / total * 100) : (cp.status === 'completed' ? 100 : 0);
-            const pct       = Math.max(0, Math.min(100, pctRaw));
-            const isDone    = cp.status === 'completed';
-            const isFailed  = cp.status === 'failed';
+            var processed = parseInt(cp.processed_count, 10) || 0;
+            var total     = parseInt(cp.total_count, 10)     || 0;
+            var safe      = total > 0 ? Math.min(processed, total) : processed;
+            var pct       = total > 0 ? Math.round(safe / total * 100) : (cp.status === 'completed' ? 100 : 0);
+            pct = Math.max(0, Math.min(100, pct));
+            var isDone   = cp.status === 'completed';
+            var isFailed = cp.status === 'failed';
+            var isRun    = cp.status === 'running';
 
-            const barClass = isFailed ? ' failed' : (isDone ? ' done' : '');
-            const $bar = $('<div class="ow-progress-bar-wrap">').append(
-                $('<div class="ow-progress-bar' + barClass + '">')
-                    .css('width', (isFailed ? 100 : pct) + '%')
+            var statusIcons = {
+                completed: '✔',
+                failed:    '✘',
+                running:   '<span class="ow-spinner dark" style="width:11px;height:11px;"></span>',
+                aborted:   '⊘',
+                pending:   '○',
+                skipped:   '⤳',
+            };
+            var statusColors = {
+                completed: '#2e7d32',
+                failed:    '#c62828',
+                running:   '#1565c0',
+                aborted:   '#757575',
+                pending:   '#9e9e9e',
+                skipped:   '#ef6c00',
+            };
+
+            var icon  = statusIcons[cp.status]  || '·';
+            var color = statusColors[cp.status] || '#333';
+
+            var barCls = isFailed ? ' failed' : (isDone ? ' done' : (isRun ? ' running' : ''));
+            var barHtml = '<div class="ow-progress-bar-wrap"><div class="ow-progress-bar' + barCls + '" style="width:' + (isFailed ? 100 : pct) + '%"></div></div>';
+
+            var $tr = $('<tr>').attr('data-migrator', cp.migrator).append(
+                $('<td>').html('<strong>' + (LABEL_MAP[cp.migrator] || cp.migrator) + '</strong>'),
+                $('<td>').html('<span style="color:' + color + ';white-space:nowrap;">' + icon + ' ' + cp.status.toUpperCase() + '</span>'),
+                $('<td>').html(safe.toLocaleString() + ' / ' + (total > 0 ? total.toLocaleString() : '—')),
+                $('<td>').html(barHtml),
+                $('<td>').html('<strong>' + pct + '%</strong>')
             );
-
-            // Expand button — click to toggle a sub-row with recent logs for this migrator.
-            const $expandBtn = $('<span class="ow-expand-btn" title="Show recent log entries">&#9658;</span>');
-
-            const $tr = $('<tr>').append(
-                $('<td>').append($expandBtn, ' ', ucFirst(cp.migrator)),
-                $('<td>').append($('<span class="ow-badge ow-badge-' + cp.status + '">').text(cp.status)),
-                $('<td>').text(safeProcessed.toLocaleString() + ' / ' + total.toLocaleString()),
-                $('<td>').append($bar),
-                $('<td>').text(pct + '%')
-            );
-
-            $expandBtn.on('click', function () {
-                const $existing = $tr.next('.ow-log-detail-row');
-                if ($existing.length) {
-                    $expandBtn.html('&#9658;');
-                    $existing.remove();
-                    return;
-                }
-                $expandBtn.html('&#9660;'); // rotated arrow while open
-
-                const runId = currentRunId || octoWoo.lastRunId;
-                $.get(octoWoo.ajaxUrl, {
-                    action:   'octowoo_get_logs',
-                    nonce:    octoWoo.nonce,
-                    run_id:   runId,
-                    migrator: cp.migrator,
-                    limit:    15,
-                })
-                .done(function (r) {
-                    if (!r.success) { return; }
-                    const entries = (r.data.logs || []).slice().reverse();
-                    const lines = entries.map(function (e) {
-                        return '[' + (e.level || 'INFO') + '] ' + (e.message || '');
-                    }).join('\n') || '(no log entries)';
-
-                    const $pre = $('<pre>').text(lines).css({
-                        margin: '4px 0 4px 18px',
-                        fontSize: '11px',
-                        color: '#444',
-                        whiteSpace: 'pre-wrap',
-                        maxHeight: '180px',
-                        overflowY: 'auto',
-                    });
-                    $('<tr class="ow-log-detail-row">').append(
-                        $('<td colspan="5">').append($pre)
-                    ).insertAfter($tr);
-                });
-            });
 
             $tbody.append($tr);
         });
     }
 
-    /* ── Logs ────────────────────────────────────────────────────────────── */
-    function refreshLogs() {
-        const level = $('#ow-log-level-filter').val() || '';
-        const runId = currentRunId || octoWoo.activeRunId;
+    /* ════════════════════════════════════════════════════════════════════
+       MIGRATION REPORT
+    ════════════════════════════════════════════════════════════════════ */
+    function renderReport(report) {
+        var $panel = $('#ow-report-panel');
+        if (!$panel.length || !report || !report.migrators) { return; }
 
-        $.get(octoWoo.ajaxUrl, {
-            action: 'octowoo_get_logs',
-            nonce:  octoWoo.nonce,
-            run_id: runId,
-            level:  level,
-            limit:  200,
-        })
-        .done(function (res) {
-            if (!res.success) { return; }
-            renderLogs(res.data.logs || []);
+        var html = '<h3 style="margin:0 0 10px;">Migration Summary</h3>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
+        html += '<thead><tr><th style="text-align:left;padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;">Entity</th>';
+        html += '<th style="padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;">Processed</th>';
+        html += '<th style="padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;">Skipped</th>';
+        html += '<th style="padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;">Failed</th></tr></thead><tbody>';
+
+        var totalProcessed = 0, totalFailed = 0;
+        $.each(report.migrators, function (key, m) {
+            var p = m.processed || 0, s = m.skipped || 0, f = m.failed || 0;
+            totalProcessed += p; totalFailed += f;
+            html += '<tr>';
+            html += '<td style="padding:5px 10px;border:1px solid #ddd;">' + (LABEL_MAP[key] || key) + '</td>';
+            html += '<td style="padding:5px 10px;border:1px solid #ddd;text-align:center;color:#2e7d32;">' + p.toLocaleString() + '</td>';
+            html += '<td style="padding:5px 10px;border:1px solid #ddd;text-align:center;color:#757575;">' + s.toLocaleString() + '</td>';
+            html += '<td style="padding:5px 10px;border:1px solid #ddd;text-align:center;color:' + (f > 0 ? '#c62828' : '#2e7d32') + ';">' + f + '</td>';
+            html += '</tr>';
         });
+        html += '</tbody></table>';
+        html += '<p style="margin:8px 0 0;font-size:12px;color:#555;">Total: <strong>' + totalProcessed.toLocaleString() + '</strong> processed';
+        if (totalFailed > 0) { html += ', <strong style="color:#c62828;">' + totalFailed + '</strong> failed'; }
+        html += '.</p>';
+
+        $panel.html(html).show();
     }
 
-    function renderLogs(logs) {
-        $logContainer.empty();
-
-        if (!logs.length) {
-            $logContainer.append($('<div>').text('No log entries.').css('color', '#6e6e6e'));
-            return;
-        }
-
-        // Logs are returned newest-first; reverse for chronological display.
-        logs.slice().reverse().forEach(function (entry) {
-            const $row = $('<div class="ow-log-entry">').append(
-                $('<span class="ow-log-ts">').text(entry.created_at || ''),
-                $('<span class="ow-log-level ow-log-level-' + (entry.level||'INFO') + '">').text('[' + (entry.level||'INFO') + ']'),
-                $('<span class="ow-log-migrator">').text(entry.migrator ? '[' + entry.migrator + ']' : ''),
-                $('<span class="ow-log-msg">').text(entry.message || '')
-            );
-            $logContainer.append($row);
-        });
-
-        // Auto-scroll to bottom.
-        $logContainer.scrollTop($logContainer[0].scrollHeight);
-    }
-
-    /* ── Test DB connection ──────────────────────────────────────────────── */
-    function testConnection() {
-        const $btn    = $('#ow-btn-test-conn');
-        const $result = $('#ow-conn-result');
-
-        $btn.prop('disabled', true).text('Testing…');
-        $result.css('color', '#888').text('');
-
-        // Read live form values so the test reflects what the user has typed,
-        // even if settings haven't been saved yet.
-        const $form = $('#octowoo-settings-form');
-        $.post(octoWoo.ajaxUrl, {
-            action:    'octowoo_test_connection',
-            nonce:     octoWoo.nonce,
-            db_host:   $form.find('[name="octowoo[db][host]"]').val(),
-            db_port:   $form.find('[name="octowoo[db][port]"]').val(),
-            db_name:   $form.find('[name="octowoo[db][database]"]').val(),
-            db_user:   $form.find('[name="octowoo[db][username]"]').val(),
-            db_pass:   $form.find('[name="octowoo[db][password]"]').val(),
-            db_prefix: $form.find('[name="octowoo[db][prefix]"]').val(),
-        })
-        .done(function (res) {
-            if (res.success) {
-                $result.css('color', '#2e7d32').text(res.data.message);
-            } else {
-                $result.css('color', '#c62828').text(res.data.message || 'Connection failed.');
-            }
-        })
-        .fail(function (xhr) {
-            $result.css('color', '#c62828').text('Request failed: ' + xhr.statusText);
-        })
-        .always(function () {
-            $btn.prop('disabled', false).text('🔌 Test Connection');
-        });
-    }
-
-    /* ── Banner helpers ──────────────────────────────────────────────────── */
-    function setBannerRunning() {
+    /* ════════════════════════════════════════════════════════════════════
+       BANNER HELPERS
+    ════════════════════════════════════════════════════════════════════ */
+    function setBannerRunning(modeLabel) {
         $statusBanner
-            .removeClass('ow-alert-success ow-alert-error ow-alert-info ow-alert-warning')
+            .removeClass('ow-alert-success ow-alert-error ow-alert-warning')
             .addClass('ow-alert ow-alert-info')
-            .html('<span class="ow-spinner"></span>&nbsp; ' + octoWoo.i18n.running)
+            .html('<span class="ow-spinner"></span>&nbsp; ' + (modeLabel || 'Migration') + ' in progress…')
             .show();
     }
 
     function setBannerDone(report) {
-        let msg = octoWoo.i18n.completed;
+        var msg = '✔ Migration complete!';
         if (report && report.migrators) {
-            const totals = Object.values(report.migrators)
-                .reduce(function (acc, m) {
-                    acc.processed += (m.processed || 0);
-                    acc.failed    += (m.failed    || 0);
-                    return acc;
-                }, { processed: 0, failed: 0 });
-            msg += ' — ' + totals.processed.toLocaleString() + ' items processed, ' + totals.failed + ' failed.';
+            var totals = Object.values(report.migrators).reduce(function (acc, m) {
+                acc.processed += (m.processed || 0);
+                acc.failed    += (m.failed    || 0);
+                return acc;
+            }, { processed: 0, failed: 0 });
+            msg += ' — ' + totals.processed.toLocaleString() + ' items processed';
+            if (totals.failed > 0) { msg += ', ' + totals.failed + ' failed'; }
+            msg += '.';
         }
-        msg += ' See progress table below for details.';
-        // Clear the PHP-rendered "in progress" warning — it's now stale.
-        $('#ow-active-run-banner').hide();
-        $btnResume.prop('disabled', true);
         $statusBanner
             .removeClass('ow-alert-info ow-alert-error ow-alert-warning')
-            .addClass('ow-alert ow-alert-success')
-            .text(msg)
-            .show();
+            .addClass('ow-alert ow-alert-success').text(msg).show();
+        showToast(msg, 'success', 8000);
+        $progressTable[0] && $progressTable[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function setBannerError(msg) {
-        $statusBanner
-            .removeClass('ow-alert-info ow-alert-success ow-alert-warning')
-            .addClass('ow-alert ow-alert-error')
-            .text('Error: ' + msg)
-            .show();
+        $statusBanner.removeClass('ow-alert-info ow-alert-success ow-alert-warning')
+            .addClass('ow-alert ow-alert-error').text('Error: ' + msg).show();
+        showToast(msg, 'error', 0);
     }
 
     function setBannerInfo(msg) {
-        $statusBanner
-            .removeClass('ow-alert-error ow-alert-success ow-alert-warning')
-            .addClass('ow-alert ow-alert-info')
-            .text(msg)
-            .show();
+        $statusBanner.removeClass('ow-alert-error ow-alert-success ow-alert-warning')
+            .addClass('ow-alert ow-alert-info').text(msg).show();
     }
 
-    /* ── Button state helpers ────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       BUTTON STATE MACHINE
+    ════════════════════════════════════════════════════════════════════ */
     function setButtonState(state) {
-        const $btnDemo     = $('#ow-btn-demo');
-        const $btnRecovery = $('#ow-btn-images-only, #ow-btn-products-images, #ow-btn-cats-manufacturers, #ow-btn-multilingual, #ow-btn-cleanup-ml-terms, #ow-btn-repair-order-items, #ow-btn-rerun-seo');
-        const $btnBgStart  = $('#ow-btn-start-bg, #ow-btn-resume-bg');
+        var $btnDemo     = $('#ow-btn-demo');
+        var $btnRecovery = $('#ow-btn-images-only,#ow-btn-products-images,#ow-btn-cats-manufacturers,#ow-btn-multilingual,#ow-btn-cleanup-ml-terms,#ow-btn-repair-order-items,#ow-btn-rerun-seo');
+        var $btnBgStart  = $('#ow-btn-start-bg,#ow-btn-resume-bg');
 
         if (state === 'running') {
-            $btnStart.prop('disabled', true)
-                .html('<span class="ow-spinner"></span>&nbsp; Running…');
+            $btnStart.prop('disabled', true).html('<span class="ow-spinner"></span>&nbsp; Running…');
             $btnDemo.prop('disabled', true);
             $btnRecovery.prop('disabled', true);
             $btnResume.prop('disabled', true);
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', false);
             $btnSkip.prop('disabled', false);
-            // Prevent user from launching a second (background) run in parallel,
-            // which caused duplicate categories/products in the past.
             $btnBgStart.prop('disabled', true);
         } else if (state === 'paused') {
             $btnStart.prop('disabled', true).text('▶ Start Full Migration');
@@ -1394,7 +846,6 @@
             $btnAbort.prop('disabled', false);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', false);
-            // Allow resuming via background mode when paused.
             $('#ow-btn-start-bg').prop('disabled', true);
             $('#ow-btn-resume-bg').prop('disabled', false);
         } else {
@@ -1405,30 +856,566 @@
             $btnAbort.prop('disabled', true);
             $btnPause.prop('disabled', true);
             $btnSkip.prop('disabled', true);
-            // Re-enable background start; disable background resume (nothing to resume in idle).
             $('#ow-btn-start-bg').prop('disabled', false);
             $('#ow-btn-resume-bg').prop('disabled', true);
         }
     }
 
-    /* ── Settings validation ─────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       SYSTEM CHECK (VALIDATOR)
+    ════════════════════════════════════════════════════════════════════ */
+    function runSystemCheck() {
+        var $btn   = $('#ow-btn-validate');
+        var $panel = $('#ow-validate-panel');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Checking…');
+        $panel.html('<em style="color:#888;">Running system checks…</em>').show();
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_validate', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (!res.success || !res.data) {
+                $panel.html('<span style="color:#c62828;">✘ Validation request failed.</span>');
+                return;
+            }
+            var data    = res.data;
+            var results = data.results || {};
+
+            var colorMap = { pass: '#2e7d32', warning: '#e65100', fail: '#c62828' };
+            var bgMap    = { pass: '#f1f8f1', warning: '#fff8f1', fail: '#fef2f2' };
+            var iconMap  = { pass: '✔', warning: '⚠', fail: '✘' };
+            var labelMap = {
+                php_version: 'PHP Version', memory_limit: 'Memory Limit', required_extensions: 'PHP Extensions',
+                upload_size: 'Max Upload Size', execution_time: 'Execution Time',
+                db_connection: 'DB Connection', image_path: 'Image Path',
+                disk_space: 'Disk Space', log_directory: 'Log Directory', hpos_compat: 'HPOS Compatibility',
+            };
+
+            var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr><th style="text-align:left;padding:5px 10px;background:#f5f5f5;border:1px solid #ddd;">Check</th>';
+            html += '<th style="padding:5px 10px;background:#f5f5f5;border:1px solid #ddd;">Status</th>';
+            html += '<th style="padding:5px 10px;background:#f5f5f5;border:1px solid #ddd;">Details</th>';
+            html += '<th style="padding:5px 10px;background:#f5f5f5;border:1px solid #ddd;">Action</th></tr></thead><tbody>';
+
+            $.each(results, function (key, check) {
+                var status = check.status || 'pass';
+                var color  = colorMap[status] || '#333';
+                var bg     = bgMap[status]    || '#fff';
+                var icon   = iconMap[status]  || '·';
+                var label  = labelMap[key]    || key;
+                html += '<tr style="background:' + bg + ';border-bottom:1px solid #e5e5e5;">';
+                html += '<td style="padding:5px 10px;font-weight:600;">' + label + '</td>';
+                html += '<td style="padding:5px 10px;color:' + color + ';font-weight:700;white-space:nowrap;">' + icon + ' ' + status.toUpperCase() + '</td>';
+                html += '<td style="padding:5px 10px;">' + $('<span>').text(check.message || '').html();
+                if (check.value) { html += ' <code style="font-size:11px;background:#f5f5f5;padding:1px 4px;border-radius:2px;">' + $('<span>').text(check.value).html() + '</code>'; }
+                html += '</td>';
+                html += '<td style="padding:5px 10px;font-size:11px;color:#666;">' + (check.fix ? $('<span>').text(check.fix).html() : '') + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+
+            var summary;
+            if (data.all_passed) {
+                summary = '<div style="padding:8px 12px;background:#edf7ed;border:1px solid #4caf50;color:#1b5e20;border-radius:4px;margin-bottom:8px;font-weight:600;">✔ All checks passed — your server is ready to migrate.</div>';
+            } else if (data.has_warnings) {
+                summary = '<div style="padding:8px 12px;background:#fffbeb;border:1px solid #f59e0b;color:#78350f;border-radius:4px;margin-bottom:8px;font-weight:600;">⚠ Warnings detected — migration can proceed but review the notes below.</div>';
+            } else {
+                summary = '<div style="padding:8px 12px;background:#fef2f2;border:1px solid #ef4444;color:#7f1d1d;border-radius:4px;margin-bottom:8px;font-weight:600;">✘ Checks failed — fix these issues before migrating.</div>';
+            }
+            $panel.html(summary + html);
+        })
+        .fail(function (xhr) {
+            $panel.html('<span style="color:#c62828;">✘ System check failed: ' + xhr.statusText + '</span>');
+        })
+        .always(function () { $btn.prop('disabled', false).text('🔎 Run System Check'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       TEST DB CONNECTION
+    ════════════════════════════════════════════════════════════════════ */
+    function testConnection() {
+        var $btn    = $('#ow-btn-test-connection');
+        var $result = $('#ow-connection-result');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Testing…');
+        $result.text('').css('color', '#555');
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_test_connection', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (res.success) {
+                $result.css('color', '#2e7d32').text('✔ ' + (res.data ? res.data.message : 'Connection successful.'));
+                showToast('OpenCart DB connection successful!', 'success');
+            } else {
+                var msg = res.data ? res.data.message : 'Connection failed.';
+                $result.css('color', '#c62828').text('✘ ' + msg);
+                showToast('Connection failed: ' + msg, 'error', 0);
+            }
+        })
+        .fail(function (xhr) {
+            $result.css('color', '#c62828').text('✘ Request failed: ' + xhr.statusText);
+        })
+        .always(function () { $btn.prop('disabled', false).text('🔌 Test Connection'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       AUTO-DETECT
+    ════════════════════════════════════════════════════════════════════ */
+    function autoDetect() {
+        var $btn = $('#ow-btn-auto-detect');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Detecting…');
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_prescan', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (res.success && res.data) {
+                var data = res.data;
+                if (data.images && data.images.detected_path) {
+                    $('input[name="octowoo[opencart][image_path]"]').val(data.images.detected_path);
+                }
+                var msg = 'Auto-detect complete.';
+                if (data.logs) {
+                    msg += ' Logs: ' + (data.logs.writable ? 'writable ✔' : 'NOT writable ✘');
+                }
+                showToast(msg, data.logs && !data.logs.writable ? 'warning' : 'success');
+            } else {
+                showToast('Auto-detect returned no results.', 'warning');
+            }
+        })
+        .fail(function (xhr) { showToast('Auto-detect failed: ' + xhr.statusText, 'error'); })
+        .always(function () { $btn.prop('disabled', false).text('🔎 Auto-detect Image Path & Logs'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       SCAN SOURCE COUNTS
+    ════════════════════════════════════════════════════════════════════ */
+    function scanSourceCounts() {
+        var $btn   = $('#ow-btn-scan');
+        var $panel = $('#ow-scan-panel');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Scanning…');
+        if (!$panel.length) { $btn.after('<div id="ow-scan-panel" style="margin-top:10px;"></div>'); }
+        $('#ow-scan-panel').html('<em style="color:#888;">Counting OpenCart records…</em>').show();
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_scan_counts', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (!res.success || !res.data) {
+                $('#ow-scan-panel').html('<span style="color:#c62828;">Scan failed.</span>');
+                return;
+            }
+            var counts = res.data.counts || {};
+            var html = '<table style="font-size:12px;border-collapse:collapse;">';
+            $.each(counts, function (entity, count) {
+                html += '<tr><td style="padding:3px 10px 3px 0;color:#555;font-weight:600;">' + entity + '</td>';
+                html += '<td style="padding:3px 0;font-weight:700;">' + parseInt(count).toLocaleString() + '</td></tr>';
+            });
+            html += '</table>';
+            $('#ow-scan-panel').html(html);
+            showToast('Source counts refreshed.', 'success');
+        })
+        .fail(function () { $('#ow-scan-panel').html('<span style="color:#c62828;">Scan request failed.</span>'); })
+        .always(function () { $btn.prop('disabled', false).text('🔍 Scan Source'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       REPAIR ORDER ITEMS
+    ════════════════════════════════════════════════════════════════════ */
+    function repairOrderItems() {
+        var $btn = $('#ow-btn-repair-order-items');
+        if ($btn.prop('disabled')) { return; }
+
+        owConfirm('This will scan all migrated orders and re-link broken product references by SKU. Continue?', 'Yes, repair', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Repairing…');
+            var totalRelinked = 0;
+
+            function runBatch(isFirst) {
+                $.post(octoWoo.ajaxUrl, {
+                    action: 'octowoo_repair_order_items',
+                    nonce:  octoWoo.nonce,
+                    page:   isFirst ? 1 : undefined,
+                })
+                .done(function (res) {
+                    if (!res || !res.success) {
+                        var errMsg = (res && res.data && res.data.message) ? res.data.message : 'Repair failed.';
+                        showToast('Repair failed: ' + errMsg, 'error');
+                        $btn.prop('disabled', false).text('🔗 Repair Order Items');
+                        return;
+                    }
+                    totalRelinked += (res.data.relinked || 0);
+                    if (res.data.done) {
+                        showToast('Repair complete. Re-linked ' + totalRelinked + ' order item(s).', 'success', 6000);
+                        $btn.prop('disabled', false).text('🔗 Repair Order Items');
+                    } else {
+                        runBatch(false);
+                    }
+                })
+                .fail(function () {
+                    showToast('Repair request failed. Check server logs.', 'error');
+                    $btn.prop('disabled', false).text('🔗 Repair Order Items');
+                });
+            }
+            runBatch(true);
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       CLEANUP ML TERMS
+    ════════════════════════════════════════════════════════════════════ */
+    function cleanupMlTerms() {
+        var $btn = $('#ow-btn-cleanup-ml-terms');
+        if ($btn.prop('disabled')) { return; }
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Cleaning…');
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_cleanup_ml_terms', nonce: octoWoo.nonce })
+        .done(function (res) {
+            showToast(res && res.success ? (res.data.message || 'Cleanup complete.') : 'Cleanup failed.', res && res.success ? 'success' : 'error');
+        })
+        .fail(function () { showToast('Cleanup request failed.', 'error'); })
+        .always(function () { $btn.prop('disabled', false).text('🧹 Fix Orphan Categories'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       RERUN SEO MIGRATOR
+    ════════════════════════════════════════════════════════════════════ */
+    function rerunSeoMigrator() {
+        var $btn = $('#ow-btn-rerun-seo');
+        if ($btn.prop('disabled')) { return; }
+
+        owConfirm('This will reset the SEO checkpoint and clear stored redirects, then re-run only the SEO migrator. Continue?', 'Yes, re-run SEO', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Resetting SEO…');
+
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_rerun_seo', nonce: octoWoo.nonce, run_id: currentRunId || '' })
+            .done(function (res) {
+                if (res.success) {
+                    showToast('SEO checkpoint reset. Starting SEO migrator…', 'info');
+                    currentRunId = res.data.run_id || currentRunId;
+                    startMigration(true, false, 'seo', 'SEO Re-run', true);
+                } else {
+                    showToast(res.data ? res.data.message : 'Rerun failed.', 'error');
+                }
+            })
+            .fail(function () { showToast('SEO rerun request failed.', 'error'); })
+            .always(function () { $btn.prop('disabled', false).text('🌐 Rerun SEO Migrator'); });
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       SQL IMPORT
+    ════════════════════════════════════════════════════════════════════ */
+    function importSql() {
+        var file = document.getElementById('ow-sql-file') && document.getElementById('ow-sql-file').files[0];
+        if (!file) { showToast('Please select a .sql or .sql.gz file first.', 'warning'); return; }
+
+        var $btn    = $('#ow-btn-import-sql');
+        var $result = $('#ow-sql-result');
+        var $prog   = $('#ow-sql-progress');
+        var prefix  = $('#ow-sql-prefix').val() || 'oc_';
+
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Uploading…');
+        $result.text('').css('color', '#555');
+        $prog.show();
+
+        var fd = new FormData();
+        fd.append('action',     'octowoo_import_sql');
+        fd.append('nonce',      octoWoo.nonce);
+        fd.append('oc_prefix',  prefix);
+        fd.append('sql_file',   file);
+
+        $.ajax({ url: octoWoo.ajaxUrl, type: 'POST', data: fd, processData: false, contentType: false,
+            xhr: function () {
+                var xhr = new window.XMLHttpRequest();
+                xhr.upload.addEventListener('progress', function (e) {
+                    if (e.lengthComputable) {
+                        var pct = Math.round(e.loaded / e.total * 100);
+                        $prog.find('.ow-upload-progress').text('Uploading: ' + pct + '%');
+                    }
+                });
+                return xhr;
+            },
+        })
+        .done(function (res) {
+            if (res.success) {
+                $result.css('color', '#2e7d32').text('✔ SQL imported: ' + (res.data.tables || '?') + ' tables.');
+                showToast('SQL file imported successfully!', 'success');
+            } else {
+                var msg = res.data ? res.data.message : 'Import failed.';
+                $result.css('color', '#c62828').text('✘ ' + msg);
+                showToast('SQL import failed: ' + msg, 'error', 0);
+            }
+        })
+        .fail(function (xhr) {
+            $result.css('color', '#c62828').text('✘ Upload failed: ' + xhr.statusText);
+        })
+        .always(function () {
+            $btn.prop('disabled', false).text('⬆ Import SQL');
+            $prog.hide();
+        });
+    }
+
+    function dropSql(e) {
+        e.preventDefault();
+        owConfirm('Drop all imported OpenCart tables (octowoo_oc_*) from this database?', 'Yes, drop tables', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_drop_sql', nonce: octoWoo.nonce })
+            .done(function (res) {
+                if (res.success) {
+                    $('#ow-sql-imported-status').hide();
+                    showToast(res.data.message || 'Tables dropped.', 'success');
+                } else {
+                    showToast(res.data ? res.data.message : 'Drop failed.', 'error');
+                }
+            });
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       IMAGES ZIP IMPORT
+    ════════════════════════════════════════════════════════════════════ */
+    function importImages() {
+        var file = document.getElementById('ow-images-zip') && document.getElementById('ow-images-zip').files[0];
+        if (!file) { showToast('Please select a ZIP file first.', 'warning'); return; }
+
+        var $btn    = $('#ow-btn-import-images');
+        var $result = $('#ow-images-result');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Uploading…');
+
+        var fd = new FormData();
+        fd.append('action',     'octowoo_import_images');
+        fd.append('nonce',      octoWoo.nonce);
+        fd.append('images_zip', file);
+
+        $.ajax({ url: octoWoo.ajaxUrl, type: 'POST', data: fd, processData: false, contentType: false })
+        .done(function (res) {
+            if (res.success) {
+                $result.css('color', '#2e7d32').text('✔ Images extracted: ' + (res.data.files || '?') + ' files.');
+                showToast('Images ZIP extracted successfully!', 'success');
+            } else {
+                var msg = res.data ? res.data.message : 'Image import failed.';
+                $result.css('color', '#c62828').text('✘ ' + msg);
+                showToast(msg, 'error', 0);
+            }
+        })
+        .fail(function (xhr) { $result.css('color', '#c62828').text('✘ ' + xhr.statusText); })
+        .always(function () { $btn.prop('disabled', false).text('🗜 Extract ZIP'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       LOGS
+    ════════════════════════════════════════════════════════════════════ */
+    function refreshLogs() {
+        var runId   = currentRunId || octoWoo.lastRunId || '';
+        var level   = $('#ow-log-level-filter').val()   || '';
+        var limit   = 200;
+
+        if (!runId) { return; }
+
+        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_logs', nonce: octoWoo.nonce, run_id: runId, level: level, limit: limit })
+        .done(function (res) {
+            if (!res.success || !res.data) { return; }
+            renderLogs(res.data.logs || []);
+        });
+    }
+
+    function renderLogs(logs) {
+        $logContainer.empty();
+        if (!logs.length) {
+            $logContainer.html('<div style="color:#888;padding:8px;">No log entries yet.</div>');
+            return;
+        }
+
+        var levelColors = { ERROR: '#c62828', WARNING: '#e65100', SUCCESS: '#2e7d32', INFO: '#1565c0', DEBUG: '#757575' };
+        var html = '';
+        logs.forEach(function (entry) {
+            var color = levelColors[entry.level] || '#333';
+            var bg    = entry.level === 'ERROR' ? '#fef2f2' : (entry.level === 'WARNING' ? '#fffbeb' : '#fff');
+            html += '<div style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-size:12px;background:' + bg + ';">';
+            html += '<span style="color:#9e9e9e;margin-right:8px;">' + (entry.created_at || '') + '</span>';
+            html += '<span style="color:' + color + ';font-weight:700;margin-right:8px;">[' + (entry.level || '') + ']</span>';
+            if (entry.migrator) { html += '<span style="color:#757575;margin-right:8px;">[' + entry.migrator + ']</span>'; }
+            html += '<span>' + $('<span>').text(entry.message || '').html() + '</span>';
+            html += '</div>';
+        });
+        $logContainer.html(html);
+    }
+
+    /* ── Download Logs as .txt file ─────────────────────────────────────── */
+    function downloadLogs() {
+        var runId = currentRunId || octoWoo.lastRunId || '';
+        if (!runId) { showToast('No migration run selected. Start or resume a migration first.', 'warning'); return; }
+
+        var $btn = $('#ow-btn-download-logs');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Preparing…');
+
+        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_logs', nonce: octoWoo.nonce, run_id: runId, limit: 9999 })
+        .done(function (res) {
+            if (!res.success || !res.data || !res.data.logs) {
+                showToast('No logs found for this run.', 'warning');
+                return;
+            }
+            var lines = res.data.logs.map(function (e) {
+                return '[' + (e.created_at || '') + '] [' + (e.level || '') + '] ' + (e.migrator ? '[' + e.migrator + '] ' : '') + (e.message || '');
+            });
+            var blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+            var url  = URL.createObjectURL(blob);
+            var a    = document.createElement('a');
+            a.href     = url;
+            a.download = 'octowoo-log-' + runId.substr(0, 8) + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Log file downloaded.', 'success');
+        })
+        .fail(function () { showToast('Failed to fetch logs.', 'error'); })
+        .always(function () { $btn.prop('disabled', false).text('⬇ Download Logs'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       SETTINGS EXPORT / IMPORT
+    ════════════════════════════════════════════════════════════════════ */
+    function exportSettings() {
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_export_settings', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (!res.success || !res.data || !res.data.config) {
+                showToast('Export failed.', 'error');
+                return;
+            }
+            // Strip DB password from export for safety.
+            var config = JSON.parse(JSON.stringify(res.data.config));
+            if (config.db) { config.db.password = ''; }
+
+            var blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+            var url  = URL.createObjectURL(blob);
+            var a    = document.createElement('a');
+            a.href     = url;
+            a.download = 'octowoo-settings.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Settings exported. Re-enter your DB password after import.', 'success', 6000);
+        })
+        .fail(function () { showToast('Export request failed.', 'error'); });
+    }
+
+    function importSettings(file) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            var config;
+            try { config = JSON.parse(e.target.result); }
+            catch (err) { showToast('Invalid JSON file: ' + err.message, 'error', 0); return; }
+
+            owConfirm('Import these settings? Your current settings will be overwritten. (DB password is not imported — you will need to re-enter it.)', 'Yes, import', 'Cancel')
+            .then(function (confirmed) {
+                if (!confirmed) { return; }
+                $.post(octoWoo.ajaxUrl, {
+                    action: 'octowoo_import_settings',
+                    nonce:  octoWoo.nonce,
+                    config: JSON.stringify(config),
+                })
+                .done(function (res) {
+                    if (res.success) {
+                        showToast('Settings imported. Reloading page…', 'success', 2000);
+                        setTimeout(function () { location.reload(); }, 2200);
+                    } else {
+                        showToast(res.data ? res.data.message : 'Import failed.', 'error', 0);
+                    }
+                })
+                .fail(function () { showToast('Import request failed.', 'error'); });
+            });
+        };
+        reader.readAsText(file);
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       PURGE
+    ════════════════════════════════════════════════════════════════════ */
+    function runPurge(forceTagged) {
+        var entities = [];
+        $('.ow-purge-chk:checked').each(function () { entities.push($(this).val()); });
+        if (!entities.length) { showToast('Select at least one entity type to purge.', 'warning'); return; }
+
+        var forcePurge = forceTagged || $('#ow-purge-force').is(':checked');
+        var confirmMsg = forcePurge
+            ? '⚠ Force purge: deletes ALL ' + entities.join(', ') + ' in WooCommerce, including items NOT created by OctoWoo. Continue?'
+            : 'Delete ' + entities.join(', ') + ' created by OctoWoo? Continue?';
+
+        owConfirm(confirmMsg, 'Yes, purge', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            _executePurge(entities, forcePurge, false);
+        });
+    }
+
+    function runPurgeEverything() {
+        owConfirm('☢ FORCE PURGE: Delete ALL products, categories, customers, orders and other WooCommerce data — including items NOT created by OctoWoo. This is irreversible. Are you absolutely sure?', 'Yes, purge EVERYTHING', 'Cancel')
+        .then(function (confirmed) {
+            if (!confirmed) { return; }
+            var all = ['products', 'categories', 'manufacturers', 'customers', 'orders', 'coupons', 'tags', 'filters', 'downloads', 'reviews', 'information'];
+            _executePurge(all, true, true);
+        });
+    }
+
+    function _executePurge(entities, force, everything) {
+        var $btn = everything ? $('#ow-btn-purge-everything') : $('#ow-btn-purge');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Purging…');
+        var $result = $('#ow-purge-result');
+        $result.html('<em style="color:#888;">Purging…</em>').show();
+
+        $.post(octoWoo.ajaxUrl, {
+            action:    'octowoo_purge_imported',
+            nonce:     octoWoo.nonce,
+            entities:  entities.join(','),
+            force:     force ? 1 : 0,
+        })
+        .done(function (res) {
+            if (res.success) {
+                var data    = res.data || {};
+                var deleted = data.deleted || 0;
+                var msg     = 'Purge complete. ' + parseInt(deleted).toLocaleString() + ' item(s) deleted.';
+                $result.html('<span style="color:#2e7d32;font-weight:600;">✔ ' + msg + '</span>');
+                showToast(msg, 'success', 6000);
+
+                if (data.warnings && data.warnings.length) {
+                    var warnHtml = '<ul style="margin:6px 0 0;padding-left:18px;">';
+                    data.warnings.forEach(function (w) { warnHtml += '<li style="color:#e65100;font-size:12px;">' + $('<span>').text(w).html() + '</li>'; });
+                    warnHtml += '</ul>';
+                    $result.append(warnHtml);
+                }
+            } else {
+                var errMsg = res.data ? res.data.message : 'Purge failed.';
+                $result.html('<span style="color:#c62828;">✘ ' + $('<span>').text(errMsg).html() + '</span>');
+                showToast(errMsg, 'error', 0);
+            }
+        })
+        .fail(function (xhr) {
+            $result.html('<span style="color:#c62828;">✘ Request failed: ' + xhr.statusText + '</span>');
+        })
+        .always(function () { $btn.prop('disabled', false).text($btn.data('label') || 'Purge'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       SETTINGS VALIDATION
+    ════════════════════════════════════════════════════════════════════ */
     function validateSettingsForm() {
-        // Simple: highlight empty required fields.
-        let valid = true;
+        var valid = true;
         $('#octowoo-settings-form [required]').each(function () {
-            const empty = !$(this).val().trim();
+            var empty = !$(this).val().trim();
             $(this).toggleClass('ow-field-error', empty);
             if (empty) { valid = false; }
         });
         $('#ow-btn-save-settings').prop('disabled', !valid);
     }
 
-    /* ── Utility ─────────────────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       UTILITY
+    ════════════════════════════════════════════════════════════════════ */
     function ucFirst(str) {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    /* ── Boot ────────────────────────────────────────────────────────────── */
+    /* ════════════════════════════════════════════════════════════════════
+       BOOT
+    ════════════════════════════════════════════════════════════════════ */
     $(document).ready(init);
 
 }(jQuery));

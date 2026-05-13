@@ -73,6 +73,9 @@ class AjaxHandler {
             'octowoo_cleanup_ml_terms',
             'octowoo_repair_order_items',
             'octowoo_rerun_seo',
+            // v2.4.70 additions.
+            'octowoo_export_settings',
+            'octowoo_import_settings',
         ];
 
         foreach ( $actions as $action ) {
@@ -218,6 +221,14 @@ class AjaxHandler {
 
             case 'octowoo_rerun_seo':
                 $this->actionRerunSeo();
+                break;
+
+            case 'octowoo_export_settings':
+                $this->actionExportSettings();
+                break;
+
+            case 'octowoo_import_settings':
+                $this->actionImportSettings();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -1599,4 +1610,55 @@ class AjaxHandler {
             'hints'    => $hints,
         ] );
     }
+
+    // ── Action: export settings as JSON ──────────────────────────────────────────
+
+    private function actionExportSettings(): void {
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        // Strip the encrypted DB password — it cannot be used on another site.
+        if ( isset( $config['db']['password'] ) ) {
+            $config['db']['password'] = '';
+        }
+
+        wp_send_json_success( [
+            'config'  => $config,
+            'version' => OCTOWOO_VERSION,
+        ] );
+    }
+
+    // ── Action: import settings from JSON ─────────────────────────────────────
+
+    private function actionImportSettings(): void {
+        $raw = isset( $_POST['config'] ) ? wp_unslash( $_POST['config'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+        if ( ! $raw ) {
+            wp_send_json_error( [ 'message' => __( 'No config data received.', 'octowoo' ) ] );
+        }
+
+        $config = json_decode( (string) $raw, true );
+        if ( ! is_array( $config ) ) {
+            wp_send_json_error( [ 'message' => __( 'Invalid JSON — could not parse settings file.', 'octowoo' ) ] );
+        }
+
+        // Only allow expected top-level keys.
+        $allowed = [ 'source', 'db', 'opencart', 'migration', 'seo', 'multilingual', 'cron', 'woocommerce', 'logging' ];
+        $filtered = array_intersect_key( $config, array_flip( $allowed ) );
+
+        if ( empty( $filtered ) ) {
+            wp_send_json_error( [ 'message' => __( 'File does not appear to be a valid OctoWoo settings export.', 'octowoo' ) ] );
+        }
+
+        // Keep the existing (encrypted) DB password if the export stripped it.
+        $existing = get_option( 'octowoo_config', [] );
+        if ( ! empty( $existing['db']['password'] ) && empty( $filtered['db']['password'] ) ) {
+            $filtered['db']['password'] = $existing['db']['password'];
+        }
+
+        update_option( 'octowoo_config', $filtered );
+
+        wp_send_json_success( [ 'message' => __( 'Settings imported successfully.', 'octowoo' ) ] );
+    }
+
 }
