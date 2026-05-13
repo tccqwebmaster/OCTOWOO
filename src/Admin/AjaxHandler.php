@@ -546,6 +546,7 @@ class AjaxHandler {
 
         if ( ! $run_id ) {
             wp_send_json_success( [ 'checkpoints' => [], 'active' => false ] );
+            return; // BUG FIX v2.5.2: was missing — execution continued with empty $run_id
         }
 
         $checkpoint = new CheckpointManager( $run_id );
@@ -1346,12 +1347,13 @@ class AjaxHandler {
         delete_option( 'octowoo_run_started_at' );
         delete_option( 'octowoo_db_lock' );
 
-        // Invalidate category transients (both old and new key names) so the
-        // next run re-builds the sorted list from scratch.
+        // Invalidate ALL category transients (legacy + current format + fresh/resume variants).
         $reset_config = AdminPage::getConfig();
         $oc_pfx       = $reset_config['db']['prefix'] ?? 'oc_';
-        delete_transient( 'octowoo_cat_topo_' . md5( $oc_pfx ) ); // legacy key
-        delete_transient( 'octowoo_cat_all_'  . md5( $oc_pfx ) ); // current key
+        delete_transient( 'octowoo_cat_topo_'  . md5( $oc_pfx ) );                    // legacy key
+        delete_transient( 'octowoo_cat_all_'   . md5( $oc_pfx ) );                    // v2.4 key
+        delete_transient( 'octowoo_cat_all_'   . md5( $oc_pfx . '_fresh' ) );         // v2.5.1 fresh key
+        delete_transient( 'octowoo_cat_all_'   . md5( $oc_pfx . '_resume' ) );        // v2.5.1 resume key
 
         wp_send_json_success( [
             'message' => __( 'Migration data reset. You can start a fresh migration.', 'octowoo' ),

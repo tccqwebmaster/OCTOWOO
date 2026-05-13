@@ -244,13 +244,35 @@
         // Settings live validation.
         $('#octowoo-settings-form').on('input change', 'input, select', validateSettingsForm);
 
-        // Resume active run on page load.
+        // Resume active run on page load — check server state to set correct button state.
         if (currentRunId) { pollProgress(); }
         if (octoWoo.activeRunId) {
             startPolling();
-            $btnAbort.prop('disabled', false);
-            $btnPause.prop('disabled', false);
-            $btnSkip.prop('disabled', false);
+            // Check if run is paused on server (persisted across page reload).
+            $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: octoWoo.activeRunId })
+            .done(function (res) {
+                if (res && res.success && res.data) {
+                    isPausedState = !!res.data.paused;
+                    if (isPausedState) {
+                        setButtonState('paused');
+                        setBannerInfo('Migration paused. Click Resume to continue.');
+                    } else {
+                        setButtonState('running');
+                        $btnAbort.prop('disabled', false);
+                        $btnPause.prop('disabled', false);
+                        $btnSkip.prop('disabled', false);
+                    }
+                } else {
+                    setButtonState('running');
+                    $btnAbort.prop('disabled', false);
+                    $btnPause.prop('disabled', false);
+                    $btnSkip.prop('disabled', false);
+                }
+            })
+            .fail(function () {
+                setButtonState('running');
+                $btnAbort.prop('disabled', false);
+            });
         }
     }
 
@@ -559,8 +581,9 @@
             .done(function (res) {
                 if (res.success) {
                     currentRunId = res.data.run_id || currentRunId;
-                    showToast('Background migration started. Progress updates every few seconds.', 'success', 6000);
-                    setBannerInfo('Background migration running via Action Scheduler…');
+                    var bgRunId = res.data.run_id || currentRunId;
+                    showToast('Background migration started (Run: ' + (bgRunId || '').substr(0, 8) + '…). Progress updates every few seconds.', 'success', 6000);
+                    setBannerInfo('⚙ Background migration running via Action Scheduler. You can close this tab — it will continue. Check back for progress.');
                     startPolling();
                     $('#ow-btn-cancel-bg').prop('disabled', false);
                 } else {

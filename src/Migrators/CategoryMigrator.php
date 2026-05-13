@@ -419,14 +419,13 @@ class CategoryMigrator extends AbstractMigrator {
         );
 
         // Secondary-language data for WPML / Polylang translation pass.
-        if ( ! empty( $sec_desc ) ) {
-            $sfx = $this->secLangSuffix();
-            update_term_meta( $wc_term_id, '_octowoo_name' . $sfx,        $this->sanitizeName( $sec_desc['name']             ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_description' . $sfx, $this->cleanDescription( $sec_desc['description']  ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metatitle' . $sfx,   $this->sanitizeText( $sec_desc['meta_title']       ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metadesc' . $sfx,    $this->sanitizeText( $sec_desc['meta_description'] ?? '' ) );
-            update_term_meta( $wc_term_id, '_octowoo_metakw' . $sfx,      $this->sanitizeText( $sec_desc['meta_keyword']     ?? '' ) );
-        }
+        // ALWAYS write — even empty — so translation pass can detect "no data".
+        $sfx = $this->secLangSuffix();
+        update_term_meta( $wc_term_id, '_octowoo_name' . $sfx,        $this->sanitizeName( $sec_desc['name']             ?? '' ) );
+        update_term_meta( $wc_term_id, '_octowoo_description' . $sfx, $this->cleanDescription( $sec_desc['description']  ?? '' ) );
+        update_term_meta( $wc_term_id, '_octowoo_metatitle' . $sfx,   $this->sanitizeText( $sec_desc['meta_title']       ?? '' ) );
+        update_term_meta( $wc_term_id, '_octowoo_metadesc' . $sfx,    $this->sanitizeText( $sec_desc['meta_description'] ?? '' ) );
+        update_term_meta( $wc_term_id, '_octowoo_metakw' . $sfx,      $this->sanitizeText( $sec_desc['meta_keyword']     ?? '' ) );
 
         // Category thumbnail: import the OC image and assign as WC thumbnail.
         if ( ! empty( $image ) && ! $this->isDry() ) {

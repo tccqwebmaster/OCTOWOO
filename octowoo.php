@@ -9,7 +9,7 @@
  *                    Rank Math SEO, and more) into WooCommerce. Supports batch processing,
  *                    resume, dry-run, background mode (Action Scheduler), cron auto-import,
  *                    WP-CLI, settings export/import, email reports, and an add-on hook system.
- * Version:           2.5.1
+ * Version:           2.5.2
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Requires Plugins:  woocommerce
@@ -27,7 +27,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // ── Plugin constants ──────────────────────────────────────────────────────────
-define( 'OCTOWOO_VERSION',    '2.5.1' );
+define( 'OCTOWOO_VERSION',    '2.5.2' );
 define( 'OCTOWOO_FILE',       __FILE__ );
 define( 'OCTOWOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'OCTOWOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -72,6 +72,14 @@ add_action( 'before_woocommerce_init', function (): void {
 /**
  * Bootstrap: fires after all plugins are loaded so WooCommerce is definitely available.
  */
+// Register front-end redirect handler at plugin boot — MUST be outside is_admin()
+// so it fires on every front-end request, not just admin pages.
+// BUG FIX v2.5.2: was previously registered inside AdminPage::init() which is
+// wrapped in is_admin() — meaning 301 redirects NEVER fired on the front end.
+add_action( 'template_redirect', function (): void {
+	\OctoWoo\Migrators\SeoMigrator::handleWpRedirect();
+}, 1 ); // priority 1 = fire before theme output
+
 add_action( 'plugins_loaded', function (): void {
 
 	if ( ! class_exists( 'WooCommerce' ) ) {

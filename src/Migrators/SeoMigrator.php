@@ -271,10 +271,14 @@ class SeoMigrator extends AbstractMigrator {
         }
 
         if ( $new_url ) {
+            // Pattern 1: Old OC query-string URL.
             $this->redirect_map[ $old_path ] = $new_url;
-            // Redirect from old OC SEO path (/oc-keyword) to new WC pretty URL.
-            // Use $slug (the OC keyword), not $old_slug (the pre-update WP slug).
-            $this->redirect_map[ '/' . $slug ] = $new_url;
+            // Pattern 2: Old OC SEO keyword path (e.g. /my-product).
+            $this->redirect_map[ '/' . ltrim( $slug, '/' ) ] = $new_url;
+            // Pattern 3: OC 2.x style with route prefix.
+            $this->redirect_map[ "/index.php?route=product/product&path=&product_id={$oc_id}" ] = $new_url;
+            // Pattern 4: With .html suffix (some OC themes).
+            $this->redirect_map[ '/' . ltrim( $slug, '/' ) . '.html' ] = $new_url;
         }
 
         return true;
@@ -314,9 +318,14 @@ class SeoMigrator extends AbstractMigrator {
         }
 
         if ( $new_url && ! is_wp_error( $new_url ) ) {
+            // Pattern 1: Old OC query-string URL.
             $this->redirect_map[ $old_path ] = $new_url;
-            // Redirect from old OC SEO path (/oc-category-keyword) to new WC URL.
-            $this->redirect_map[ '/' . $slug ] = $new_url;
+            // Pattern 2: Old OC SEO keyword path.
+            $this->redirect_map[ '/' . ltrim( $slug, '/' ) ] = $new_url;
+            // Pattern 3: OC path-based URL (oc_seo_url query = category_id=X, but URL was /path/X).
+            $this->redirect_map[ "/index.php?route=product/category&path={$oc_id}" ] = $new_url;
+            // Pattern 4: With .html suffix.
+            $this->redirect_map[ '/' . ltrim( $slug, '/' ) . '.html' ] = $new_url;
         }
 
         return true;
@@ -400,22 +409,30 @@ class SeoMigrator extends AbstractMigrator {
             return;
         }
 
-        // Build the request path.
         // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
-        $request_uri  = parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH );
-        $query_string = parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_QUERY );
-        $full_path    = $request_uri . ( $query_string ? '?' . $query_string : '' );
+        $raw_uri      = $_SERVER['REQUEST_URI'] ?? '';
+        $request_uri  = (string) parse_url( $raw_uri, PHP_URL_PATH );
+        $query_string = (string) ( parse_url( $raw_uri, PHP_URL_QUERY ) ?? '' );
+        $full_path    = $request_uri . ( $query_string !== '' ? '?' . $query_string : '' );
 
-        // Check exact match first.
-        if ( isset( $redirects[ $full_path ] ) ) {
-            wp_safe_redirect( $redirects[ $full_path ], 301 );
-            exit;
-        }
+        // Normalise paths: strip double slashes, decode percent-encoded chars for lookup.
+        $norm_path = rtrim( (string) preg_replace( '#//+#', '/', $request_uri ), '/' ) ?: '/';
 
-        // Check path without query string.
-        if ( isset( $redirects[ $request_uri ] ) ) {
-            wp_safe_redirect( $redirects[ $request_uri ], 301 );
-            exit;
+        // Priority order: full path with query string → exact path → normalised path.
+        $candidates = array_unique( array_filter( [
+            $full_path,
+            $request_uri,
+            $norm_path,
+            $norm_path . '/',
+            rawurldecode( $full_path ),
+            rawurldecode( $request_uri ),
+        ] ) );
+
+        foreach ( $candidates as $candidate ) {
+            if ( isset( $redirects[ $candidate ] ) && $redirects[ $candidate ] ) {
+                wp_safe_redirect( esc_url_raw( $redirects[ $candidate ] ), 301 );
+                exit;
+            }
         }
     }
 

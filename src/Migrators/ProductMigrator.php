@@ -369,11 +369,17 @@ class ProductMigrator extends AbstractMigrator {
         update_post_meta( $post_id, '_stock_status',   $status );
         update_post_meta( $post_id, '_backorders',     'no' );
 
-        // Additional WC meta.
+        // Dimensions and weight — stored raw; unit class IDs stored as meta for reference.
         update_post_meta( $post_id, '_weight', $row['weight'] ?? '' );
         update_post_meta( $post_id, '_length', $row['length'] ?? '' );
         update_post_meta( $post_id, '_width',  $row['width'] ?? '' );
         update_post_meta( $post_id, '_height', $row['height'] ?? '' );
+        // Store OC unit class IDs so admins can audit unit conversions if needed.
+        if ( ! empty( $row['weight_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_weight_class_id', (int) $row['weight_class_id'] ); }
+        if ( ! empty( $row['length_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_length_class_id', (int) $row['length_class_id'] ); }
+        // Stock subtract flag (OC) — maps to WC manage_stock.
+        $subtract = isset( $row['subtract'] ) ? (bool) $row['subtract'] : true;
+        update_post_meta( $post_id, '_manage_stock', $subtract ? 'yes' : 'no' );
 
         // Tax class (requires TaxMigrator to have run first to build the map).
         $this->applyTaxClass( $post_id, (int) ( $row['tax_class_id'] ?? 0 ) );
@@ -382,25 +388,15 @@ class ProductMigrator extends AbstractMigrator {
         update_post_meta( $post_id, '_octowoo_oc_id', $oc_id );
 
         // Secondary-language meta (for WPML / Polylang translation pass).
+        // ALWAYS write all keys — even empty strings — so translation pass can
+        // detect "no secondary data" vs "field not written yet".
         $sfx = $this->secLangSuffix();
-        if ( $sec_name ) {
-            update_post_meta( $post_id, '_octowoo_name' . $sfx, $sec_name );
-        }
-        if ( $sec_desc ) {
-            update_post_meta( $post_id, '_octowoo_description' . $sfx, $sec_desc );
-        }
-        if ( $sec_short ) {
-            update_post_meta( $post_id, '_octowoo_short_description' . $sfx, $sec_short );
-        }
-        if ( $sec_metatitle ) {
-            update_post_meta( $post_id, '_octowoo_metatitle' . $sfx, $sec_metatitle );
-        }
-        if ( $sec_metadesc ) {
-            update_post_meta( $post_id, '_octowoo_metadesc' . $sfx, $sec_metadesc );
-        }
-        if ( $sec_metakw ) {
-            update_post_meta( $post_id, '_octowoo_metakw' . $sfx, $sec_metakw );
-        }
+        update_post_meta( $post_id, '_octowoo_name' . $sfx,              $sec_name );
+        update_post_meta( $post_id, '_octowoo_description' . $sfx,       $sec_desc );
+        update_post_meta( $post_id, '_octowoo_short_description' . $sfx, $sec_short );
+        update_post_meta( $post_id, '_octowoo_metatitle' . $sfx,         $sec_metatitle );
+        update_post_meta( $post_id, '_octowoo_metadesc' . $sfx,          $sec_metadesc );
+        update_post_meta( $post_id, '_octowoo_metakw' . $sfx,            $sec_metakw );
         // SEO meta fields.
         if ( ! empty( $desc['meta_title'] ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_title', $this->sanitizeText( $desc['meta_title'] ) );
@@ -562,15 +558,10 @@ class ProductMigrator extends AbstractMigrator {
 
         // Secondary-language meta (keep in sync on update).
         $sfx = $this->secLangSuffix();
-        if ( $sec_name ) {
-            update_post_meta( $wc_post_id, '_octowoo_name' . $sfx, $sec_name );
-        }
-        if ( $sec_desc ) {
-            update_post_meta( $wc_post_id, '_octowoo_description' . $sfx, $sec_desc );
-        }
-        if ( $sec_short ) {
-            update_post_meta( $wc_post_id, '_octowoo_short_description' . $sfx, $sec_short );
-        }
+        // Always write secondary-language fields — even empty — so translation pass detects them.
+        update_post_meta( $wc_post_id, '_octowoo_name' . $sfx,              $sec_name );
+        update_post_meta( $wc_post_id, '_octowoo_description' . $sfx,       $sec_desc );
+        update_post_meta( $wc_post_id, '_octowoo_short_description' . $sfx, $sec_short );
         if ( $sec_metatitle ) {
             update_post_meta( $wc_post_id, '_octowoo_metatitle' . $sfx, $sec_metatitle );
         }
