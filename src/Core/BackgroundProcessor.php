@@ -211,6 +211,12 @@ class BackgroundProcessor {
         if ( ! empty( $result['done_all'] ) || ! empty( $result['aborted'] ) ) {
             delete_transient( self::transientKey( $run_id ) );
             self::finish( $run_id );
+
+            // ── v2.4.72: Send email summary report on completion ──────────────
+            if ( ! empty( $result['done_all'] ) ) {
+                self::sendCompletionEmail( $run_id );
+            }
+
             return;
         }
 
@@ -229,6 +235,130 @@ class BackgroundProcessor {
         $checkpoint = new CheckpointManager( $run_id );
         $checkpoint->markRunFinished();
         MigrationManager::clearRuntimeSignals( $run_id );
+    }
+
+    // ── Email report ──────────────────────────────────────────────────────────
+
+    /**
+     * Send a migration summary email to the WordPress admin address on completion.
+     *
+     * The email is sent only when:
+     *  - The run completed successfully (done_all=true, not aborted).
+     *  - wp_mail() is available (always true in WP).
+     *  - The admin_email option is a valid address.
+     *
+     * @param string $run_id
+     */
+    private static function sendCompletionEmail( string $run_id ): void {
+        $admin_email = get_option( 'admin_email', '' );
+        if ( ! is_email( $admin_email ) ) {
+            return;
+        }
+
+        $report_data = MigrationReport::load();
+
+        // Ensure the loaded report matches this run.
+        if ( empty( $report_data['run_id'] ) || $report_data['run_id'] !== $run_id ) {
+            // Try loading directly from the checkpoint data.
+            $report_data = [
+                'run_id'          => $run_id,
+                'finished'        => current_time( 'mysql' ),
+                'total_processed' => 0,
+                'total_failed'    => 0,
+                'migrators'       => [],
+            ];
+        }
+
+        $site_name       = get_bloginfo( 'name' );
+        $admin_url       = admin_url( 'admin.php?page=octowoo-migration&tab=migration' );
+        $total_processed = number_format( (int) ( $report_data['total_processed'] ?? 0 ) );
+        $total_failed    = (int) ( $report_data['total_failed'] ?? 0 );
+        $finished_at     = $report_data['finished'] ?? current_time( 'mysql' );
+        $status_text     = $total_failed > 0 ? 'Completed with warnings' : 'Completed successfully';
+        $status_icon     = $total_failed > 0 ? '⚠' : '✔';
+
+        // Build per-migrator rows.
+        $migrator_rows = '';
+        $label_map = [
+            'tax'           => 'Tax Classes',        'order_statuses' => 'Order Statuses',
+            'categories'    => 'Categories',         'images'         => 'Images',
+            'products'      => 'Products',           'manufacturers'  => 'Manufacturers / Brands',
+            'related'       => 'Related Products',   'bundles'        => 'Bundles',
+            'customers'     => 'Customers',          'orders'         => 'Orders',
+            'coupons'       => 'Coupons',            'seo'            => 'SEO URLs',
+            'information'   => 'Information Pages',  'tags'           => 'Tags',
+            'filters'       => 'Product Filters',    'downloads'      => 'Downloads',
+            'reviews'       => 'Reviews',            'multilingual'   => 'Multilingual',
+        ];
+        foreach ( $report_data['migrators'] ?? [] as $key => $m ) {
+            $label     = $label_map[ $key ] ?? ucfirst( $key );
+            $p         = number_format( (int) ( $m['processed'] ?? 0 ) );
+            $s         = number_format( (int) ( $m['skipped']   ?? 0 ) );
+            $f         = (int) ( $m['failed'] ?? 0 );
+            $f_text    = $f > 0 ? "<strong style='color:#c62828;'>{$f}</strong>" : '0';
+            $migrator_rows .= "<tr>
+                <td style='padding:5px 12px;border-bottom:1px solid #f0f0f0;'>{$label}</td>
+                <td style='padding:5px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#2e7d32;'>{$p}</td>
+                <td style='padding:5px 12px;border-bottom:1px solid #f0f0f0;text-align:center;color:#757575;'>{$s}</td>
+                <td style='padding:5px 12px;border-bottom:1px solid #f0f0f0;text-align:center;'>{$f_text}</td>
+            </tr>";
+        }
+
+        $subject = sprintf( '[%s] %s OctoWoo Migration — %s', $site_name, $status_icon, $status_text );
+
+        $html_body = "<!DOCTYPE html><html><body style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;font-size:14px;color:#1d2327;background:#f6f7f8;margin:0;padding:24px;'>
+<div style='max-width:600px;margin:0 auto;background:#fff;border-radius:8px;border:1px solid #ddd;overflow:hidden;'>
+  <div style='background:" . ( $total_failed > 0 ? '#fff8f0' : '#edf7ed' ) . ";padding:20px 24px;border-bottom:1px solid #ddd;'>
+    <h1 style='margin:0;font-size:18px;color:" . ( $total_failed > 0 ? '#854f0b' : '#2e7d32' ) . ";'>{$status_icon} OctoWoo Migration {$status_text}</h1>
+    <p style='margin:4px 0 0;font-size:13px;color:#666;'>{$site_name} &middot; {$finished_at}</p>
+  </div>
+  <div style='padding:20px 24px;'>
+    <table style='width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;'>
+      <tr style='background:#f9f9f9;'>
+        <td style='padding:8px 12px;'><strong>Total Processed</strong></td>
+        <td style='padding:8px 12px;font-weight:700;color:#2e7d32;'>{$total_processed}</td>
+      </tr>
+      <tr>
+        <td style='padding:8px 12px;'><strong>Failed Items</strong></td>
+        <td style='padding:8px 12px;font-weight:700;color:" . ( $total_failed > 0 ? '#c62828' : '#2e7d32' ) . ";'>{$total_failed}</td>
+      </tr>
+      <tr style='background:#f9f9f9;'>
+        <td style='padding:8px 12px;'><strong>Run ID</strong></td>
+        <td style='padding:8px 12px;font-family:monospace;font-size:11px;'>" . esc_html( $run_id ) . "</td>
+      </tr>
+    </table>
+    <h3 style='margin:0 0 8px;font-size:14px;'>Per-entity breakdown</h3>
+    <table style='width:100%;border-collapse:collapse;font-size:12px;'>
+      <thead><tr style='background:#f5f5f5;'>
+        <th style='padding:6px 12px;text-align:left;border-bottom:2px solid #ddd;'>Entity</th>
+        <th style='padding:6px 12px;border-bottom:2px solid #ddd;'>Processed</th>
+        <th style='padding:6px 12px;border-bottom:2px solid #ddd;'>Skipped</th>
+        <th style='padding:6px 12px;border-bottom:2px solid #ddd;'>Failed</th>
+      </tr></thead>
+      <tbody>{$migrator_rows}</tbody>
+    </table>
+    <div style='margin-top:20px;text-align:center;'>
+      <a href='{$admin_url}' style='display:inline-block;padding:10px 20px;background:#7952b3;color:#fff;text-decoration:none;border-radius:5px;font-weight:600;font-size:13px;'>View Migration Details →</a>
+    </div>
+    " . ( $total_failed > 0 ? "<p style='margin-top:16px;font-size:12px;color:#666;'>Some items failed to migrate. Check the <a href='{$admin_url}'>Logs tab</a> for details and use the Resume function to retry failed items.</p>" : '' ) . "
+  </div>
+  <div style='padding:12px 24px;background:#f9f9f9;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center;'>
+    Sent by OctoWoo Migration Plugin &mdash; <a href='{$admin_url}' style='color:#999;'>Manage</a>
+  </div>
+</div>
+</body></html>";
+
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'X-Mailer: OctoWoo/' . OCTOWOO_VERSION,
+        ];
+
+        // Allow filtering the recipient (e.g. for testing).
+        $recipient = apply_filters( 'octowoo_report_email_recipient', $admin_email, $run_id );
+
+        if ( is_email( $recipient ) ) {
+            wp_mail( $recipient, $subject, $html_body, $headers );
+        }
     }
 
     private static function transientKey( string $run_id ): string {

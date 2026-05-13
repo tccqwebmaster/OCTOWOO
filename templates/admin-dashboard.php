@@ -98,6 +98,20 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
 
         <!-- ── STEP 1: Select Entities ──────────────────────────────────── -->
         <div class="ow-card">
+
+        <!-- ── Pre-scan Summary (v2.4.72) ──────────────────────────────── -->
+        <!-- Populated by JS autoDetect() / scanSourceCounts() via octoWoo AJAX -->
+        <div id="ow-prescan-summary" style="display:none;" class="ow-card" style="border-left:4px solid #4caf50;">
+            <h2 style="margin:0 0 10px;font-size:14px;">📊 <?php esc_html_e( 'Source Store Summary', 'octowoo' ); ?></h2>
+            <p class="ow-form-hint" style="margin:0 0 10px;">
+                <?php esc_html_e( 'Entity counts from your OpenCart database. Use these to choose the right migration mode and batch size.', 'octowoo' ); ?>
+            </p>
+            <div id="ow-prescan-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
+            <div id="ow-prescan-advice" style="margin-top:10px;font-size:12px;color:#555;"></div>
+        </div>
+
+        <!-- ── STEP 1: Select Entities ──────────────────────────────── -->
+        <div class="ow-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
                 <h2 style="margin:0;"><?php esc_html_e( '1 — Select Entities to Migrate', 'octowoo' ); ?></h2>
                 <button type="button" id="ow-btn-scan" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">

@@ -92,6 +92,25 @@ abstract class AbstractMigrator {
      * derived from the configured secondary_locale (e.g. '_ar', '_fr', '_de').
      * All migrators write and WpmlIntegration reads with this same suffix.
      */
+    /**
+     * v2.4.72: Return the detected OpenCart major version (1, 2, 3, or 4).
+     * Used by migrators to emit version-adaptive SQL for OC1 schema differences.
+     * Returns 0 when the version cannot be determined (treat as OC2+).
+     */
+    protected function ocMajor(): int {
+        $override = (int) ( $this->config['opencart']['version'] ?? 0 );
+        if ( $override > 0 && $override < 5 ) {
+            return $override;
+        }
+        try {
+            $detector = new \OctoWoo\Core\VersionDetector( $this->oc );
+            return $detector->getMajor();
+        } catch ( \Throwable $e ) {
+            return 0; // Fallback — treat as modern OC.
+        }
+    }
+
+
     protected function secLangSuffix(): string {
         return '_' . ( $this->config['multilingual']['secondary_locale'] ?? 'ar' );
     }

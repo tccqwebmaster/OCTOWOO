@@ -102,6 +102,25 @@ class AjaxHandler {
             wp_send_json_error( [ 'message' => __( 'Invalid security token. Please refresh the page and try again.', 'octowoo' ) ] );
         }
 
+        // v2.4.72: Destructive actions require full Administrator role (manage_options).
+        // WooCommerce shop managers (manage_woocommerce only) must not be able to
+        // wipe data or reset migration state.
+        $admin_only = [
+            'octowoo_reset_migration',
+            'octowoo_drop_sql',
+        ];
+        $is_force_purge = ( $action === 'octowoo_purge_imported' )
+            && ! empty( $_POST['force'] ); // phpcs:ignore WordPress.Security.NonceVerification
+
+        if ( ( in_array( $action, $admin_only, true ) || $is_force_purge )
+             && ! current_user_can( 'manage_options' )
+        ) {
+            wp_send_json_error(
+                [ 'message' => __( 'This action requires Administrator permissions.', 'octowoo' ) ],
+                403
+            );
+        }
+
         // Lightweight request logging to aid debugging (non-blocking).
         // Skip read-only polling actions to avoid flooding logs with noise.
         $skip_log_actions = [ 'octowoo_get_progress', 'octowoo_get_logs' ];

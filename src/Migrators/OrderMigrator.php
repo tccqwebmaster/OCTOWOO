@@ -47,6 +47,15 @@ class OrderMigrator extends AbstractMigrator {
 
         $total_callback = fn() => $this->oc->count( 'order' );
 
+        // v2.4.72: OC1 schema differences:
+        //  - No currency_value column (OC2+)
+        //  - No ip column in some OC1 builds
+        //  - comment column may be missing in OC 1.0.x
+        $oc_major       = $this->ocMajor();
+        $currency_val   = ( $oc_major === 1 ) ? '1.000000 AS currency_value' : 'o.currency_value';
+        $ip_col         = ( $oc_major === 1 ) ? "'' AS ip" : 'o.ip';
+        $comment_col    = ( $oc_major === 1 ) ? "COALESCE(o.comment, '') AS comment" : 'o.comment';
+
         $batch_callback = fn( int $offset, int $limit ) => $this->oc->fetchBatch(
             "SELECT o.order_id, o.customer_id, o.firstname, o.lastname,
                     o.email, o.telephone,
@@ -58,9 +67,9 @@ class OrderMigrator extends AbstractMigrator {
                     o.shipping_address_1, o.shipping_address_2, o.shipping_city,
                     o.shipping_postcode, o.shipping_country, o.shipping_zone,
                     o.shipping_method,
-                    o.comment, o.total, o.order_status_id,
-                    o.currency_code, o.currency_value,
-                    o.date_added, o.date_modified, o.ip
+                    {$comment_col}, o.total, o.order_status_id,
+                    o.currency_code, {$currency_val},
+                    o.date_added, o.date_modified, {$ip_col}
              FROM `{$pfx}order` o
              ORDER BY o.order_id ASC",
             [],

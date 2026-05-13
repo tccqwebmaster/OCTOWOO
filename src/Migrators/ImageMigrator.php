@@ -38,8 +38,14 @@ class ImageMigrator extends AbstractMigrator {
      */
     private bool $remoteHostDown = false;
 
-    /** Transient key used to persist the circuit-breaker state across AJAX chunks. */
-    private const TRANSIENT_REMOTE_DOWN = 'octowoo_img_remote_down';
+    /**
+     * v2.4.72: Circuit breaker is now PER-HOST (not global).
+     * One unreachable host no longer kills all remote image fetching.
+     */
+    private static function remoteDownKey( string $url ): string {
+        $host = parse_url( $url, PHP_URL_HOST ) ?: $url;
+        return 'octowoo_img_down_' . md5( strtolower( $host ) );
+    }
 
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
@@ -218,17 +224,16 @@ class ImageMigrator extends AbstractMigrator {
         }
 
         // Local file not present — attempt remote fetch strategies.
-        // Sync instance flag from transient so the circuit breaker survives across
-        // AJAX chunks (each chunk creates a new ImageMigrator instance).
-        if ( ! $this->remoteHostDown ) {
-            $this->remoteHostDown = (bool) get_transient( self::TRANSIENT_REMOTE_DOWN );
-        }
-        if ( $this->remoteHostDown ) {
-            $this->logger->debug( "[images] Remote host known unreachable; skipping: {$oc_path}." );
-            return null;
-        }
+        // v2.4.72: Per-host circuit breaker — check only when we know the target URL.
+        // The instance-level $remoteHostDown flag is now only used within a single chunk.
+        // Across chunks, the per-host transient is authoritative.
 
         $this->logger->warning( "[images] Source file not found locally: {$abs_source}. Trying HTTP fallback for {$oc_path}." );
+
+        // v2.4.72: Fast-fail per-host if circuit breaker tripped from prior chunk.
+        if ( $this->remoteHostDown ) {
+            return null;
+        }
 
         if ( $this->isDry() ) {
             $this->logger->debug( "[DRY-RUN] Would attempt remote fetch for: {$oc_path}" );
@@ -501,9 +506,8 @@ class ImageMigrator extends AbstractMigrator {
      * Download remote URL to a temporary file and return the path, or null.
      */
     private function downloadToTemp( string $url ): ?string {
-        // Fast-fail if the circuit breaker has already tripped (within this image's
-        // multi-strategy loop or from a previous image in this chunk).
-        if ( $this->remoteHostDown ) {
+        // Fast-fail if circuit breaker tripped for this specific host.
+        if ( $this->remoteHostDown || get_transient( self::remoteDownKey( $url ) ) ) {
             return null;
         }
 
@@ -516,8 +520,9 @@ class ImageMigrator extends AbstractMigrator {
             // Connection-level failure (timeout, DNS, refused) — trip the circuit breaker
             // and persist it via transient so subsequent AJAX chunks skip remote too.
             $this->remoteHostDown = true;
-            set_transient( self::TRANSIENT_REMOTE_DOWN, 1, 30 * MINUTE_IN_SECONDS );
-            $this->logger->warning( '[images] Remote host unreachable (' . $resp->get_error_message() . '). Disabling remote image fetching for this and future chunks.' );
+            // v2.4.72: Store circuit-breaker per host so only THIS host is blocked.
+            set_transient( self::remoteDownKey( $url ), 1, 30 * MINUTE_IN_SECONDS );
+            $this->logger->warning( '[images] Remote host unreachable (' . $resp->get_error_message() . '). Disabling fetching from this host for 30 min.' );
             return null;
         }
 

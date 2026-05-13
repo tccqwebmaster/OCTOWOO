@@ -72,17 +72,28 @@ class AdminPage {
             true
         );
 
+        $cfg = self::getConfig();
         wp_localize_script( 'octowoo-admin', 'octoWoo', [
             'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
             'nonce'       => wp_create_nonce( 'octowoo_ajax' ),
             'activeRunId' => CheckpointManager::getActiveRunId() ?? '',
             'lastRunId'   => get_option( 'octowoo_last_run_id', '' ),
+            // ── v2.4.72: demoLimit now properly passed from saved config ──────
+            'demoLimit'   => (int) ( $cfg['migration']['demo_limit'] ?? 20 ),
+            'batchSize'   => (int) ( $cfg['migration']['batch_size'] ?? 20 ),
+            'isDryRun'    => ! empty( $cfg['migration']['dry_run'] ),
+            'onDuplicate' => $cfg['migration']['on_duplicate'] ?? 'skip',
+            // ── Cron status for Settings tab widget ───────────────────────────
+            'cronStatus'  => \OctoWoo\Core\CronManager::getStatus(),
             'i18n'        => [
-                'starting'    => __( 'Starting migration…', 'octowoo' ),
-                'running'     => __( 'Migration in progress…', 'octowoo' ),
-                'completed'   => __( 'Migration completed!', 'octowoo' ),
-                'aborted'     => __( 'Migration aborted.', 'octowoo' ),
+                'starting'     => __( 'Starting migration…', 'octowoo' ),
+                'running'      => __( 'Migration in progress…', 'octowoo' ),
+                'completed'    => __( 'Migration completed!', 'octowoo' ),
+                'aborted'      => __( 'Migration aborted.', 'octowoo' ),
                 'confirmAbort' => __( 'Are you sure you want to abort the migration?', 'octowoo' ),
+                'confirmReset' => __( 'Delete all migration progress and ID map? This cannot be undone.', 'octowoo' ),
+                'confirmPurge' => __( 'Purge the selected entity types? Only OctoWoo-tagged items will be deleted.', 'octowoo' ),
+                'confirmForce' => __( 'FORCE PURGE will delete ALL WooCommerce data, including items not created by OctoWoo. Are you absolutely sure?', 'octowoo' ),
             ],
         ] );
     }

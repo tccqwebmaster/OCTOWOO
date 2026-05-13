@@ -965,20 +965,103 @@
         .done(function (res) {
             if (res.success && res.data) {
                 var data = res.data;
+
+                // Auto-fill image path.
                 if (data.images && data.images.detected_path) {
                     $('input[name="octowoo[opencart][image_path]"]').val(data.images.detected_path);
                 }
-                var msg = 'Auto-detect complete.';
-                if (data.logs) {
-                    msg += ' Logs: ' + (data.logs.writable ? 'writable ✔' : 'NOT writable ✘');
+
+                // v2.4.72: Render pre-scan summary panel.
+                renderPrescanPanel(data);
+
+                var msg = 'Store scan complete.';
+                if (data.logs && !data.logs.writable) {
+                    msg += ' ⚠ Log directory is NOT writable.';
                 }
-                showToast(msg, data.logs && !data.logs.writable ? 'warning' : 'success');
+                showToast(msg, data.logs && !data.logs.writable ? 'warning' : 'success', 5000);
             } else {
-                showToast('Auto-detect returned no results.', 'warning');
+                showToast('Auto-detect returned no results. Check your DB connection in Settings.', 'warning');
             }
         })
         .fail(function (xhr) { showToast('Auto-detect failed: ' + xhr.statusText, 'error'); })
         .always(function () { $btn.prop('disabled', false).text('🔎 Auto-detect Image Path & Logs'); });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       PRE-SCAN SUMMARY PANEL (v2.4.72)
+       Renders entity counts from prescan or scan_counts response.
+    ════════════════════════════════════════════════════════════════════ */
+    function renderPrescanPanel(data) {
+        var $panel = $('#ow-prescan-summary');
+        var $grid  = $('#ow-prescan-grid');
+        var $advice = $('#ow-prescan-advice');
+
+        if (!$panel.length) { return; }
+
+        var LABELS = {
+            products:      '📦 Products',
+            categories:    '📁 Categories',
+            customers:     '👤 Customers',
+            orders:        '🧾 Orders',
+            manufacturers: '🏭 Brands',
+            reviews:       '⭐ Reviews',
+            coupons:       '🏷️ Coupons',
+            images:        '🖼️ Images',
+        };
+
+        var html = '';
+        var totalItems = 0;
+        var counts = {};
+
+        // Merge data from prescan (may have counts nested)
+        $.each(data, function(key, val) {
+            if (LABELS[key]) {
+                var count = 0;
+                if (typeof val === 'number') { count = val; }
+                else if (val && typeof val.count === 'number') { count = val.count; }
+                else if (val && typeof val.total === 'number') { count = val.total; }
+                counts[key] = count;
+                totalItems += count;
+            }
+        });
+        // Also check data.counts (from scan_counts action)
+        if (data.counts) {
+            $.each(data.counts, function(key, val) {
+                if (LABELS[key]) {
+                    counts[key] = parseInt(val) || 0;
+                    totalItems += counts[key];
+                }
+            });
+        }
+
+        if (!Object.keys(counts).length) {
+            $panel.hide();
+            return;
+        }
+
+        $.each(counts, function(key, count) {
+            var pct   = totalItems > 0 ? Math.round(count / totalItems * 100) : 0;
+            var color = count > 10000 ? '#e65100' : (count > 1000 ? '#1565c0' : '#2e7d32');
+            html += '<div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;padding:10px 12px;text-align:center;">' +
+                '<div style="font-size:18px;font-weight:700;color:' + color + ';">' + count.toLocaleString() + '</div>' +
+                '<div style="font-size:11px;color:#666;margin-top:2px;">' + (LABELS[key] || key) + '</div>' +
+                '</div>';
+        });
+
+        $grid.html(html);
+
+        // Advice message.
+        var advice = '';
+        if (totalItems > 50000) {
+            advice = '⚠ Large store (' + totalItems.toLocaleString() + ' total items). <strong>Use Background Mode</strong> and set Batch Size to 10–15.';
+        } else if (totalItems > 10000) {
+            advice = 'ℹ Medium store (' + totalItems.toLocaleString() + ' total items). Batch Size 20–30 recommended. Background Mode optional.';
+        } else {
+            advice = '✔ Small store (' + totalItems.toLocaleString() + ' total items). Standard AJAX migration should work fine.';
+        }
+        $advice.html(advice);
+
+        $panel.slideDown(200);
     }
 
     /* ════════════════════════════════════════════════════════════════════
@@ -1005,6 +1088,7 @@
             });
             html += '</table>';
             $('#ow-scan-panel').html(html);
+            renderPrescanPanel({ counts: counts });
             showToast('Source counts refreshed.', 'success');
         })
         .fail(function () { $('#ow-scan-panel').html('<span style="color:#c62828;">Scan request failed.</span>'); })

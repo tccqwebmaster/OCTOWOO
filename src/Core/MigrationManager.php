@@ -207,7 +207,10 @@ class MigrationManager {
         // Prevents two simultaneous AJAX chunk requests from running the same
         // batch (race condition in fast-clicking browsers or server-side retries).
         $lock_key = 'octowoo_chunk_lock_' . $this->run_id;
-        if ( get_transient( $lock_key ) ) {
+        $lock_val   = get_transient( $lock_key );
+        // v2.4.72: lock stored as unix timestamp; treat as stale after 180 s.
+        $lock_stale = ( is_numeric( $lock_val ) && ( time() - (int) $lock_val ) > 180 );
+        if ( $lock_val && ! $lock_stale ) {
             return [
                 'done_all'    => false,
                 'busy'        => true,
@@ -217,7 +220,7 @@ class MigrationManager {
                 'report'      => null,
             ];
         }
-        set_transient( $lock_key, '1', 90 ); // 90 s — well beyond any single chunk.
+        set_transient( $lock_key, (string) time(), 180 ); // v2.4.72: 180 s — covers slow shared-hosting chunks.
 
         try {
             $res = $this->doRunNextChunk();

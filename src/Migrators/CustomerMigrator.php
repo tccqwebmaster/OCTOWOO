@@ -57,12 +57,16 @@ class CustomerMigrator extends AbstractMigrator {
 
         $total_callback = fn() => $this->oc->count( 'customer', 'status = 1' );
 
+        // v2.4.72: OC1 schema has no 'salt' column — use COALESCE for safe compat.
+        $oc_major = $this->ocMajor();
+        $salt_col  = ( $oc_major === 1 ) ? "'' AS oc_salt" : 'salt AS oc_salt';
+
         $batch_callback = fn( int $offset, int $limit ) => $this->oc->fetchBatch(
             /* Sensitive fields intentionally excluded: token, code, cart,
              * wishlist, ip, safe, custom_field, fax, customer_group, store_id. */
             "SELECT customer_id, firstname, lastname, email, telephone,
                     newsletter, address_id, date_added, status,
-                    `password` AS oc_password, salt AS oc_salt
+                    `password` AS oc_password, {$salt_col}
              FROM `{$pfx}customer`
              WHERE status = 1
              ORDER BY customer_id ASC",
@@ -266,10 +270,16 @@ class CustomerMigrator extends AbstractMigrator {
      * @return array<int, array<int, array<string,mixed>>>
      */
     private function fetchAddresses(): array {
-        $pfx  = $this->pfx();
+        $pfx      = $this->pfx();
+        $oc_major = $this->ocMajor();
+        // v2.4.72: OC 1.0.x had no zone_id column; OC 1.5.x added it.
+        // Use COALESCE so the query works for both OC1 variants.
+        $zone_col = ( $oc_major === 1 )
+            ? 'COALESCE(zone_id, 0) AS zone_id'
+            : 'zone_id';
         $rows = $this->oc->fetchAll(
             "SELECT address_id, customer_id, firstname, lastname, company,
-                    address_1, address_2, city, postcode, country_id, zone_id
+                    address_1, address_2, city, postcode, country_id, {$zone_col}
              FROM `{$pfx}address`"
         );
 

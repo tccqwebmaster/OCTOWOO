@@ -1457,7 +1457,22 @@ class WpmlIntegration extends AbstractMigrator {
             ARRAY_A
         );
 
+        // v2.4.72: Safety guards against corrupt OC data with circular parent references.
+        // Without these, a category A→B→A cycle causes an infinite loop → PHP memory exhaustion.
+        $visited      = [];   // Term IDs we have already processed.
+        $max_items    = 5000; // Hard upper bound across the entire loop.
+        $item_count   = 0;
+
         foreach ( $rows as $row ) {
+            if ( ++$item_count > $max_items ) {
+                $this->logger->warning( '[multilingual] fixSecLangTermParents: safety limit reached (' . $max_items . ' iterations). Possible circular parent reference in category data.' );
+                break;
+            }
+
+            if ( isset( $visited[ (int) $row['wc_id'] ] ) ) {
+                continue; // Already processed — skip to avoid circular processing.
+            }
+            $visited[ (int) $row['wc_id'] ] = true;
             $pri_term_id = (int) $row['wc_id'];
             $pri_term    = get_term( $pri_term_id, $taxonomy );
 
