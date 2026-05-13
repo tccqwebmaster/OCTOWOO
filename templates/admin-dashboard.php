@@ -9,6 +9,13 @@
 
 defined( 'ABSPATH' ) || exit;
 
+// v2.5.0: First-run onboarding wizard — shown when no config is saved yet.
+// A dummy key '_wizard_skipped' in octowoo_config means the user explicitly skipped.
+$_ow_saved_config = get_option( 'octowoo_config', [] );
+if ( empty( $_ow_saved_config ) || ( isset( $_ow_saved_config['_wizard_skipped'] ) && count( $_ow_saved_config ) === 1 ) ) {
+    require_once OCTOWOO_PLUGIN_DIR . 'templates/onboarding-wizard.php';
+}
+
 use OctoWoo\Admin\AdminPage;
 use OctoWoo\Core\CheckpointManager;
 
@@ -855,6 +862,55 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                     <?php esc_html_e( 'JSON files only. Re-enter your DB password after import.', 'octowoo' ); ?>
                 </span>
             </div>
+
+                <div id="ow-cron-status-widget" style="margin-top:12px;padding:12px 14px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;font-size:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <strong style="font-size:13px;"><?php esc_html_e( 'Cron Status', 'octowoo' ); ?></strong>
+                        <button type="button" id="ow-btn-cron-run-now" class="ow-btn ow-btn-secondary" style="font-size:11px;padding:3px 10px;" onclick="owRunCronNow()">
+                            ▶ <?php esc_html_e( 'Run Now', 'octowoo' ); ?>
+                        </button>
+                    </div>
+                    <?php
+                    $ow_cron_status = \OctoWoo\Core\CronManager::getStatus();
+                    $ow_cron_result = $ow_cron_status['last_result'] ?? [];
+                    ?>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <tr>
+                            <td style="padding:3px 10px 3px 0;color:#666;width:130px;"><?php esc_html_e( 'Status', 'octowoo' ); ?></td>
+                            <td style="font-weight:600;color:<?php echo ! empty( $ow_cron_status['enabled'] ) ? '#2e7d32' : '#c62828'; ?>;">
+                                <?php echo ! empty( $ow_cron_status['enabled'] ) ? esc_html__( '✔ Enabled', 'octowoo' ) : esc_html__( '✘ Disabled', 'octowoo' ); ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding:3px 10px 3px 0;color:#666;"><?php esc_html_e( 'Interval', 'octowoo' ); ?></td>
+                            <td><?php echo esc_html( $ow_cron_status['interval'] ?? '—' ); ?></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:3px 10px 3px 0;color:#666;"><?php esc_html_e( 'Next run', 'octowoo' ); ?></td>
+                            <td><?php echo esc_html( $ow_cron_status['next'] ?? '—' ); ?></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:3px 10px 3px 0;color:#666;"><?php esc_html_e( 'Last run', 'octowoo' ); ?></td>
+                            <td><?php echo esc_html( $ow_cron_status['last_run'] ?? '—' ); ?></td>
+                        </tr>
+                        <?php if ( ! empty( $ow_cron_result ) ) : ?>
+                        <tr>
+                            <td style="padding:3px 10px 3px 0;color:#666;"><?php esc_html_e( 'Last result', 'octowoo' ); ?></td>
+                            <td>
+                                <?php
+                                printf(
+                                    /* translators: 1: count, 2: count */
+                                    esc_html__( '%1$d processed, %2$d errors', 'octowoo' ),
+                                    (int) ( $ow_cron_result['processed'] ?? 0 ),
+                                    (int) ( $ow_cron_result['errors']    ?? 0 )
+                                );
+                                ?>
+                                <span style="color:#888;margin-left:6px;"><?php echo esc_html( $ow_cron_result['at'] ?? '' ); ?></span>
+                            </td>
+                        </tr>
+                        <?php endif; ?>
+                    </table>
+                </div>
         </div>
 
                 <!-- ── Purge Imported Data ──────────────────────────────────────── -->
@@ -922,7 +978,39 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
     ═════════════════════════════════════════════════════════════════════ -->
     <div id="ow-tab-logs" class="ow-tab-pane" style="display:none;">
 
-        <div class="ow-card">
+        <div <!-- ── Run History (v2.5.0) ─────────────────────────────────────── -->
+        <?php
+        $ow_run_history = \OctoWoo\Core\MigrationReport::loadHistory();
+        if ( ! empty( $ow_run_history ) ) :
+        ?>
+        <div class="ow-card" style="margin-top:0;">
+            <h2 style="margin:0 0 10px;font-size:14px;">📈 <?php esc_html_e( 'Migration History', 'octowoo' ); ?></h2>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead><tr style="background:#f5f5f5;">
+                    <th style="text-align:left;padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Run ID', 'octowoo' ); ?></th>
+                    <th style="padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Finished', 'octowoo' ); ?></th>
+                    <th style="padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Processed', 'octowoo' ); ?></th>
+                    <th style="padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Failed', 'octowoo' ); ?></th>
+                    <th style="padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Mode', 'octowoo' ); ?></th>
+                    <th style="padding:6px 10px;border:1px solid #ddd;"><?php esc_html_e( 'Status', 'octowoo' ); ?></th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ( $ow_run_history as $ow_hist_run ) : ?>
+                <tr>
+                    <td style="padding:5px 10px;border:1px solid #ddd;font-family:monospace;font-size:10px;color:#666;"><?php echo esc_html( substr( $ow_hist_run['run_id'] ?? '', 0, 8 ) ); ?>&hellip;</td>
+                    <td style="padding:5px 10px;border:1px solid #ddd;white-space:nowrap;"><?php echo esc_html( $ow_hist_run['finished'] ?? '' ); ?></td>
+                    <td style="padding:5px 10px;border:1px solid #ddd;text-align:center;color:#2e7d32;font-weight:600;"><?php echo number_format( (int) ( $ow_hist_run['total_processed'] ?? 0 ) ); ?></td>
+                    <td style="padding:5px 10px;border:1px solid #ddd;text-align:center;color:<?php echo (int)($ow_hist_run['total_failed']??0) > 0 ? '#c62828' : '#2e7d32'; ?>;font-weight:600;"><?php echo (int)( $ow_hist_run['total_failed'] ?? 0 ); ?></td>
+                    <td style="padding:5px 10px;border:1px solid #ddd;text-align:center;"><?php echo ! empty( $ow_hist_run['dry_run'] ) ? '<span style="color:#e65100;">DRY</span>' : 'Live'; ?></td>
+                    <td style="padding:5px 10px;border:1px solid #ddd;text-align:center;"><?php echo ! empty( $ow_hist_run['ok'] ) ? '<span style="color:#2e7d32;">✔ OK</span>' : '<span style="color:#e65100;">⚠ Warn</span>'; ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+
+class="ow-card">
             <h2><?php esc_html_e( 'Migration Logs', 'octowoo' ); ?></h2>
 
             <div class="ow-log-controls">

@@ -30,6 +30,7 @@ use OctoWoo\Migrators\RelatedProductsMigrator;
 use OctoWoo\Migrators\OrderStatusMigrator;
 use OctoWoo\Migrators\BundleMigrator;
 use OctoWoo\Integration\WpmlIntegration;
+use OctoWoo\Integration\PolylangIntegration;
 use OctoWoo\Integration\AddonManager;
 
 defined( 'ABSPATH' ) || exit;
@@ -526,7 +527,11 @@ class MigrationManager {
             'filters'        => new FilterMigrator( ...$shared ),
             'downloads'      => new DownloadMigrator( ...$shared ),
             'reviews'        => new ReviewMigrator( ...$shared ),
-            'multilingual'   => new WpmlIntegration( ...$shared ),
+            'multilingual'   => ( ! empty( $this->config['multilingual']['use_polylang'] ) && ! empty( $this->config['multilingual']['use_wpml'] ) )
+                ? new WpmlIntegration( ...$shared )  // WPML takes precedence if both enabled.
+                : ( ! empty( $this->config['multilingual']['use_polylang'] )
+                    ? new PolylangIntegration( $this->logger, $this->checkpoint, $this->config )
+                    : new WpmlIntegration( ...$shared ) ),
             default          => null,
         };
     }

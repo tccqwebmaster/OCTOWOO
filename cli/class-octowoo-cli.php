@@ -90,15 +90,21 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
         WP_CLI::line( '' );
 
+        if ( $dry_run ) {
+            WP_CLI::line( 'Mode: DRY RUN (simulating — no writes)' );
+            WP_CLI::line( '' );
+        }
+
         $manager = new MigrationManager( $overrides, $run_id );
 
-        // Wire up a progress callback to print each completed batch.
+        // v2.5.0: Wire up a progress callback — works for both dry-run and live.
         $progress_bar = null;
         $current_migrator = '';
         $current_total = 0;
+        $dry_run_counts = []; // Accumulate dry-run per-migrator counts.
 
         $manager->onProgress( function ( string $migrator_name, int $processed, int $total ) use (
-            &$progress_bar, &$current_migrator, &$current_total
+            &$progress_bar, &$current_migrator, &$current_total, &$dry_run_counts, $dry_run
         ) {
             if ( $migrator_name !== $current_migrator ) {
                 if ( $progress_bar ) {
@@ -107,10 +113,14 @@ class OctoWoo_CLI extends WP_CLI_Command {
                 }
                 $current_migrator = $migrator_name;
                 $current_total    = $total;
-                $progress_bar     = WP_CLI\Utils\make_progress_bar(
-                    sprintf( '  %-20s', ucfirst( $migrator_name ) ),
-                    $total ?: 1
-                );
+                // v2.5.0: Show progress bar even in dry-run mode.
+                $label = sprintf( '  %-22s', ucfirst( $migrator_name ) . ( $dry_run ? ' [DRY]' : '' ) );
+                $progress_bar = WP_CLI\Utils\make_progress_bar( $label, $total ?: 1 );
+            }
+            if ( $dry_run && isset( $dry_run_counts[ $migrator_name ] ) ) {
+                $dry_run_counts[ $migrator_name ] = max( $dry_run_counts[ $migrator_name ], $processed );
+            } elseif ( $dry_run ) {
+                $dry_run_counts[ $migrator_name ] = $processed;
             }
             if ( $progress_bar && $current_total > 0 ) {
                 $progress_bar->tick( $processed );
@@ -133,7 +143,12 @@ class OctoWoo_CLI extends WP_CLI_Command {
 
         WP_CLI::line( '' );
         WP_CLI::line( '─────────────────────────────────────────────────' );
-        WP_CLI::success( sprintf( 'Migration complete. Run ID: %s', $report['run_id'] ) );
+        if ( $dry_run ) {
+            WP_CLI::success( sprintf( 'DRY RUN complete. Run ID: %s', $report['run_id'] ) );
+            WP_CLI::line( '  Nothing was written to the database.' );
+        } else {
+            WP_CLI::success( sprintf( 'Migration complete. Run ID: %s', $report['run_id'] ) );
+        }
         WP_CLI::line( '' );
 
         // Print summary table.

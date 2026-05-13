@@ -142,49 +142,65 @@ class OrderMigrator extends AbstractMigrator {
             $wc_user_id = (int) ( $this->checkpoint->getWcId( 'customer', $oc_customer_id ) ?? 0 );
         }
 
-        // ── Begin per-record transaction ──────────────────────────────────────
-        // Ensures a partially-written order (missing items / totals) is never
-        // committed to the database. If any step throws, the entire order is rolled back.
-        $wpdb->query( 'START TRANSACTION' );
-
-        try {
-            return $this->doCreateOrder( $wpdb, $oc_id, $oc_customer_id, $wc_user_id, $row, $products, $totals, $currencies );
-        } catch ( \Throwable $e ) {
-            $wpdb->query( 'ROLLBACK' );
-            $this->logger->error(
-                "[orders] Transaction rolled back for OC #{$oc_id}: " . $e->getMessage()
-            );
-            return false;
-        }
-    }
-
-    /**
-     * Internal helper — runs inside the transaction opened by createOrder().
-     */
-    private function doCreateOrder(
-        \wpdb $wpdb,
-        int   $oc_id,
-        int   $oc_customer_id,
-        int   $wc_user_id,
-        array $row,
-        array $products,
-        array $totals,
-        array $currencies
-    ): bool {
-        // Create the WC order.
+        // ── v2.5.0: Restructured transaction to avoid wc_create_order() inside TX.
+        //
+        // Problem: wc_create_order() calls $order->save() internally which commits
+        // to WC data store (HPOS or post-based). This commit is outside $wpdb scope
+        // and cannot be rolled back by $wpdb->query('ROLLBACK'), leaving orphan orders.
+        //
+        // Solution:
+        //  1. Call wc_create_order() FIRST (outside transaction).
+        //  2. Open transaction only for meta/item writes.
+        //  3. On failure: call $order->delete(true) to remove the WC order object,
+        //     then ROLLBACK the transaction for any partial meta already written.
+        //
         $order = wc_create_order( [
             'customer_id' => $wc_user_id,
             'created_via' => 'octowoo_migration',
         ] );
 
         if ( is_wp_error( $order ) ) {
-            $wpdb->query( 'ROLLBACK' );
             $this->logger->error(
                 "[orders] wc_create_order failed for OC #{$oc_id}: " . $order->get_error_message()
             );
             return false;
         }
 
+        $wc_order_id = $order->get_id();
+
+        // Now open transaction for all subsequent meta/item writes.
+        $wpdb->query( 'START TRANSACTION' );
+
+        try {
+            return $this->doPopulateOrder( $wpdb, $order, $oc_id, $oc_customer_id, $wc_user_id, $row, $products, $totals, $currencies );
+        } catch ( \Throwable $e ) {
+            $wpdb->query( 'ROLLBACK' );
+            // Clean up the WC order object we already created.
+            try {
+                $order->delete( true );
+            } catch ( \Throwable $del_e ) {
+                $this->logger->warning( "[orders] Could not delete partial WC order #{$wc_order_id}: " . $del_e->getMessage() );
+            }
+            $this->logger->error( "[orders] Order creation rolled back for OC #{$oc_id}: " . $e->getMessage() );
+            return false;
+        }
+    }
+
+    /**
+     * Populate an already-created WC order with addresses, items, totals and meta.
+     * Runs inside an open $wpdb transaction; caller handles COMMIT / ROLLBACK.
+     */
+    private function doPopulateOrder(
+        \wpdb    $wpdb,
+        \WC_Order $order,
+        int      $oc_id,
+        int      $oc_customer_id,
+        int      $wc_user_id,
+        array    $row,
+        array    $products,
+        array    $totals,
+        array    $currencies
+    ): bool {
         $wc_order_id = $order->get_id();
 
         // ── Addresses ────────────────────────────────────────────────────────

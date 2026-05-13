@@ -76,6 +76,8 @@ class AjaxHandler {
             // v2.4.70 additions.
             'octowoo_export_settings',
             'octowoo_import_settings',
+            // v2.5.0 additions.
+            'octowoo_run_cron_now',
         ];
 
         foreach ( $actions as $action ) {
@@ -248,6 +250,10 @@ class AjaxHandler {
 
             case 'octowoo_import_settings':
                 $this->actionImportSettings();
+                break;
+
+            case 'octowoo_run_cron_now':
+                $this->actionRunCronNow();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -1678,6 +1684,28 @@ class AjaxHandler {
         update_option( 'octowoo_config', $filtered );
 
         wp_send_json_success( [ 'message' => __( 'Settings imported successfully.', 'octowoo' ) ] );
+    }
+
+
+    // ── Action: run cron migration now ───────────────────────────────────────
+
+    private function actionRunCronNow(): void {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( [ 'message' => __( 'Administrator permission required.', 'octowoo' ) ], 403 );
+        }
+
+        $active = \OctoWoo\Core\CheckpointManager::getActiveRunId();
+        if ( $active ) {
+            wp_send_json_error( [
+                'message' => __( 'A migration is already running. Stop it before triggering a cron run.', 'octowoo' ),
+            ] );
+        }
+
+        \OctoWoo\Core\CronManager::runNow();
+
+        wp_send_json_success( [
+            'message' => __( 'Cron migration triggered. Check the Logs tab for progress.', 'octowoo' ),
+        ] );
     }
 
 }

@@ -161,7 +161,31 @@ class MigrationReport {
      * Uses `false` for autoload — report data is only needed on-demand.
      */
     public function save(): void {
-        update_option( self::OPTION_KEY, $this->toArray(), false );
+        $data = $this->toArray();
+        update_option( self::OPTION_KEY, $data, false );
+
+        // v2.5.0: Append to run history (last 10 runs).
+        $history = (array) get_option( 'octowoo_run_history', [] );
+        array_unshift( $history, [
+            'run_id'          => $data['run_id'],
+            'finished'        => $data['finished'],
+            'dry_run'         => $data['dry_run'],
+            'ok'              => $data['ok'],
+            'total_processed' => $data['total_processed'],
+            'total_failed'    => $data['total_failed'],
+        ] );
+        $history = array_slice( $history, 0, 10 ); // Keep only the 10 most recent.
+        update_option( 'octowoo_run_history', $history, false );
+    }
+
+    /**
+     * Retrieve migration run history (last 10 runs, most recent first).
+     *
+     * @return array<int, array<string,mixed>>
+     */
+    public static function loadHistory(): array {
+        $history = get_option( 'octowoo_run_history', [] );
+        return is_array( $history ) ? $history : [];
     }
 
     /**

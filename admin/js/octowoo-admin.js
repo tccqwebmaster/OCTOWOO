@@ -1498,6 +1498,31 @@
     }
 
     /* ════════════════════════════════════════════════════════════════════
+       CRON MANAGEMENT (v2.5.0)
+    ════════════════════════════════════════════════════════════════════ */
+    window.owRunCronNow = function () {
+        var $btn = document.getElementById('ow-btn-cron-run-now');
+        if (!$btn) { return; }
+        $btn.disabled = true;
+        $btn.textContent = '⏳ Running…';
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_run_cron_now', nonce: octoWoo.nonce })
+        .done(function (res) {
+            if (res && res.success) {
+                showToast((res.data && res.data.message) || 'Cron migration triggered.', 'success', 5000);
+                // Reload page after short delay to refresh cron status widget.
+                setTimeout(function () { location.reload(); }, 2500);
+            } else {
+                showToast((res && res.data && res.data.message) || 'Cron run failed.', 'error');
+            }
+        })
+        .fail(function () { showToast('Cron request failed.', 'error'); })
+        .always(function () {
+            if ($btn) { $btn.disabled = false; $btn.textContent = '▶ Run Now'; }
+        });
+    };
+
+    /* ════════════════════════════════════════════════════════════════════
        BOOT
     ════════════════════════════════════════════════════════════════════ */
     $(document).ready(init);

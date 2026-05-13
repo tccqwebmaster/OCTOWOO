@@ -150,7 +150,26 @@ class BatchProcessor {
                         $this->logger->debug( "[DRY-RUN] Would process {$migrator} #{$item_id}" );
                         $stats['processed']++;
                     } else {
-                        $success = (bool) $item_callback( $row );
+                        // v2.5.0: per-item auto-retry (max 2 retries) for transient DB locks.
+                        $success   = false;
+                        $attempts  = 0;
+                        $last_exc  = null;
+                        while ( $attempts <= 2 ) {
+                            try {
+                                $success = (bool) $item_callback( $row );
+                                $last_exc = null;
+                                break; // success or clean skip — exit retry loop
+                            } catch ( \Throwable $retry_e ) {
+                                $last_exc = $retry_e;
+                                $attempts++;
+                                if ( $attempts <= 2 ) {
+                                    usleep( 500000 ); // 500 ms between retries
+                                }
+                            }
+                        }
+                        if ( $last_exc !== null ) {
+                            throw $last_exc; // Re-throw after exhausting retries.
+                        }
                         if ( $success ) {
                             $stats['processed']++;
                         } else {
@@ -160,7 +179,7 @@ class BatchProcessor {
                 } catch ( \Throwable $e ) {
                     $stats['failed']++;
                     $this->logger->error(
-                        "Failed to process {$migrator} #{$item_id}: " . $e->getMessage(),
+                        "Failed to process {$migrator} #{$item_id} (after retries): " . $e->getMessage(),
                         [ 'oc_id' => $item_id, 'exception' => get_class( $e ) ]
                     );
                 }
@@ -319,7 +338,26 @@ class BatchProcessor {
                     $this->logger->debug( "[DRY-RUN] Would process {$migrator} #{$item_id}" );
                     $stats['processed']++;
                 } else {
-                    $success = (bool) $item_callback( $row );
+                    // v2.5.0: per-item auto-retry (max 2 retries) for transient DB locks.
+                    $success   = false;
+                    $attempts  = 0;
+                    $last_exc  = null;
+                    while ( $attempts <= 2 ) {
+                        try {
+                            $success  = (bool) $item_callback( $row );
+                            $last_exc = null;
+                            break;
+                        } catch ( \Throwable $retry_e ) {
+                            $last_exc = $retry_e;
+                            $attempts++;
+                            if ( $attempts <= 2 ) {
+                                usleep( 500000 );
+                            }
+                        }
+                    }
+                    if ( $last_exc !== null ) {
+                        throw $last_exc;
+                    }
                     if ( $success ) {
                         $stats['processed']++;
                     } else {
@@ -329,7 +367,7 @@ class BatchProcessor {
             } catch ( \Throwable $e ) {
                 $stats['failed']++;
                 $this->logger->error(
-                    "Failed to process {$migrator} #{$item_id}: " . $e->getMessage(),
+                    "Failed to process {$migrator} #{$item_id} (after retries): " . $e->getMessage(),
                     [ 'oc_id' => $item_id, 'exception' => get_class( $e ) ]
                 );
             }

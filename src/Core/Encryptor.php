@@ -90,16 +90,61 @@ class Encryptor {
 
     // ── Key resolution ────────────────────────────────────────────────────────
 
+    /**
+     * v2.5.0: Key precedence (strongest → fallback):
+     *  1. OCTOWOO_CRYPT_KEY constant   – define in wp-config.php; best security.
+     *  2. octowoo_secret_key option    – random 64-char key generated on activation.
+     *  3. WordPress AUTH_KEY           – site-unique but shared across all plugins.
+     *  4. Hard-coded fallback          – last resort; still better than plain text.
+     */
     private static function key(): string {
-        if ( defined( 'OCTOWOO_CRYPT_KEY' ) ) {
-            return (string) OCTOWOO_CRYPT_KEY;
+        // 1. Explicit constant — highest priority.
+        if ( defined( 'OCTOWOO_CRYPT_KEY' ) && strlen( (string) OCTOWOO_CRYPT_KEY ) >= 16 ) {
+            return hash( 'sha256', (string) OCTOWOO_CRYPT_KEY );
         }
 
-        if ( defined( 'AUTH_KEY' ) && strlen( AUTH_KEY ) >= 16 ) {
-            return (string) AUTH_KEY;
+        // 2. Plugin-specific random key stored in wp_options (generated on activation).
+        $stored = (string) get_option( 'octowoo_secret_key', '' );
+        if ( strlen( $stored ) >= 32 ) {
+            return hash( 'sha256', $stored );
         }
 
-        // Last-resort fallback — encourages users to set OCTOWOO_CRYPT_KEY.
-        return 'octowoo-fallback-key-please-define-OCTOWOO_CRYPT_KEY';
+        // Key not yet generated (e.g. plugin was activated before this version).
+        // Generate it now and store it so future calls use the same key.
+        $generated = self::generateAndStoreKey();
+        if ( $generated ) {
+            return hash( 'sha256', $generated );
+        }
+
+        // 3. WordPress AUTH_KEY fallback.
+        if ( defined( 'AUTH_KEY' ) && strlen( (string) AUTH_KEY ) >= 16 ) {
+            return hash( 'sha256', (string) AUTH_KEY );
+        }
+
+        // 4. Absolute last resort.
+        return hash( 'sha256', 'octowoo-fallback-key-please-define-OCTOWOO_CRYPT_KEY' );
+    }
+
+    /**
+     * Generate a cryptographically random 64-char key and persist it to wp_options.
+     * Returns the generated key string, or empty string on failure.
+     */
+    public static function generateAndStoreKey(): string {
+        // Use wp_generate_password (alphanumeric + symbols, not in wp_hash).
+        $key = function_exists( 'wp_generate_password' )
+            ? wp_generate_password( 64, true, true )
+            : bin2hex( random_bytes( 32 ) );
+
+        if ( ! add_option( 'octowoo_secret_key', $key, '', 'no' ) ) {
+            // Option already exists — read existing.
+            $existing = (string) get_option( 'octowoo_secret_key', '' );
+            if ( strlen( $existing ) >= 32 ) {
+                return $existing;
+            }
+            // Force update if existing value is too short.
+            update_option( 'octowoo_secret_key', $key, 'no' );
+        }
+
+        return $key;
     }
 }

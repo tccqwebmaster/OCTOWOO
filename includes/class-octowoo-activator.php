@@ -18,6 +18,10 @@ class OctoWoo_Activator {
         self::create_log_dir();
         self::set_default_options();
 
+        // v2.5.0: Generate and store the plugin-specific encryption key on activation.
+        // This ensures every site has a unique key rather than relying on AUTH_KEY.
+        \OctoWoo\Core\Encryptor::generateAndStoreKey();
+
         // Flush rewrite rules so any new WP redirect rules take effect.
         flush_rewrite_rules();
     }

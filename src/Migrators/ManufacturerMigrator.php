@@ -484,8 +484,74 @@ class ManufacturerMigrator extends AbstractMigrator {
             }
         }
 
-        // None found – register our own fallback taxonomy so the migration can proceed.
+        // v2.5.0: Before creating a custom taxonomy, try to create a pa_brand
+        // WooCommerce global product attribute — this integrates natively with
+        // WC's attribute management UI and is recognised by more themes/plugins.
+        $pa_brand = $this->ensureWcBrandAttribute();
+        if ( $pa_brand ) {
+            $this->logger->info( '[manufacturers] No brand plugin detected – using WooCommerce pa_brand attribute as fallback.' );
+            return $pa_brand;
+        }
+
+        // Final fallback: register our own custom taxonomy.
         return $this->registerFallbackTaxonomy();
+    }
+
+    /**
+     * Create a WooCommerce global product attribute "Brand" (slug: brand)
+     * resulting in the pa_brand taxonomy. Returns 'pa_brand' on success, '' on failure.
+     */
+    private function ensureWcBrandAttribute(): string {
+        $slug = 'brand';
+        $tax  = 'pa_' . $slug;
+
+        if ( taxonomy_exists( $tax ) ) {
+            return $tax;
+        }
+
+        if ( ! function_exists( 'wc_create_attribute' ) ) {
+            return '';
+        }
+
+        // Check if the WC attribute already exists in the DB (not yet registered as taxonomy).
+        global $wpdb;
+        $existing = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
+            $slug
+        ) );
+
+        if ( ! $existing ) {
+            $attr_id = wc_create_attribute( [
+                'name'         => __( 'Brand', 'octowoo' ),
+                'slug'         => $slug,
+                'type'         => 'select',
+                'order_by'     => 'menu_order',
+                'has_archives' => true,
+            ] );
+
+            if ( is_wp_error( $attr_id ) ) {
+                $this->logger->warning( '[manufacturers] Could not create pa_brand WC attribute: ' . $attr_id->get_error_message() );
+                return '';
+            }
+
+            // Delete the WC attribute taxonomy cache so the new attribute is loaded.
+            delete_transient( 'wc_attribute_taxonomies' );
+        }
+
+        // Register the taxonomy in the current request so wp_insert_term() works.
+        if ( ! taxonomy_exists( $tax ) ) {
+            register_taxonomy( $tax, 'product', [
+                'hierarchical'      => false,
+                'labels'            => [ 'name' => __( 'Brand', 'octowoo' ), 'singular_name' => __( 'Brand', 'octowoo' ) ],
+                'show_ui'           => true,
+                'show_in_rest'      => true,
+                'rewrite'           => [ 'slug' => 'brand', 'with_front' => false ],
+                'show_admin_column' => true,
+                'query_var'         => true,
+            ] );
+        }
+
+        return taxonomy_exists( $tax ) ? $tax : '';
     }
 
     /**

@@ -202,11 +202,6 @@ msgstr ""
 #: src/Core/Validator.php
 msgid "Low disk space: %s free."
 msgstr ""
-
-#: src/Core/Validator.php
-msgid "HPOS is enabled but the plugin has not declared compatibility. Orders may not display correctly."
-msgstr ""
-
 #: src/Core/Validator.php
 msgid "Validation passed."
 msgstr ""
