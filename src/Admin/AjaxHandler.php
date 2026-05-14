@@ -1272,18 +1272,42 @@ class AjaxHandler {
             is_array( $saved['db'] ?? null ) ? $saved['db'] : []
         );
 
-        // Override with any live values sent from the form fields.
-        if ( ! empty( $_POST['db_host'] ) ) {
-            $db_config['host']     = sanitize_text_field( $_POST['db_host'] );
-            $db_config['port']     = (int) ( $_POST['db_port'] ?? 3306 );
-            $db_config['database'] = sanitize_text_field( $_POST['db_name'] ?? '' );
-            $db_config['username'] = sanitize_text_field( $_POST['db_user'] ?? '' );
-            // Use posted password; fall back to saved if left blank.
-            $db_config['password'] = ( isset( $_POST['db_pass'] ) && $_POST['db_pass'] !== '' )
-                ? $_POST['db_pass']
-                : ( $db_config['password'] ?? '' );
-            $db_config['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' );
-            $db_config['socket']   = sanitize_text_field( $_POST['db_socket'] ?? '' );
+        // Override with live values sent from the form.
+        // Supports two key formats:
+        //   Short:  db_host, db_port, db_name, db_user, db_pass, db_prefix, db_socket
+        //           (sent by the JS testConnection() function and the onboarding wizard)
+        //   Nested: octowoo[db][host] etc. (Settings form when submitted directly)
+        $posted_host = sanitize_text_field(
+            $_POST['db_host'] ?? $_POST['octowoo']['db']['host'] ?? ''  // phpcs:ignore WordPress.Security.NonceVerification
+        );
+
+        if ( $posted_host !== '' ) {
+            // Short-key format (JS sends these).
+            $db_config['host']     = $posted_host;
+            $db_config['port']     = (int) ( $_POST['db_port']   ?? $_POST['octowoo']['db']['port']     ?? 3306 );
+            $db_config['database'] = sanitize_text_field( $_POST['db_name']   ?? $_POST['octowoo']['db']['database'] ?? '' );
+            $db_config['username'] = sanitize_text_field( $_POST['db_user']   ?? $_POST['octowoo']['db']['username'] ?? '' );
+            $db_config['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? $_POST['octowoo']['db']['prefix']   ?? 'oc_' );
+            $db_config['socket']   = sanitize_text_field( $_POST['db_socket'] ?? $_POST['octowoo']['db']['socket']   ?? '' );
+
+            // Password: use posted value if non-blank; otherwise keep saved encrypted value.
+            $posted_pass = $_POST['db_pass'] ?? $_POST['octowoo']['db']['password'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            if ( $posted_pass !== '' && $posted_pass !== '••••••••' ) {
+                $db_config['password'] = $posted_pass; // Will be decrypted by DatabaseConnector.
+            }
+        } elseif ( ! empty( $_POST['octowoo']['db']['host'] ) ) {
+            // Nested-key format (direct form POST).
+            $raw = $_POST['octowoo']['db']; // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['host']     = sanitize_text_field( $raw['host']     ?? '' );
+            $db_config['port']     = (int) ( $raw['port']     ?? 3306 );
+            $db_config['database'] = sanitize_text_field( $raw['database'] ?? '' );
+            $db_config['username'] = sanitize_text_field( $raw['username'] ?? '' );
+            $db_config['prefix']   = sanitize_text_field( $raw['prefix']   ?? 'oc_' );
+            $db_config['socket']   = sanitize_text_field( $raw['socket']   ?? '' );
+            $posted_pass = $raw['password'] ?? '';
+            if ( $posted_pass !== '' && $posted_pass !== '••••••••' ) {
+                $db_config['password'] = $posted_pass;
+            }
         }
 
         $connector = new \OctoWoo\Core\DatabaseConnector( $db_config );

@@ -969,7 +969,23 @@
         $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Testing…');
         $result.text('').css('color', '#555');
 
-        $.post(octoWoo.ajaxUrl, { action: 'octowoo_test_connection', nonce: octoWoo.nonce })
+        // Send live field values so user can test before saving.
+        // Also handles the case where settings have never been saved yet.
+        var payload = {
+            action:    'octowoo_test_connection',
+            nonce:     octoWoo.nonce,
+            db_host:   $('input[name="octowoo[db][host]"]').val()     || '',
+            db_port:   $('input[name="octowoo[db][port]"]').val()     || 3306,
+            db_name:   $('input[name="octowoo[db][database]"]').val() || '',
+            db_user:   $('input[name="octowoo[db][username]"]').val() || '',
+            db_prefix: $('input[name="octowoo[db][prefix]"]').val()   || 'oc_',
+            db_socket: $('input[name="octowoo[db][socket]"]').val()   || '',
+        };
+        // Only send password if user typed one (blank = use saved encrypted value).
+        var pass = $('input[name="octowoo[db][password]"]').val();
+        if (pass && pass !== '••••••••') { payload.db_pass = pass; }
+
+        $.post(octoWoo.ajaxUrl, payload)
         .done(function (res) {
             if (res.success) {
                 $result.css('color', '#2e7d32').text('✔ ' + (res.data ? res.data.message : 'Connection successful.'));

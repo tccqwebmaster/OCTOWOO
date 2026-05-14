@@ -59,11 +59,34 @@ class DatabaseConnector {
                 $this->config['database'] ?? 'opencart'
             );
         } else {
+            $host = trim( (string) ( $this->config['host'] ?? '' ) );
+            $port = (int) ( $this->config['port'] ?? 3306 );
+            $db   = trim( (string) ( $this->config['database'] ?? '' ) );
+
+            // Empty host guard — empty string bypasses ?? default and causes
+            // PDO to try /tmp/mysql.sock (non-existent on most servers).
+            if ( $host === '' ) {
+                $host = '127.0.0.1';
+            }
+
+            // 'localhost' on Linux/macOS routes PDO to a Unix socket, which
+            // fails with [2002] No such file or directory when mysqld.sock
+            // is not at the expected path. Forcing 127.0.0.1 always uses TCP.
+            // Exception: if the user explicitly set a socket path, keep localhost.
+            if ( strtolower( $host ) === 'localhost' ) {
+                $host = '127.0.0.1';
+            }
+
+            if ( $db === '' ) {
+                throw new \RuntimeException(
+                    'OctoWoo: OpenCart database name is empty. ' .
+                    'Please enter the database name in Settings → OpenCart Database.'
+                );
+            }
+
             $dsn = sprintf(
                 'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
-                $this->config['host']     ?? '127.0.0.1',
-                $this->config['port']     ?? 3306,
-                $this->config['database'] ?? 'opencart'
+                $host, $port, $db
             );
         }
 
@@ -106,9 +129,31 @@ class DatabaseConnector {
                       . 'password, or (c) run: ALTER USER \'root\'@\'localhost\' IDENTIFIED WITH '
                       . 'mysql_native_password BY \'your_password\'; FLUSH PRIVILEGES;';
             }
+            // Provide actionable error messages for the most common failure modes.
+            $code = (int) $e->getCode();
+
+            if ( $code === 2002 ) {
+                // [2002] Connection refused or socket not found.
+                $msg .= ' — SOLUTION: Enter the exact IP address of your OpenCart database server '
+                      . '(e.g. 13.206.54.252, not "localhost"). "localhost" on Linux tries a Unix socket '
+                      . 'which may not exist. If the DB is on the same server as WordPress, try 127.0.0.1.';
+            } elseif ( $code === 2003 ) {
+                // [2003] Can't connect to MySQL server.
+                $msg .= ' — SOLUTION: Check that the host IP/port is correct and that your server firewall '
+                      . 'allows connections from this WordPress server to port 3306 on the OpenCart DB host.';
+            } elseif ( $code === 1045 ) {
+                // [1045] Access denied for user.
+                $msg .= ' — SOLUTION: Check your database username and password. Make sure the MySQL user '
+                      . 'has SELECT privileges on the OpenCart database.';
+            } elseif ( $code === 1049 ) {
+                // [1049] Unknown database.
+                $msg .= ' — SOLUTION: Check that the "Database Name" field exactly matches your OpenCart '
+                      . 'database name (case-sensitive on Linux MySQL).';
+            }
+
             throw new \RuntimeException(
                 'OctoWoo: Cannot connect to OpenCart database – ' . $msg,
-                (int) $e->getCode()
+                $code
             );
         }
     }

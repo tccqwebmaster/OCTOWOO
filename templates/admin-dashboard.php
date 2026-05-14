@@ -560,10 +560,15 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                 </p>
                 <div class="ow-form-grid">
                     <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Host', 'octowoo' ); ?></label>
+                        <label><?php esc_html_e( 'Host / IP Address', 'octowoo' ); ?></label>
                         <input type="text" name="octowoo[db][host]"
-                               value="<?php echo esc_attr( $config['db']['host'] ?? '127.0.0.1' ); ?>"
-                               placeholder="127.0.0.1" required>
+                               value="<?php echo esc_attr( $config['db']['host'] ?? '' ); ?>"
+                               placeholder="13.206.54.252" required>
+                        <span class="ow-form-hint">
+                            <?php esc_html_e( 'Enter the exact IP address of your OpenCart database server, e.g.', 'octowoo' ); ?>
+                            <code>13.206.54.252</code>.
+                            <strong style="color:#c62828;"><?php esc_html_e( 'Do NOT use "localhost" — it routes to a Unix socket that usually does not exist. Use 127.0.0.1 if the OpenCart DB is on this same server.', 'octowoo' ); ?></strong>
+                        </span>
                     </div>
                     <div class="ow-form-group">
                         <label><?php esc_html_e( 'Port', 'octowoo' ); ?></label>
