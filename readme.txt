@@ -5,7 +5,7 @@ Requires at least: 5.8
 Tested up to: 6.8
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 2.5.22
+Stable tag: 2.5.23
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -158,6 +158,61 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 
 == Changelog ==
 
+= 2.5.22 =
+* **Added:** Auto-detect OpenCart image path — '🔍 Auto-Detect Image Path' button in Settings queries `oc_setting.config_url`, scans common server paths, validates by checking `catalog/product/` structure, and cross-checks sample images from `oc_product_image`. Shows ranked candidates with confidence level (CONFIRMED/LIKELY/POSSIBLE). One click to apply.
+
+= 2.5.21 =
+* **Added:** Auto-detect OpenCart language IDs — '🔍 Auto-Detect from OpenCart DB' button queries `oc_language` table, shows all languages with IDs/names/codes/product-counts. Auto-suggests primary (most product descriptions) and secondary. One-click to set. No more manual ID guessing.
+
+= 2.5.20 =
+* **Added:** `detectSecondaryLangId()` in both ProductMigrator and CategoryMigrator — called once per batch, validates configured `language_id_secondary` exists in OC, auto-detects if wrong/missing. Reduces per-product warning log spam to a single INFO line.
+
+= 2.5.19 =
+* **Fixed:** Arabic categories showing English names — `translateTerms()` now calls `fetchSecCategoryDescriptionFromOC()` when `_octowoo_name_ar` term meta is empty. Auto-detects correct OC language ID.
+* **Fixed:** WpmlIntegration had 10+ hardcoded `'ar'` fallbacks — now uses configured `secondary_locale` for all fallbacks. Works for French, Turkish, Persian, German etc.
+* **Updated:** UI labels changed from "Arabic / Secondary Language" to generic "Secondary Language". Works for any language.
+
+= 2.5.18 =
+* **Fixed:** Arabic product title/description/tags not copying to WPML translations. Root causes: (1) wrong `language_id_secondary` → empty postmeta → fallback to English. (2) Tags skipped when `langIdSecondary()=0`. (3) `secLangSuffix()` included full locale. All fixed.
+* **Added:** `fetchSecDescriptionFromOC()` — fetches Arabic data directly from OC when postmeta is empty. Auto-detects language ID.
+* **Fixed:** `secLangSuffix()` normalized to first segment only: `ar_SA` → `_ar`.
+
+= 2.5.17 =
+* **Fixed (definitive):** Settings and Logs tabs blank — root cause found via div depth tracing: Step 1 `<div class="ow-card">` (line 123) was never closed. Settings and Logs divs were nested INSIDE the migration tab, so hiding migration tab hid them too. Fixed by adding missing `</div>` after multilingual reference section.
+
+= 2.5.16 =
+* **Fixed:** Step 2 'Select All' / 'Deselect All' buttons never wired in JS — now toggle `.ow-step2-opt` checkboxes.
+* **Fixed:** `switchTab()` now force-hides wizard overlay on every tab switch.
+* **Audit:** All 34 template buttons confirmed wired in JS init().
+
+= 2.5.15 =
+* **Fixed (root cause):** JS `SyntaxError: Invalid regular expression: missing /` at line 1498 — a literal newline inside a regex `/SKU:\s*([^\s|,
+]+)/g` caused the entire 1,582-line JS file to fail to parse. All tabs stayed `display:none`. Fixed character class.
+* **Fixed:** Wizard overlay covering Settings/Logs — condition now only shows wizard when config is completely empty AND never skipped before.
+
+= 2.5.14 =
+* **Added:** `AdminPage::renderPage()` wrapped in `ob_start()/try-catch` — PHP errors in template now show a readable error box instead of blank page.
+
+= 2.5.13 =
+* **Fixed:** Logs tab had `<div <!-- comment -->` (comment inside div opening tag) destroying the entire DOM from the Logs section onwards.
+* **Fixed:** Orphaned `class="ow-card">` text in Logs tab (opening div was eaten by above bug).
+* **Fixed:** Extra nested ow-card in Step 1 causing layout issues.
+
+= 2.5.12 =
+* **Fixed:** Blank page after update — `#ow-log-container` div unclosed; wizard rendered before main JS was available; wizard skip not saving `_wizard_skipped` flag correctly.
+
+= 2.5.11 =
+* **Fixed:** Wizard Step 2 Test Connection sending zero credentials — now sends all DB field values with correct key names (`db_host`, `db_name`, etc.).
+* **Fixed:** Step 3 System Check always showing "db connection ✘ FAIL" — now passes live wizard credentials to `actionValidate()`.
+
+= 2.5.10 =
+* **Fixed:** Wizard `owWzTestConnection()` sending wrong POST key names (`host`/`dbname` instead of `db_host`/`db_name`). Test Connection in wizard now works.
+
+= 2.5.9 =
+* **Fixed (critical):** Database connection `[2002] No such file or directory` — `localhost` remapped to `127.0.0.1` (TCP). Empty host/database now throws clear error listing all missing fields. Per-error-code actionable messages added for `[2002][2003][1045][1049]`.
+* **Fixed:** JS `testConnection()` was sending zero credentials — now reads live form field values.
+* **Fixed:** Settings host field hint now warns against using `localhost`.
+
 = 2.5.8 =
 * **Fixed:** `DataPurger` missing `defined('ABSPATH') || exit` direct-access guard (WC.com code review requirement).
 * **Fixed:** `.pot` file version header updated from 2.3.2 to 2.5.8.
@@ -288,6 +343,61 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Fixed:** Reset Progress now works even with an active-run lock.
 
 == Upgrade Notice ==
+
+= 2.5.22 =
+* **Added:** Auto-detect OpenCart image path — '🔍 Auto-Detect Image Path' button in Settings queries `oc_setting.config_url`, scans common server paths, validates by checking `catalog/product/` structure, and cross-checks sample images from `oc_product_image`. Shows ranked candidates with confidence level (CONFIRMED/LIKELY/POSSIBLE). One click to apply.
+
+= 2.5.21 =
+* **Added:** Auto-detect OpenCart language IDs — '🔍 Auto-Detect from OpenCart DB' button queries `oc_language` table, shows all languages with IDs/names/codes/product-counts. Auto-suggests primary (most product descriptions) and secondary. One-click to set. No more manual ID guessing.
+
+= 2.5.20 =
+* **Added:** `detectSecondaryLangId()` in both ProductMigrator and CategoryMigrator — called once per batch, validates configured `language_id_secondary` exists in OC, auto-detects if wrong/missing. Reduces per-product warning log spam to a single INFO line.
+
+= 2.5.19 =
+* **Fixed:** Arabic categories showing English names — `translateTerms()` now calls `fetchSecCategoryDescriptionFromOC()` when `_octowoo_name_ar` term meta is empty. Auto-detects correct OC language ID.
+* **Fixed:** WpmlIntegration had 10+ hardcoded `'ar'` fallbacks — now uses configured `secondary_locale` for all fallbacks. Works for French, Turkish, Persian, German etc.
+* **Updated:** UI labels changed from "Arabic / Secondary Language" to generic "Secondary Language". Works for any language.
+
+= 2.5.18 =
+* **Fixed:** Arabic product title/description/tags not copying to WPML translations. Root causes: (1) wrong `language_id_secondary` → empty postmeta → fallback to English. (2) Tags skipped when `langIdSecondary()=0`. (3) `secLangSuffix()` included full locale. All fixed.
+* **Added:** `fetchSecDescriptionFromOC()` — fetches Arabic data directly from OC when postmeta is empty. Auto-detects language ID.
+* **Fixed:** `secLangSuffix()` normalized to first segment only: `ar_SA` → `_ar`.
+
+= 2.5.17 =
+* **Fixed (definitive):** Settings and Logs tabs blank — root cause found via div depth tracing: Step 1 `<div class="ow-card">` (line 123) was never closed. Settings and Logs divs were nested INSIDE the migration tab, so hiding migration tab hid them too. Fixed by adding missing `</div>` after multilingual reference section.
+
+= 2.5.16 =
+* **Fixed:** Step 2 'Select All' / 'Deselect All' buttons never wired in JS — now toggle `.ow-step2-opt` checkboxes.
+* **Fixed:** `switchTab()` now force-hides wizard overlay on every tab switch.
+* **Audit:** All 34 template buttons confirmed wired in JS init().
+
+= 2.5.15 =
+* **Fixed (root cause):** JS `SyntaxError: Invalid regular expression: missing /` at line 1498 — a literal newline inside a regex `/SKU:\s*([^\s|,
+]+)/g` caused the entire 1,582-line JS file to fail to parse. All tabs stayed `display:none`. Fixed character class.
+* **Fixed:** Wizard overlay covering Settings/Logs — condition now only shows wizard when config is completely empty AND never skipped before.
+
+= 2.5.14 =
+* **Added:** `AdminPage::renderPage()` wrapped in `ob_start()/try-catch` — PHP errors in template now show a readable error box instead of blank page.
+
+= 2.5.13 =
+* **Fixed:** Logs tab had `<div <!-- comment -->` (comment inside div opening tag) destroying the entire DOM from the Logs section onwards.
+* **Fixed:** Orphaned `class="ow-card">` text in Logs tab (opening div was eaten by above bug).
+* **Fixed:** Extra nested ow-card in Step 1 causing layout issues.
+
+= 2.5.12 =
+* **Fixed:** Blank page after update — `#ow-log-container` div unclosed; wizard rendered before main JS was available; wizard skip not saving `_wizard_skipped` flag correctly.
+
+= 2.5.11 =
+* **Fixed:** Wizard Step 2 Test Connection sending zero credentials — now sends all DB field values with correct key names (`db_host`, `db_name`, etc.).
+* **Fixed:** Step 3 System Check always showing "db connection ✘ FAIL" — now passes live wizard credentials to `actionValidate()`.
+
+= 2.5.10 =
+* **Fixed:** Wizard `owWzTestConnection()` sending wrong POST key names (`host`/`dbname` instead of `db_host`/`db_name`). Test Connection in wizard now works.
+
+= 2.5.9 =
+* **Fixed (critical):** Database connection `[2002] No such file or directory` — `localhost` remapped to `127.0.0.1` (TCP). Empty host/database now throws clear error listing all missing fields. Per-error-code actionable messages added for `[2002][2003][1045][1049]`.
+* **Fixed:** JS `testConnection()` was sending zero credentials — now reads live form field values.
+* **Fixed:** Settings host field hint now warns against using `localhost`.
 
 = 2.5.8 =
 * **Fixed:** `DataPurger` missing `defined('ABSPATH') || exit` direct-access guard (WC.com code review requirement).
