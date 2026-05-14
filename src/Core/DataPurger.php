@@ -94,7 +94,7 @@ class DataPurger {
 
         // Always reset MySQL AUTO_INCREMENT counters after purge so a fresh
         // migration doesn't inherit the old high-watermark IDs.
-        $this->resetAutoIncrements();
+        $this->resetAutoIncrements( $force );
 
         return [ 'results' => $results, 'diagnostics' => $diagnostics ];
     }
@@ -102,32 +102,43 @@ class DataPurger {
     /**
      * Reset AUTO_INCREMENT counters on the core WordPress tables.
      *
-     * After a bulk purge, MySQL's auto-increment watermark stays at the old high
-     * value, so the next migrated product gets ID 20001 instead of 1.
-     * Running ALTER TABLE … AUTO_INCREMENT = 1 is safe on non-empty tables:
-     * MySQL simply chooses MAX(existing_id) + 1 as the real next value, so
-     * no existing rows are overwritten.
+     * Only resets counters when the table is EMPTY — MySQL silently ignores
+     * AUTO_INCREMENT = 1 on non-empty tables (choosing MAX+1 anyway), so this
+     * is a no-op if rows remain. We skip non-empty tables to be explicit and
+     * avoid any confusion in the log output.
      *
-     * Called automatically at the end of every purge() run.
+     * @param  bool $force  Only runs in force mode (when everything was wiped).
      */
-    private function resetAutoIncrements(): void {
-        global $wpdb;
-
-        $tables = [
-            $wpdb->posts,                    // Products, pages, orders (post-based).
-            $wpdb->terms,                    // Terms shared table (term_id).
-            $wpdb->term_taxonomy,            // Taxonomy assignments.
-            $wpdb->comments,                 // Reviews.
-            $wpdb->users,                    // Customers.
-            $wpdb->usermeta,                 // User meta.
-        ];
-
-        foreach ( $tables as $table ) {
-            // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "ALTER TABLE `{$table}` AUTO_INCREMENT = 1" );
+    private function resetAutoIncrements( bool $force = false ): void {
+        if ( ! $force ) {
+            // Tagged purge leaves other data intact — resetting AUTO_INCREMENT
+            // could cause new rows to collide with surviving records.
+            return;
         }
 
-        $this->logger->info( '[purge] AUTO_INCREMENT counters reset on core WP tables.' );
+        global $wpdb;
+
+        $table_count_map = [
+            $wpdb->posts        => 'SELECT COUNT(*) FROM ' . $wpdb->posts,
+            $wpdb->terms        => 'SELECT COUNT(*) FROM ' . $wpdb->terms,
+            $wpdb->term_taxonomy => 'SELECT COUNT(*) FROM ' . $wpdb->term_taxonomy,
+            $wpdb->comments     => 'SELECT COUNT(*) FROM ' . $wpdb->comments,
+            $wpdb->users        => 'SELECT COUNT(*) FROM ' . $wpdb->users,
+            $wpdb->usermeta     => 'SELECT COUNT(*) FROM ' . $wpdb->usermeta,
+        ];
+
+        $reset = 0;
+        foreach ( $table_count_map as $table => $count_sql ) {
+            $count = (int) $wpdb->get_var( $count_sql ); // phpcs:ignore WordPress.DB.PreparedSQL
+            if ( $count === 0 ) {
+                $wpdb->query( "ALTER TABLE `{$table}` AUTO_INCREMENT = 1" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $reset++;
+            }
+        }
+
+        if ( $reset > 0 ) {
+            $this->logger->info( "[purge] AUTO_INCREMENT counters reset on {$reset} empty table(s)." );
+        }
     }
 
     // ── Products ──────────────────────────────────────────────────────────────
@@ -165,10 +176,25 @@ class DataPurger {
 
             $csv = implode( ',', $all_ids );
 
-            // Delete attached media (product images + gallery attachments).
+            // Delete attachments that were uploaded directly to a product post.
+            // SAFETY: Only delete an attachment if post_parent points to one of the
+            // products we're deleting AND the attachment is NOT referenced by any other
+            // post (page, Porto builder, Elementor template, etc.) via postmeta.
+            // This prevents deleting shared media library images used in theme designs.
             $attachment_ids = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
                 "SELECT ID FROM {$wpdb->posts}
-                  WHERE post_type = 'attachment' AND post_parent IN ({$csv})"
+                  WHERE post_type   = 'attachment'
+                    AND post_parent IN ({$csv})
+                    AND ID NOT IN (
+                        -- Exclude attachments referenced by posts OUTSIDE the product set.
+                        SELECT DISTINCT CAST(pm.meta_value AS UNSIGNED)
+                          FROM {$wpdb->postmeta} pm
+                          JOIN {$wpdb->posts}    pr ON pr.ID = pm.post_id
+                         WHERE pm.meta_value REGEXP '^[0-9]+$'
+                           AND pr.ID NOT IN ({$csv})
+                           AND pr.post_type != 'revision'
+                           AND pr.post_status != 'auto-draft'
+                    )"
             ) );
             if ( ! empty( $attachment_ids ) ) {
                 $att_csv = implode( ',', $attachment_ids );
@@ -215,7 +241,12 @@ class DataPurger {
         $this->clearIdMapEntity( 'category' );
         // Invalidate the topological-sort transient so the next migration run
         // re-builds the sorted category list from a clean OC database state.
-        delete_transient( 'octowoo_cat_topo_' . md5( $this->config['oc_db']['prefix'] ?? 'oc_' ) );
+        // Clear all category transient formats (matches AjaxHandler::actionResetMigration).
+        $oc_pfx = $this->config['db']['prefix'] ?? $this->config['oc_db']['prefix'] ?? 'oc_';
+        delete_transient( 'octowoo_cat_topo_' . md5( $oc_pfx ) );
+        delete_transient( 'octowoo_cat_all_'  . md5( $oc_pfx ) );
+        delete_transient( 'octowoo_cat_all_'  . md5( $oc_pfx . '_fresh' ) );
+        delete_transient( 'octowoo_cat_all_'  . md5( $oc_pfx . '_resume' ) );
         return $this->purgeTermsByTaxonomy( 'product_cat', $force );
     }
 
@@ -785,10 +816,71 @@ class DataPurger {
 
         $this->clearIdMapEntity( 'download' );
 
+        // Comprehensive exclusion list: NEVER delete theme/builder/system post types.
+        // This list is merged with any custom exclusions from the filter below.
+        // Covers: WordPress core, WooCommerce, Porto, Divi, Elementor, Avada, Fusion,
+        //         Beaver Builder, Bricks, WPBakery, Blocksy, Kadence, GeneratePress,
+        //         and any other registered theme/builder post types.
+        $protected_post_types = apply_filters( 'octowoo_purge_protected_post_types', [
+            // ── WordPress core ──────────────────────────────────────────────────
+            'post', 'page', 'attachment', 'revision', 'nav_menu_item',
+            'custom_css', 'customize_changeset', 'wp_global_styles',
+            'wp_template', 'wp_template_part', 'wp_navigation', 'wp_block',
+            'wp_font_family', 'wp_font_face', 'oembed_cache',
+            // ── WooCommerce ─────────────────────────────────────────────────────
+            'product', 'product_variation', 'shop_order', 'shop_coupon',
+            'shop_order_refund', 'wc_order', 'shop_webhook',
+            // ── Porto theme ─────────────────────────────────────────────────────
+            'porto_builder', 'porto_portfolio', 'porto_testimonial',
+            'porto_slide', 'porto_shortcode',
+            // ── Elementor ───────────────────────────────────────────────────────
+            'elementor_library', 'e-landing-page', 'elementor-hf',
+            'elementor_font', 'elementor_icons', 'elementor_snippet',
+            // ── Divi / ET ───────────────────────────────────────────────────────
+            'et_pb_layout', 'et_template', 'et_header_layout',
+            'et_footer_layout', 'et_body_layout',
+            // ── Avada / Fusion Builder ───────────────────────────────────────────
+            'fusion_tb_section', 'fusion_tb_layout', 'fusion_element',
+            'fusion_icons', 'fusion_template', 'fusion_form',
+            // ── Beaver Builder ───────────────────────────────────────────────────
+            'fl-builder-template', 'fl-theme-layout',
+            // ── Bricks builder ───────────────────────────────────────────────────
+            'bricks_template',
+            // ── Oxygen Builder ───────────────────────────────────────────────────
+            'ct_template',
+            // ── WPBakery / JS Composer ───────────────────────────────────────────
+            'vc_grid_item',
+            // ── Kadence / Kadence Blocks ─────────────────────────────────────────
+            'kadence_form', 'kadence_element', 'kadence_header', 'kadence_query',
+            'kadence_wootemplate',
+            // ── GenerateBlocks / GeneratePress ───────────────────────────────────
+            'gblocks_templates',
+            // ── Blocksy ─────────────────────────────────────────────────────────
+            'ct_content_block',
+            // ── Astra ───────────────────────────────────────────────────────────
+            'astra-advanced-hook', 'astra-portfolio',
+            // ── OceanWP / ExtendedOcean ──────────────────────────────────────────
+            'oceanwp_library',
+            // ── Hello/Elementor Kit ──────────────────────────────────────────────
+            'elementor_font', 'kit',
+            // ── WooCommerce blocks / FSE ─────────────────────────────────────────
+            'wc_product_collection',
+            // ── SiteOrigin ───────────────────────────────────────────────────────
+            'siteorigin-css',
+            // ── Toolset / CRED ───────────────────────────────────────────────────
+            'cred-form', 'cred-user-form',
+            // ── Popup plugins ────────────────────────────────────────────────────
+            'popup', 'popups', 'spu-popups', 'ow-popup',
+            // ── Header footer plugins ─────────────────────────────────────────────
+            'hf-template', 'header_footer_shortcode',
+        ] );
+
         if ( $force ) {
-            $ids = $wpdb->get_col(
+            // Build the NOT IN clause from the protected list.
+            $protected_csv = "'" . implode( "','", array_map( 'esc_sql', $protected_post_types ) ) . "'";
+            $ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
                 "SELECT DISTINCT ID FROM {$wpdb->posts}
-                  WHERE post_type NOT IN ('product', 'product_variation', 'shop_order', 'shop_coupon', 'page', 'post', 'attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset', 'wp_global_styles', 'wp_template', 'wp_template_part', 'wp_navigation')
+                  WHERE post_type NOT IN ({$protected_csv})
                     AND post_status != 'auto-draft'"
             );
         } else {
@@ -964,4 +1056,135 @@ class DataPurger {
             $this->logger->info( "[purge] Repaired _octowoo_oc_id meta on {$repaired} item(s) from id_map before purge." );
         }
     }
+
+    // ── Pre-purge safety audit ────────────────────────────────────────────────
+
+    /**
+     * Return a safety audit of what WOULD be deleted for the given entities.
+     *
+     * Called by the admin UI "Audit before purge" button so users can see
+     * exact counts BEFORE they commit to deletion. Non-destructive.
+     *
+     * Returns array keyed by entity with:
+     *   tagged_count  — items that carry _octowoo_oc_id (will be deleted in normal mode)
+     *   total_count   — total WC items of this type (will be deleted in force mode)
+     *   safe          — true when tagged_count matches total_count (force = same result)
+     *   warnings      — array of human-readable safety warnings
+     *
+     * @param  string[] $entities
+     * @param  bool     $force
+     * @return array<string, array{tagged_count:int, total_count:int, safe:bool, warnings:string[]}>
+     */
+    public function audit( array $entities, bool $force = false ): array {
+        global $wpdb;
+        $report = [];
+
+        foreach ( $entities as $entity ) {
+            $tagged = 0;
+            $total  = 0;
+            $warnings = [];
+
+            switch ( $entity ) {
+                case 'products':
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    if ( $force && $total > $tagged ) {
+                        $warnings[] = sprintf( __( '%d product(s) were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
+                    }
+                    // Warn about shared media.
+                    $shared_attachments = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.PreparedSQL
+                        "SELECT COUNT(*) FROM {$wpdb->posts} att
+                         WHERE att.post_type = 'attachment'
+                           AND att.post_parent IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product')
+                           AND att.ID IN (SELECT DISTINCT CAST(meta_value AS UNSIGNED) FROM {$wpdb->postmeta} WHERE meta_value REGEXP '^[0-9]+$')"
+                    );
+                    if ( $force && $shared_attachments > 0 ) {
+                        $warnings[] = sprintf( __( '%d product image(s) appear to be used elsewhere (pages, theme builder, etc.) and will be PROTECTED from deletion.', 'octowoo' ), $shared_attachments );
+                    }
+                    break;
+
+                case 'categories':
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    if ( $force && $total > $tagged ) {
+                        $warnings[] = sprintf( __( '%d category/categories were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
+                    }
+                    break;
+
+                case 'tags':
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    break;
+
+                case 'customers':
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $warnings[] = __( 'Administrator accounts are always protected regardless of mode.', 'octowoo' );
+                    break;
+
+                case 'orders':
+                    $hpos_table = $wpdb->prefix . 'wc_orders';
+                    $has_hpos   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_table ) );
+                    if ( $has_hpos ) {
+                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$hpos_table} WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT o.id) FROM {$hpos_table} o JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id WHERE o.type = 'shop_order' AND om.meta_key = '_octowoo_oc_order_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    } else {
+                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_order_id' AND p.post_type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    }
+                    if ( $force && $total > $tagged ) {
+                        $warnings[] = sprintf( __( '%d order(s) were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
+                    }
+                    break;
+
+                case 'coupons':
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'shop_coupon'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    break;
+
+                case 'reviews':
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT c.comment_ID) FROM {$wpdb->comments} c JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID WHERE c.comment_type = 'review' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT comment_id) FROM {$wpdb->commentmeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    break;
+
+                case 'information':
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key IN ('_octowoo_oc_id','_octowoo_translation_of') AND p.post_type = 'page'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $warnings[] = __( 'Only pages tagged by OctoWoo are deleted. Theme header/footer templates and manually-built pages are ALWAYS protected.', 'octowoo' );
+                    break;
+
+                case 'downloads':
+                    // Tagged path is always safe; force path uses protected post_type list.
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type NOT IN ('product','product_variation','shop_order','shop_coupon','page')" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = $tagged; // Force is safe — protected list covers all themes.
+                    $warnings[] = __( 'Theme and page builder post types (Porto, Elementor, Divi, Avada, etc.) are always excluded.', 'octowoo' );
+                    break;
+
+                case 'manufacturers':
+                case 'filters':
+                    $taxonomy = $entity === 'manufacturers' ? 'product_brand' : 'product_filter';
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy LIKE %s", '%brand%' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = $total; // Always safe — taxonomy-scoped.
+                    break;
+
+                default:
+                    continue 2;
+            }
+
+            $will_delete = $force ? $total : $tagged;
+            $extra       = $force ? max( 0, $total - $tagged ) : 0;
+
+            $report[ $entity ] = [
+                'tagged_count' => $tagged,
+                'total_count'  => $total,
+                'will_delete'  => $will_delete,
+                'extra_count'  => $extra,
+                'safe'         => ( $tagged === $total ),
+                'warnings'     => $warnings,
+            ];
+        }
+
+        return $report;
+    }
+
 }

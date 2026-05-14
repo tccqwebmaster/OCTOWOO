@@ -226,6 +226,7 @@
         // Purge.
         $('#ow-btn-select-all-purge').on('click',   function () { $('.ow-purge-chk').prop('checked', true); });
         $('#ow-btn-deselect-all-purge').on('click', function () { $('.ow-purge-chk').prop('checked', false); });
+        $('#ow-btn-audit-purge').on('click', auditPurge);
         $('#ow-btn-purge').on('click',              runPurge);
         $('#ow-btn-purge-force').on('click',        function () { runPurge(true); });
         $('#ow-btn-purge-everything').on('click',   runPurgeEverything);
@@ -1483,6 +1484,89 @@
             });
         };
         reader.readAsText(file);
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       PURGE AUDIT — safety check before deletion
+    ════════════════════════════════════════════════════════════════════ */
+    function auditPurge() {
+        var entities = [];
+        $('.ow-purge-chk:checked').each(function () { entities.push($(this).val()); });
+        if (!entities.length) { showToast('Select at least one entity type to audit.', 'warning'); return; }
+
+        var force = $('#ow-purge-force').is(':checked');
+        var $panel = $('#ow-purge-audit-panel');
+        var $btn   = $('#ow-btn-audit-purge');
+
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Auditing…');
+        $panel.html('<em style="color:#888;">Counting items…</em>').show();
+
+        $.post(octoWoo.ajaxUrl, {
+            action:   'octowoo_audit_purge',
+            nonce:    octoWoo.nonce,
+            entities: entities,
+            force:    force ? 1 : 0,
+        })
+        .done(function (res) {
+            if (!res || !res.success || !res.data || !res.data.audit) {
+                $panel.html('<span style="color:#c62828;">Audit failed: ' + ((res && res.data && res.data.message) || 'unknown error') + '</span>');
+                return;
+            }
+
+            var audit = res.data.audit;
+            var isForce = !!res.data.force;
+            var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">';
+            html += '<thead><tr style="background:#f5f5f5;">';
+            html += '<th style="text-align:left;padding:5px 8px;border:1px solid #ddd;">Entity</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">OctoWoo items</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">Total in WC</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">Will delete</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">Extra (non-OctoWoo)</th>';
+            html += '</tr></thead><tbody>';
+
+            var totalWillDelete = 0;
+            var hasWarnings = false;
+
+            $.each(audit, function(entity, info) {
+                var willDelete = info.will_delete || 0;
+                var extra      = info.extra_count  || 0;
+                totalWillDelete += willDelete;
+                if (extra > 0) hasWarnings = true;
+
+                var safeIcon = info.safe ? '✔' : '⚠';
+                var safeColor = info.safe ? '#2e7d32' : '#e65100';
+                var extraCell = extra > 0
+                    ? '<span style="color:#c62828;font-weight:700;">+' + extra + ' (non-OctoWoo!)</span>'
+                    : '<span style="color:#2e7d32;">0</span>';
+
+                html += '<tr>';
+                html += '<td style="padding:4px 8px;border:1px solid #ddd;font-weight:600;">' + entity + '</td>';
+                html += '<td style="padding:4px 8px;border:1px solid #ddd;text-align:center;">' + (info.tagged_count || 0).toLocaleString() + '</td>';
+                html += '<td style="padding:4px 8px;border:1px solid #ddd;text-align:center;">' + (info.total_count || 0).toLocaleString() + '</td>';
+                html += '<td style="padding:4px 8px;border:1px solid #ddd;text-align:center;color:' + safeColor + ';font-weight:700;">' + safeIcon + ' ' + willDelete.toLocaleString() + '</td>';
+                html += '<td style="padding:4px 8px;border:1px solid #ddd;text-align:center;">' + extraCell + '</td>';
+                html += '</tr>';
+
+                if (info.warnings && info.warnings.length) {
+                    info.warnings.forEach(function(w) {
+                        html += '<tr><td colspan="5" style="padding:3px 8px 3px 20px;border:1px solid #ddd;background:#fffbeb;color:#b45309;font-size:11px;">ℹ ' + $('<span>').text(w).html() + '</td></tr>';
+                    });
+                }
+            });
+
+            html += '</tbody></table>';
+
+            var summaryColor = hasWarnings ? '#c62828' : '#2e7d32';
+            var summaryText = hasWarnings
+                ? '⚠ ' + totalWillDelete.toLocaleString() + ' items will be deleted — some are NOT OctoWoo items. Review the Extra column carefully before proceeding.'
+                : '✔ ' + totalWillDelete.toLocaleString() + ' OctoWoo item(s) will be deleted. No non-OctoWoo data will be affected.';
+
+            html += '<div style="padding:8px 10px;border-radius:4px;background:' + (hasWarnings ? '#fef2f2' : '#edf7ed') + ';border:1px solid ' + summaryColor + ';color:' + summaryColor + ';font-size:12px;font-weight:600;">' + summaryText + '</div>';
+
+            $panel.html(html);
+        })
+        .fail(function () { $panel.html('<span style="color:#c62828;">Audit request failed.</span>'); })
+        .always(function () { $btn.prop('disabled', false).text('🔍 Audit Before Purge'); });
     }
 
     /* ════════════════════════════════════════════════════════════════════

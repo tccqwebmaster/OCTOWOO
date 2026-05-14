@@ -79,6 +79,7 @@ class AjaxHandler {
             // v2.5.0 additions.
             'octowoo_run_cron_now',
             'octowoo_repair_categories',
+            'octowoo_audit_purge',
         ];
 
         foreach ( $actions as $action ) {
@@ -259,6 +260,10 @@ class AjaxHandler {
 
             case 'octowoo_repair_categories':
                 $this->actionRepairCategories();
+                break;
+
+            case 'octowoo_audit_purge':
+                $this->actionAuditPurge();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -1810,6 +1815,37 @@ class AjaxHandler {
             'repaired' => $total_repaired,
             'page'     => $page,
         ] );
+    }
+
+
+    // ── Action: pre-purge safety audit ────────────────────────────────────────
+
+    private function actionAuditPurge(): void {
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $raw_entities = isset( $_POST['entities'] ) ? (array) $_POST['entities'] : [];
+        $allowed      = [ 'products', 'categories', 'tags', 'customers', 'orders',
+                          'coupons', 'reviews', 'manufacturers', 'information', 'downloads', 'filters' ];
+        $entities     = array_values( array_filter(
+            array_map( 'sanitize_key', $raw_entities ),
+            fn( $e ) => in_array( $e, $allowed, true )
+        ) );
+
+        if ( empty( $entities ) ) {
+            wp_send_json_error( [ 'message' => __( 'No entities specified for audit.', 'octowoo' ) ] );
+        }
+
+        $force  = filter_input( INPUT_POST, 'force', FILTER_VALIDATE_BOOLEAN ) === true;
+        $config = AdminPage::getConfig();
+        $logger = new Logger( 'audit', $config['logging'] ?? [] );
+        $purger = new DataPurger( $logger, $config );
+
+        try {
+            $audit = $purger->audit( $entities, $force );
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => $e->getMessage() ] );
+        }
+
+        wp_send_json_success( [ 'audit' => $audit, 'force' => $force ] );
     }
 
 }
