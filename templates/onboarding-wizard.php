@@ -182,15 +182,16 @@ if ( ! $show_wizard ) { return; }
         $res.style.color = '#555';
 
         var data = new URLSearchParams({
-            action: 'octowoo_test_connection',
-            nonce:  (window.octoWoo && octoWoo.nonce) || '',
-            _wizard: '1',
-            host:   document.getElementById('ow-wz-host').value,
-            port:   document.getElementById('ow-wz-port').value,
-            dbname: document.getElementById('ow-wz-dbname').value,
-            user:   document.getElementById('ow-wz-user').value,
-            pass:   document.getElementById('ow-wz-pass').value,
-            prefix: document.getElementById('ow-wz-prefix').value,
+            action:    'octowoo_test_connection',
+            nonce:     (window.octoWoo && octoWoo.nonce) || '',
+            _wizard:   '1',
+            // Key names match what AjaxHandler::actionTestConnection() expects.
+            db_host:   document.getElementById('ow-wz-host').value,
+            db_port:   document.getElementById('ow-wz-port').value   || '3306',
+            db_name:   document.getElementById('ow-wz-dbname').value,
+            db_user:   document.getElementById('ow-wz-user').value,
+            db_pass:   document.getElementById('ow-wz-pass').value,
+            db_prefix: document.getElementById('ow-wz-prefix').value || 'oc_',
         });
 
         fetch((window.octoWoo && octoWoo.ajaxUrl) || ajaxurl, { method: 'POST', body: data })
