@@ -107,7 +107,30 @@ class AdminPage {
 
         $active_tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'migration'; // phpcs:ignore WordPress.Security.NonceVerification
 
-        require_once OCTOWOO_PLUGIN_DIR . 'templates/admin-dashboard.php';
+        // Safety buffer: catch any PHP error in the template so we see an error
+        // message instead of a blank page.
+        ob_start();
+        try {
+            require_once OCTOWOO_PLUGIN_DIR . 'templates/admin-dashboard.php';
+        } catch ( \Throwable $e ) {
+            ob_end_clean();
+            printf(
+                '<div class="notice notice-error" style="margin:20px 0;padding:16px;">' .
+                '<h2>OctoWoo — Template Error (v%s)</h2>' .
+                '<p><strong>%s</strong></p>' .
+                '<p>File: %s line %d</p>' .
+                '<pre style="overflow:auto;font-size:11px;background:#f0f0f0;padding:10px;">%s</pre>' .
+                '</div>',
+                esc_html( OCTOWOO_VERSION ),
+                esc_html( $e->getMessage() ),
+                esc_html( $e->getFile() ),
+                (int) $e->getLine(),
+                esc_html( $e->getTraceAsString() )
+            );
+            return;
+        }
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        echo ob_get_clean();
     }
 
     // ── Settings form handler ─────────────────────────────────────────────────
