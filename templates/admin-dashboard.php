@@ -31,9 +31,11 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
 <?php
 // First-run onboarding wizard — rendered inside the main wrap so scripts are already loaded.
 // Shown when: no config saved yet, OR only the _wizard_skipped dummy key exists.
-$_ow_saved_config = get_option( 'octowoo_config', [] );
-$_ow_show_wizard  = empty( $_ow_saved_config )
-    || ( count( $_ow_saved_config ) === 1 && isset( $_ow_saved_config['_wizard_skipped'] ) );
+$_ow_saved_config  = get_option( 'octowoo_config', [] );
+$_ow_ever_skipped  = isset( $_ow_saved_config['_wizard_skipped'] );
+$_ow_has_real_config = ! empty( $_ow_saved_config ) && ! $_ow_ever_skipped;
+// Only show wizard on truly first run: no config at all AND never skipped.
+$_ow_show_wizard = empty( $_ow_saved_config ) && ! $_ow_ever_skipped;
 if ( $_ow_show_wizard ) {
     require_once OCTOWOO_PLUGIN_DIR . 'templates/onboarding-wizard.php';
 }

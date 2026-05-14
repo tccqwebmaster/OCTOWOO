@@ -1723,8 +1723,16 @@ class AjaxHandler {
         $allowed = [ 'source', 'db', 'opencart', 'migration', 'seo', 'multilingual', 'cron', 'woocommerce', 'logging', '_wizard_skipped' ];
         $filtered = array_intersect_key( $config, array_flip( $allowed ) );
 
-        // Allow wizard skip payload which only has _wizard_skipped key.
-        $is_wizard_action = ! empty( $filtered['_wizard_skipped'] );
+        // Wizard skip: payload only has _wizard_skipped=true.
+        // Save it separately so the wizard never shows again.
+        if ( ! empty( $filtered['_wizard_skipped'] ) && count( $filtered ) === 1 ) {
+            $existing = get_option( 'octowoo_config', [] );
+            $existing['_wizard_skipped'] = true;
+            update_option( 'octowoo_config', $existing );
+            wp_send_json_success( [ 'message' => 'Wizard skipped.' ] );
+            return;
+        }
+
         if ( empty( $filtered ) ) {
             wp_send_json_error( [ 'message' => __( 'File does not appear to be a valid OctoWoo settings export.', 'octowoo' ) ] );
         }

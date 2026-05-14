@@ -18,7 +18,7 @@ defined( 'ABSPATH' ) || exit;
 $show_wizard = empty( get_option( 'octowoo_config', [] ) );
 if ( ! $show_wizard ) { return; }
 ?>
-<div id="ow-wizard-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100000;display:flex;align-items:center;justify-content:center;" role="dialog" aria-modal="true" aria-labelledby="ow-wizard-title">
+<div id="ow-wizard-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100000;display:flex;align-items:center;justify-content:center;" role="dialog" aria-modal="true" aria-labelledby="ow-wizard-title" onclick="if(event.target===this)owWzSkip();">
 
     <div id="ow-wizard-box" style="background:#fff;border-radius:12px;width:560px;max-width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);">
 
@@ -297,6 +297,9 @@ if ( ! $show_wizard ) { return; }
         });
         document.getElementById('ow-wizard-overlay').remove();
     };
+
+    // ESC key or click-outside dismisses wizard.
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') owWzSkip(); });
 
     // Boot.
     goTo(1);
