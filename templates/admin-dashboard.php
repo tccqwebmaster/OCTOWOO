@@ -107,11 +107,7 @@ if ( $_ow_show_wizard ) {
             <div id="ow-validate-results" style="display:none;"></div>
         </div>
 
-        <!-- ── STEP 1: Select Entities ──────────────────────────────────── -->
-        <div class="ow-card">
-
         <!-- ── Pre-scan Summary (v2.4.72) ──────────────────────────────── -->
-        <!-- Populated by JS autoDetect() / scanSourceCounts() via octoWoo AJAX -->
         <div id="ow-prescan-summary" style="display:none;" class="ow-card" style="border-left:4px solid #4caf50;">
             <h2 style="margin:0 0 10px;font-size:14px;">📊 <?php esc_html_e( 'Source Store Summary', 'octowoo' ); ?></h2>
             <p class="ow-form-hint" style="margin:0 0 10px;">
@@ -245,7 +241,6 @@ if ( $_ow_show_wizard ) {
                     ?>
                 </p>
             </div>
-        </div>
 
         <!-- ── STEP 2: Additional Options ───────────────────────────────── -->
         <div class="ow-card">
@@ -1025,12 +1020,11 @@ if ( $_ow_show_wizard ) {
     ═════════════════════════════════════════════════════════════════════ -->
     <div id="ow-tab-logs" class="ow-tab-pane" style="display:none;">
 
-        <div <!-- ── Run History (v2.5.0) ─────────────────────────────────────── -->
         <?php
         $ow_run_history = \OctoWoo\Core\MigrationReport::loadHistory();
         if ( ! empty( $ow_run_history ) ) :
         ?>
-        <div class="ow-card" style="margin-top:0;">
+        <div class="ow-card">
             <h2 style="margin:0 0 10px;font-size:14px;">📈 <?php esc_html_e( 'Migration History', 'octowoo' ); ?></h2>
             <table style="width:100%;border-collapse:collapse;font-size:12px;">
                 <thead><tr style="background:#f5f5f5;">
@@ -1057,7 +1051,7 @@ if ( $_ow_show_wizard ) {
         </div>
         <?php endif; ?>
 
-class="ow-card">
+        <div class="ow-card">
             <h2><?php esc_html_e( 'Migration Logs', 'octowoo' ); ?></h2>
 
             <div class="ow-log-controls">
