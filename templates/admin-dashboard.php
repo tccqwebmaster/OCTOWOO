@@ -213,8 +213,8 @@ if ( $_ow_show_wizard ) {
 
             <!-- Language reference & timing note -->
             <div style="margin-top:14px;padding:12px 16px;background:#f0f6fc;border-left:4px solid #2271b1;border-radius:4px;font-size:12px;color:#3c434a;line-height:1.6;">
-                <strong style="font-size:13px;">🌐 <?php esc_html_e( 'Multilingual (Arabic / Secondary Language)', 'octowoo' ); ?></strong><br>
-                <?php esc_html_e( 'Arabic is imported automatically at the END of the full migration in a dedicated "multilingual pass" — you do not need to start a second migration. Just enable "Multilingual data (WPML / Polylang)" in Step 2 below.', 'octowoo' ); ?>
+                <strong style="font-size:13px;">🌐 <?php esc_html_e( 'Multilingual — Secondary Language', 'octowoo' ); ?></strong><br>
+                <?php esc_html_e( 'Secondary language (Arabic, French, Turkish, etc.) is imported automatically at the END of the full migration in a dedicated "multilingual pass" — you do not need to start a second migration. Just enable "Multilingual data (WPML / Polylang)" in Step 2 below.', 'octowoo' ); ?>
                 <hr style="border:none;border-top:1px solid #c9d9e8;margin:10px 0;">
                 <strong><?php esc_html_e( 'OpenCart Language IDs — quick reference:', 'octowoo' ); ?></strong>
                 <span style="color:#666;"><?php esc_html_e( '(Verify in OpenCart Admin → System → Localisation → Languages)', 'octowoo' ); ?></span><br>
@@ -298,7 +298,7 @@ if ( $_ow_show_wizard ) {
                     'checked' => ! empty( $config['multilingual']['enabled'] ),
                     'icon'    => '🌐',
                     'label'   => __( 'Multilingual data (WPML / Polylang)', 'octowoo' ),
-                    'hint'    => __( 'Runs a translation pass AFTER all primary migrators finish. Creates Arabic (or secondary language) posts/terms and links them via WPML/Polylang. Requires WPML or Polylang to be active.', 'octowoo' ),
+                    'hint'    => __( 'Runs a translation pass AFTER all primary migrators finish. Creates secondary-language posts/terms and links them via WPML/Polylang. Requires WPML or Polylang to be active.', 'octowoo' ),
                 ],
             ];
             ?>
@@ -660,7 +660,7 @@ if ( $_ow_show_wizard ) {
                         <span class="ow-form-hint"><?php esc_html_e( 'Usually 1 (English).', 'octowoo' ); ?></span>
                     </div>
                     <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Secondary Language ID (e.g. Arabic)', 'octowoo' ); ?></label>
+                        <label><?php esc_html_e( 'Secondary Language ID (Arabic=2-3, French=2-4, Turkish=2-4)', 'octowoo' ); ?></label>
                         <input type="number" name="octowoo[opencart][language_id_secondary]"
                                value="<?php echo esc_attr( $config['opencart']['language_id_secondary'] ?? 0 ); ?>"
                                min="0">
@@ -801,7 +801,7 @@ if ( $_ow_show_wizard ) {
                                placeholder="en_US">
                     </div>
                     <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Secondary Language Locale (e.g. ar)', 'octowoo' ); ?></label>
+                        <label><?php esc_html_e( 'Secondary Language Code / Locale (e.g. ar)', 'octowoo' ); ?></label>
                         <input type="text" name="octowoo[multilingual][secondary_locale]"
                                value="<?php echo esc_attr( $config['multilingual']['secondary_locale'] ?? 'ar' ); ?>"
                                placeholder="ar">

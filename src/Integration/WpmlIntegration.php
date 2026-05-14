@@ -1378,11 +1378,29 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            // Fall back to primary-language values when secondary meta is absent so every
-            // category still gets a linked secondary-language term.
+            // When secondary-language meta is empty (e.g. wrong language_id_secondary
+            // was used during CategoryMigrator run), try to fetch directly from OC.
+            if ( ( ! $sec_name || ! $sec_description ) && $oc_id > 0 ) {
+                $fresh_cat = $this->fetchSecCategoryDescriptionFromOC( $oc_id );
+                if ( $fresh_cat !== null ) {
+                    if ( ! $sec_name && ! empty( $fresh_cat['name'] ) ) {
+                        $sec_name = sanitize_text_field( $fresh_cat['name'] );
+                        $this->logger->info( "[multilingual] Fetched secondary category name directly from OC for term #{$primary_term_id} (OC #{$oc_id})." );
+                    }
+                    if ( ! $sec_description && ! empty( $fresh_cat['description'] ) ) {
+                        $sec_description = wp_kses_post( $fresh_cat['description'] );
+                    }
+                    // Also update the stored meta so next run doesn't re-fetch from OC.
+                    if ( $sec_name ) {
+                        update_term_meta( $primary_term_id, '_octowoo_name' . $sfx, $sec_name );
+                    }
+                }
+            }
+
+            // Fall back to primary-language values when secondary meta is still absent.
             if ( ! $sec_name ) {
                 $sec_name = $primary_term->name;
-                $this->logger->debug( "[multilingual] No secondary-language name meta for {$taxonomy} term WC #{$primary_term_id} – using primary name as fallback." );
+                $this->logger->debug( "[multilingual] No secondary-language name for {$taxonomy} term WC #{$primary_term_id} (OC #{$oc_id}) – using primary name as fallback." );
             }
             if ( ! $sec_description ) {
                 $sec_description = $primary_term->description;
@@ -1925,20 +1943,22 @@ class WpmlIntegration extends AbstractMigrator {
         if ( $this->adapter === 'wpml' ) {
             $langs = apply_filters( 'wpml_active_languages', null, [ 'skip_missing' => 0 ] );
             if ( is_array( $langs ) && ! empty( $langs ) ) {
-                $this->primary_lang = $this->resolveAgainstWpmlLanguages( $configured_primary, $langs, 'en' );
-                $this->secondary_lang = $this->resolveAgainstWpmlLanguages( $configured_secondary, $langs, 'ar' );
+                $this->primary_lang   = $this->resolveAgainstWpmlLanguages( $configured_primary,   $langs, 'en' );
+                $this->secondary_lang = $this->resolveAgainstWpmlLanguages( $configured_secondary, $langs, $configured_secondary ?: 'ar' );
             }
         } elseif ( $this->adapter === 'polylang' && function_exists( 'pll_languages_list' ) ) {
             $active_slugs = (array) pll_languages_list( [ 'fields' => 'slug' ] );
             if ( ! empty( $active_slugs ) ) {
-                $this->primary_lang = $this->resolveAgainstSimpleSlugs( $configured_primary, $active_slugs, 'en' );
-                $this->secondary_lang = $this->resolveAgainstSimpleSlugs( $configured_secondary, $active_slugs, 'ar' );
+                $this->primary_lang   = $this->resolveAgainstSimpleSlugs( $configured_primary,   $active_slugs, 'en' );
+                $this->secondary_lang = $this->resolveAgainstSimpleSlugs( $configured_secondary, $active_slugs, $configured_secondary ?: 'ar' );
             }
         }
 
         if ( $this->primary_lang === $this->secondary_lang ) {
-            $this->logger->warning( "[multilingual] Primary and secondary resolved to same language '{$this->primary_lang}'. Forcing fallback secondary 'ar'." );
-            $this->secondary_lang = 'ar';
+            // Use configured secondary_locale code (first segment) as fallback — not hardcoded 'ar'.
+            $fallback_secondary   = strtolower( explode( '_', $configured_secondary )[0] ?? 'ar' );
+            $this->logger->warning( "[multilingual] Primary and secondary resolved to same language '{$this->primary_lang}'. Keeping configured value '{$fallback_secondary}'." );
+            $this->secondary_lang = $fallback_secondary !== $this->primary_lang ? $fallback_secondary : $configured_secondary;
         }
     }
 
@@ -2013,6 +2033,48 @@ class WpmlIntegration extends AbstractMigrator {
 
         $parts = preg_split( '/[_-]/', $value );
         return (string) ( $parts[0] ?? $value );
+    }
+
+    // ── Direct OC category description fetch (fallback when termmeta empty) ───────
+
+    /**
+     * Fetch the secondary-language category description directly from OpenCart.
+     * Used when _octowoo_name_{sfx} term meta is empty (wrong language_id configured).
+     *
+     * @param  int        $oc_id  OpenCart category_id.
+     * @return array|null         Row from oc_category_description, or null.
+     */
+    private function fetchSecCategoryDescriptionFromOC( int $oc_id ): ?array {
+        try {
+            $pfx     = $this->pfx();
+            $pri_lid = $this->langId();
+            $sec_lid = $this->langIdSecondary();
+
+            if ( $sec_lid > 0 ) {
+                $row = $this->oc->fetchAll(
+                    "SELECT name, description, meta_title, meta_description, meta_keyword
+                     FROM `{$pfx}category_description`
+                     WHERE category_id = ? AND language_id = ? LIMIT 1",
+                    [ $oc_id, $sec_lid ]
+                );
+                if ( ! empty( $row ) ) { return $row[0]; }
+            }
+            // Auto-detect: first non-primary language.
+            $all = $this->oc->fetchAll(
+                "SELECT language_id, name, description, meta_title, meta_description, meta_keyword
+                 FROM `{$pfx}category_description`
+                 WHERE category_id = ? AND language_id != ?
+                 ORDER BY language_id ASC LIMIT 1",
+                [ $oc_id, $pri_lid ]
+            );
+            if ( ! empty( $all ) ) {
+                $this->logger->info( "[multilingual] Auto-detected secondary category description (language_id={$all[0]['language_id']}) for OC #{$oc_id}." );
+                return $all[0];
+            }
+        } catch ( \Throwable $e ) {
+            $this->logger->warning( "[multilingual] fetchSecCategoryDescriptionFromOC failed for OC #{$oc_id}: " . $e->getMessage() );
+        }
+        return null;
     }
 
     // ── Override: normalize secLangSuffix to first-segment only ─────────────────
