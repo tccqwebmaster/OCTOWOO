@@ -652,19 +652,38 @@ if ( $_ow_show_wizard ) {
                                value="<?php echo esc_attr( $config['opencart']['shop_url'] ?? '' ); ?>"
                                placeholder="https://old-shop.com">
                     </div>
-                    <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Primary Language ID', 'octowoo' ); ?></label>
-                        <input type="number" name="octowoo[opencart][language_id]"
-                               value="<?php echo esc_attr( $config['opencart']['language_id'] ?? 1 ); ?>"
-                               min="1">
-                        <span class="ow-form-hint"><?php esc_html_e( 'Usually 1 (English).', 'octowoo' ); ?></span>
-                    </div>
-                    <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Secondary Language ID (Arabic=2-3, French=2-4, Turkish=2-4)', 'octowoo' ); ?></label>
-                        <input type="number" name="octowoo[opencart][language_id_secondary]"
-                               value="<?php echo esc_attr( $config['opencart']['language_id_secondary'] ?? 0 ); ?>"
-                               min="0">
-                        <span class="ow-form-hint"><?php esc_html_e( '0 = disabled.', 'octowoo' ); ?></span>
+                    <!-- Language ID auto-detector — spans both columns -->
+                    <div class="ow-form-group" style="grid-column:1/-1;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                            <label style="font-weight:600;"><?php esc_html_e( '🌐 OpenCart Language IDs', 'octowoo' ); ?></label>
+                            <button type="button" id="ow-btn-detect-languages" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
+                                🔍 <?php esc_html_e( 'Auto-Detect from OpenCart DB', 'octowoo' ); ?>
+                            </button>
+                        </div>
+
+                        <!-- Language detection result panel -->
+                        <div id="ow-lang-detect-panel" style="display:none;margin-bottom:14px;padding:12px 14px;background:#f0f6ff;border:1px solid #b3d1f7;border-radius:6px;">
+                            <div id="ow-lang-detect-result"></div>
+                        </div>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div class="ow-form-group" style="margin:0;">
+                                <label><?php esc_html_e( 'Primary Language ID', 'octowoo' ); ?></label>
+                                <input type="number" id="ow-lang-primary" name="octowoo[opencart][language_id]"
+                                       value="<?php echo esc_attr( $config['opencart']['language_id'] ?? 1 ); ?>"
+                                       min="1">
+                                <span id="ow-lang-primary-name" class="ow-form-hint" style="color:#2271b1;"></span>
+                                <span class="ow-form-hint"><?php esc_html_e( 'Usually 1 (English). Click Auto-Detect to fill automatically.', 'octowoo' ); ?></span>
+                            </div>
+                            <div class="ow-form-group" style="margin:0;">
+                                <label><?php esc_html_e( 'Secondary Language ID', 'octowoo' ); ?></label>
+                                <input type="number" id="ow-lang-secondary" name="octowoo[opencart][language_id_secondary]"
+                                       value="<?php echo esc_attr( $config['opencart']['language_id_secondary'] ?? 0 ); ?>"
+                                       min="0">
+                                <span id="ow-lang-secondary-name" class="ow-form-hint" style="color:#2271b1;"></span>
+                                <span class="ow-form-hint"><?php esc_html_e( '0 = disabled. Click Auto-Detect to see all available languages.', 'octowoo' ); ?></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

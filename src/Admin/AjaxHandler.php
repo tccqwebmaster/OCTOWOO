@@ -55,6 +55,7 @@ class AjaxHandler {
             'octowoo_get_logs',
             'octowoo_reset_migration',
             'octowoo_test_connection',
+            'octowoo_detect_languages',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -176,6 +177,10 @@ class AjaxHandler {
 
             case 'octowoo_test_connection':
                 $this->actionTestConnection();
+                break;
+
+            case 'octowoo_detect_languages':
+                $this->actionDetectLanguages();
                 break;
 
             case 'octowoo_run_chunk':
@@ -1896,6 +1901,119 @@ class AjaxHandler {
         }
 
         wp_send_json_success( [ 'audit' => $audit, 'force' => $force ] );
+    }
+
+
+    // ── Action: detect OpenCart languages ─────────────────────────────────────
+
+    /**
+     * Query oc_language table from the OpenCart DB and return all active languages
+     * with their IDs, names, and locale codes — so users don't have to look up IDs manually.
+     *
+     * Also auto-detects which language should be primary (largest count in oc_product_description)
+     * and which should be secondary (all others).
+     */
+    private function actionDetectLanguages(): void {
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        // Accept live credentials from the form (same pattern as testConnection).
+        if ( array_key_exists( 'db_host', $_POST ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['host']     = sanitize_text_field( $_POST['db_host']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['port']     = (int) ( $_POST['db_port']   ?? 3306 ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            if ( $posted_pass !== '' ) { $config['db']['password'] = $posted_pass; }
+        }
+
+        try {
+            $connector = new \OctoWoo\Core\DatabaseConnector( $config['db'] );
+            $oc        = $connector->connect();
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [
+                'message' => 'Cannot connect to OpenCart DB: ' . $e->getMessage(),
+            ] );
+        }
+
+        $pfx = $config['db']['prefix'] ?? 'oc_';
+
+        // Query all active languages from oc_language.
+        try {
+            $stmt = $oc->prepare(
+                "SELECT language_id, name, code, locale, status
+                 FROM `{$pfx}language`
+                 ORDER BY sort_order ASC, language_id ASC"
+            );
+            $stmt->execute();
+            $lang_rows = $stmt->fetchAll( \PDO::FETCH_ASSOC );
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => 'Could not query oc_language: ' . $e->getMessage() ] );
+        }
+
+        if ( empty( $lang_rows ) ) {
+            wp_send_json_error( [ 'message' => 'No languages found in oc_language table.' ] );
+        }
+
+        // Count rows per language in oc_product_description to identify primary
+        // (the language with the most product descriptions = the main store language).
+        $desc_counts = [];
+        try {
+            $stmt2 = $oc->query(
+                "SELECT language_id, COUNT(*) AS cnt
+                 FROM `{$pfx}product_description`
+                 GROUP BY language_id
+                 ORDER BY cnt DESC"
+            );
+            foreach ( $stmt2->fetchAll( \PDO::FETCH_ASSOC ) as $r ) {
+                $desc_counts[ (int) $r['language_id'] ] = (int) $r['cnt'];
+            }
+        } catch ( \Throwable $e ) {
+            // Not fatal — just won't show product counts.
+        }
+
+        // Build language list with auto-suggestion.
+        $languages      = [];
+        $suggested_pri  = 0;
+        $suggested_sec  = 0;
+        $max_count      = 0;
+
+        foreach ( $lang_rows as $lr ) {
+            $lid   = (int) $lr['language_id'];
+            $count = $desc_counts[ $lid ] ?? 0;
+            $languages[] = [
+                'id'      => $lid,
+                'name'    => $lr['name'],
+                'code'    => $lr['code'],
+                'locale'  => $lr['locale'],
+                'status'  => (int) $lr['status'],
+                'count'   => $count,
+            ];
+            // Language with most product descriptions = primary.
+            if ( $count > $max_count ) {
+                $max_count     = $count;
+                $suggested_pri = $lid;
+            }
+        }
+
+        // Secondary = active language that is not primary, with second-most descriptions.
+        $sec_max = 0;
+        foreach ( $languages as $lang ) {
+            if ( $lang['id'] !== $suggested_pri && $lang['status'] === 1 ) {
+                if ( $lang['count'] >= $sec_max ) {
+                    $sec_max      = $lang['count'];
+                    $suggested_sec = $lang['id'];
+                }
+            }
+        }
+
+        wp_send_json_success( [
+            'languages'     => $languages,
+            'suggested_pri' => $suggested_pri,
+            'suggested_sec' => $suggested_sec,
+        ] );
     }
 
 }

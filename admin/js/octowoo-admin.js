@@ -190,6 +190,11 @@
         $('#ow-btn-repair-categories').on('click', repairCategories);
 
         // Connection test.
+        $('#ow-btn-detect-languages').on('click', detectLanguages);
+        // Event delegation for dynamically-created language set buttons.
+        $(document).on('click', '.ow-set-lang-btn', function () {
+            owSetLang($(this).data('type'), $(this).data('id'), $(this).data('name'));
+        });
         $('#ow-btn-test-connection').on('click', testConnection);
 
         // Prescan.
@@ -971,6 +976,128 @@
     /* ════════════════════════════════════════════════════════════════════
        TEST DB CONNECTION
     ════════════════════════════════════════════════════════════════════ */
+    /* ════════════════════════════════════════════════════════════════════
+       LANGUAGE AUTO-DETECTOR
+    ════════════════════════════════════════════════════════════════════ */
+    function detectLanguages() {
+        var $btn    = $('#ow-btn-detect-languages');
+        var $panel  = $('#ow-lang-detect-panel');
+        var $result = $('#ow-lang-detect-result');
+
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Detecting…');
+        $panel.show();
+        $result.html('<em style="color:#888;">Querying OpenCart oc_language table…</em>');
+
+        var payload = {
+            action:    'octowoo_detect_languages',
+            nonce:     octoWoo.nonce,
+            db_host:   $('input[name="octowoo[db][host]"]').val()     || '',
+            db_port:   $('input[name="octowoo[db][port]"]').val()     || '3306',
+            db_name:   $('input[name="octowoo[db][database]"]').val() || '',
+            db_user:   $('input[name="octowoo[db][username]"]').val() || '',
+            db_prefix: $('input[name="octowoo[db][prefix]"]').val()   || 'oc_',
+        };
+        var pass = $('input[name="octowoo[db][password]"]').val();
+        if (pass && pass !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022') { payload.db_pass = pass; }
+
+        $.post(octoWoo.ajaxUrl, payload)
+        .done(function(res) {
+            if (!res || !res.success || !res.data) {
+                $result.html('<span style="color:#c62828;">\u2718 ' + ((res && res.data && res.data.message) || 'Detection failed') + '</span>');
+                return;
+            }
+
+            var langs  = res.data.languages  || [];
+            var sugPri = res.data.suggested_pri || 0;
+            var sugSec = res.data.suggested_sec || 0;
+            var curPri = parseInt($('#ow-lang-primary').val())   || 0;
+            var curSec = parseInt($('#ow-lang-secondary').val()) || 0;
+
+            if (!langs.length) {
+                $result.html('<span style="color:#c62828;">No languages found in oc_language.</span>');
+                return;
+            }
+
+            var html = '<p style="margin:0 0 10px;font-size:12px;font-weight:600;">'
+                + '\u2714 Found ' + langs.length + ' language(s) in OpenCart. Click any row to set as Primary / Secondary:</p>';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="background:#e8f0fe;">'
+                + '<th style="padding:5px 8px;border:1px solid #c7d3f0;text-align:left;">ID</th>'
+                + '<th style="padding:5px 8px;border:1px solid #c7d3f0;text-align:left;">Language Name</th>'
+                + '<th style="padding:5px 8px;border:1px solid #c7d3f0;text-align:left;">Code</th>'
+                + '<th style="padding:5px 8px;border:1px solid #c7d3f0;text-align:center;">Products</th>'
+                + '<th style="padding:5px 8px;border:1px solid #c7d3f0;text-align:center;">Set as</th>'
+                + '</tr></thead><tbody>';
+
+            langs.forEach(function(lang) {
+                var isPri    = lang.id === sugPri;
+                var isSec    = lang.id === sugSec;
+                var isCurPri = lang.id === curPri;
+                var isCurSec = lang.id === curSec;
+                var rowBg    = isCurPri ? '#edf7ed' : (isCurSec ? '#fff8e7' : (isPri ? '#f0fdf4' : (isSec ? '#fffbeb' : '#fff')));
+                var badge    = isPri ? ' <span style="background:#2e7d32;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">suggested primary</span>'
+                             : isSec ? ' <span style="background:#e65100;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">suggested secondary</span>'
+                             : '';
+                var curBadge = isCurPri ? ' <span style="background:#2271b1;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">\u2714 current primary</span>'
+                             : isCurSec ? ' <span style="background:#9c6f00;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">\u2714 current secondary</span>'
+                             : '';
+                var statusIcon = lang.status ? '' : ' <span style="color:#c62828;font-size:10px;" title="Inactive in OpenCart">\u26a0 inactive</span>';
+
+                html += '<tr style="background:' + rowBg + ';cursor:default;">';
+                html += '<td style="padding:6px 8px;border:1px solid #ddd;font-weight:700;font-family:monospace;font-size:14px;">' + lang.id + '</td>';
+                html += '<td style="padding:6px 8px;border:1px solid #ddd;">'
+                    + '<strong>' + $('<span>').text(lang.name).html() + '</strong>'
+                    + badge + curBadge + statusIcon + '</td>';
+                html += '<td style="padding:6px 8px;border:1px solid #ddd;font-family:monospace;color:#555;">' + $('<span>').text(lang.code).html() + '</td>';
+                html += '<td style="padding:6px 8px;border:1px solid #ddd;text-align:center;">'
+                    + (lang.count > 0 ? '<strong>' + lang.count.toLocaleString() + '</strong>' : '<span style="color:#aaa;">—</span>') + '</td>';
+                html += '<td style="padding:6px 8px;border:1px solid #ddd;text-align:center;white-space:nowrap;">';
+                html += '<button type="button" class="ow-btn ow-btn-secondary ow-set-lang-btn" '
+                    + 'data-type="primary" data-id="' + lang.id + '" data-name="' + $('<span>').text(lang.name).html() + '" '
+                    + 'style="font-size:10px;padding:2px 8px;margin-right:4px;">'
+                    + (isCurPri ? '\u2714 ' : '') + 'Set Primary</button>';
+                html += '<button type="button" class="ow-btn ow-btn-secondary ow-set-lang-btn" '
+                    + 'data-type="secondary" data-id="' + lang.id + '" data-name="' + $('<span>').text(lang.name).html() + '" '
+                    + 'style="font-size:10px;padding:2px 8px;">'
+                    + (isCurSec ? '\u2714 ' : '') + 'Set Secondary</button>';
+                html += '</td></tr>';
+            });
+            html += '</tbody></table>';
+            html += '<p style="margin:8px 0 0;font-size:11px;color:#555;">'
+                + '<strong>Tip:</strong> The language with the most Products is usually your primary language. '
+                + 'After setting, click <strong>Save Settings</strong>.</p>';
+
+            // Auto-apply suggestions when fields are at defaults.
+            if (sugPri > 0 && (curPri === 0 || curPri === 1)) {
+                var priName = (langs.find(function(l) { return l.id === sugPri; }) || {}).name || '';
+                owSetLang('primary', sugPri, priName);
+            }
+            if (sugSec > 0 && sugSec !== sugPri && (curSec === 0 || curSec === 2)) {
+                var secName = (langs.find(function(l) { return l.id === sugSec; }) || {}).name || '';
+                owSetLang('secondary', sugSec, secName);
+            }
+
+            $result.html(html);
+        })
+        .fail(function() {
+            $result.html('<span style="color:#c62828;">Request failed. Save settings and check DB connection first.</span>');
+        })
+        .always(function() {
+            $btn.prop('disabled', false).html('\ud83d\udd0d Auto-Detect from OpenCart DB');
+        });
+    }
+
+    // Global setter so onclick handlers inside the dynamically-built table can call it.
+    window.owSetLang = function(type, id, name) {
+        if (type === 'primary') {
+            $('#ow-lang-primary').val(id);
+            $('#ow-lang-primary-name').text(name ? '\u2192 ' + name : '');
+        } else {
+            $('#ow-lang-secondary').val(id);
+            $('#ow-lang-secondary-name').text(name ? '\u2192 ' + name : '');
+        }
+    };
+
     function testConnection() {
         var $btn    = $('#ow-btn-test-connection');
         var $result = $('#ow-connection-result');
