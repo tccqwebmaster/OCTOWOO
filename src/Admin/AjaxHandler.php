@@ -1720,9 +1720,11 @@ class AjaxHandler {
         }
 
         // Only allow expected top-level keys.
-        $allowed = [ 'source', 'db', 'opencart', 'migration', 'seo', 'multilingual', 'cron', 'woocommerce', 'logging' ];
+        $allowed = [ 'source', 'db', 'opencart', 'migration', 'seo', 'multilingual', 'cron', 'woocommerce', 'logging', '_wizard_skipped' ];
         $filtered = array_intersect_key( $config, array_flip( $allowed ) );
 
+        // Allow wizard skip payload which only has _wizard_skipped key.
+        $is_wizard_action = ! empty( $filtered['_wizard_skipped'] );
         if ( empty( $filtered ) ) {
             wp_send_json_error( [ 'message' => __( 'File does not appear to be a valid OctoWoo settings export.', 'octowoo' ) ] );
         }

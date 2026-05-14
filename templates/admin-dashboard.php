@@ -9,13 +9,6 @@
 
 defined( 'ABSPATH' ) || exit;
 
-// v2.5.0: First-run onboarding wizard — shown when no config is saved yet.
-// A dummy key '_wizard_skipped' in octowoo_config means the user explicitly skipped.
-$_ow_saved_config = get_option( 'octowoo_config', [] );
-if ( empty( $_ow_saved_config ) || ( isset( $_ow_saved_config['_wizard_skipped'] ) && count( $_ow_saved_config ) === 1 ) ) {
-    require_once OCTOWOO_PLUGIN_DIR . 'templates/onboarding-wizard.php';
-}
-
 use OctoWoo\Admin\AdminPage;
 use OctoWoo\Core\CheckpointManager;
 
@@ -34,6 +27,17 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
 // phpcs:enable
 ?>
 <div class="wrap" id="octowoo-app">
+
+<?php
+// First-run onboarding wizard — rendered inside the main wrap so scripts are already loaded.
+// Shown when: no config saved yet, OR only the _wizard_skipped dummy key exists.
+$_ow_saved_config = get_option( 'octowoo_config', [] );
+$_ow_show_wizard  = empty( $_ow_saved_config )
+    || ( count( $_ow_saved_config ) === 1 && isset( $_ow_saved_config['_wizard_skipped'] ) );
+if ( $_ow_show_wizard ) {
+    require_once OCTOWOO_PLUGIN_DIR . 'templates/onboarding-wizard.php';
+}
+?>
 
     <!-- Header -->
     <div class="ow-header">
@@ -1107,9 +1111,10 @@ class="ow-card">
                     <span style="margin-left:auto;font-size:9px;" id="ow-log-stat-run"></span>
                 </div>
                 <div id="ow-log-container" class="ow-log-container" style="border-radius:0 0 6px 6px;border-top:none;">
-                <div style="color:#6e6e6e;"><?php esc_html_e( 'Select the Logs tab to load entries…', 'octowoo' ); ?></div>
-            </div>
-        </div>
+                    <div style="color:#6e6e6e;"><?php esc_html_e( 'Select the Logs tab to load entries…', 'octowoo' ); ?></div>
+                </div><!-- /ow-log-container -->
+            </div><!-- /ow-log-stats wrapper -->
+        </div><!-- /ow-card logs -->
 
     </div><!-- /tab-logs -->
 
