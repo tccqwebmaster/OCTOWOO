@@ -5,7 +5,7 @@ Requires at least: 5.8
 Tested up to: 6.8
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 2.5.7
+Stable tag: 2.5.8
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
@@ -158,6 +158,77 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 
 == Changelog ==
 
+= 2.5.8 =
+* **Fixed:** `DataPurger` missing `defined('ABSPATH') || exit` direct-access guard (WC.com code review requirement).
+* **Fixed:** `.pot` file version header updated from 2.3.2 to 2.5.8.
+* **Updated:** Complete changelog added for versions 2.5.0–2.5.7.
+* **Updated:** Upgrade notice updated for latest releases.
+
+= 2.5.7 =
+* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The OctoWoo completion summary email is still delivered.
+* **Added:** 🔕 "Suppress emails during migration" toggle in Migration Options (default: ON). Survives across background/chunked AJAX requests via a transient.
+
+= 2.5.6 =
+* **Performance:** OrderMigrator: `fetchOrderProducts/Totals` previously loaded ALL rows at once (150k+ rows into PHP RAM for large stores). Now fetches per-order. Memory usage is now O(1) instead of O(n_orders × avg_items).
+* **Performance:** OrderMigrator: `calculate_totals()` replaced with direct WC setter calls (`set_total`, `set_cart_tax`, etc.) — 4× faster per order.
+* **Performance:** CustomerMigrator: `get_user_by('email')` and `username_exists()` called per customer removed. Replaced with `buildExistingEmailMap()` and `buildExistingUsernameSet()` — two queries total regardless of customer count.
+* **Performance:** Both migrators now wrap batches with `wp_suspend_cache_invalidation()` + single `wp_cache_flush()` at end.
+* **Added:** Order history from `oc_order_history` imported as WC private order notes with original timestamps.
+* **Added:** `oc_order_product_option` (variation/option choices) stored as WC order item meta — customers can see what colour/size they ordered.
+* **Added:** Order tracking numbers stored as `_octowoo_tracking_number` + `_wc_shipment_tracking_items` (WooCommerce Shipment Tracking plugin compatible).
+* **Added:** Order IP address, user agent stored as WC standard meta.
+* **Added:** Customer `customer_group_id` stored as `_octowoo_customer_group_id`.
+* **Added:** Customer `telephone` stored as both `billing_phone` and `shipping_phone`.
+* **Fixed:** `updateCustomerMeta()` brace-nesting bug — newsletter opt-in and customer group were only written when a billing address existed.
+
+= 2.5.5 =
+* **Improved:** Log messages across all migrators now include human-readable context: SKU, product name, customer email, order total, category slug. Example: `✔ Created simple product | WC #5043 | OC #821 | SKU: ABC-001 | Name: "Blue Linen Shirt"`.
+* **Improved:** Log viewer UI completely rebuilt — dark terminal design (VS Code palette), sticky column header, level-tinted rows, per-migrator colour coding, syntax highlighting for IDs/SKUs/names/statuses.
+* **Added:** Migrator filter dropdown — show logs for one migrator at a time.
+* **Added:** Live search box in Logs tab (debounced, client-side).
+* **Added:** Stats bar above log container: total entries, error count, warning count, success count.
+
+= 2.5.4 =
+* **Fixed:** `purgeDownloads(force)` could delete Porto, Elementor, Divi, Avada, Beaver Builder, Bricks, and 35+ other theme/builder post types. Added comprehensive 40-entry exclusion list. Added `octowoo_purge_protected_post_types` filter hook.
+* **Fixed:** `purgeProducts(force)` could delete media library images shared with theme builder posts. Added safety subquery excluding shared attachments.
+* **Fixed:** `purgeCategories()` config key typo (`oc_db` vs `db`) — category transient was never cleared after purge.
+* **Fixed:** `resetAutoIncrements()` now only runs in force mode and only on empty tables.
+* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-OctoWoo) item warnings, and safety notes.
+
+= 2.5.3 =
+* **Fixed:** `PolylangIntegration` was reading wrong meta keys for product translations (was reading `_octowoo_title_ar` / `_octowoo_desc_ar` which are InformationMigrator keys that don't exist on products). All 4 passes now use correct keys.
+* **Fixed:** Secondary product tags (`oc_product_description.tag`) now stored as `_octowoo_tag{sfx}` and assigned to translated products via Polylang.
+* **Fixed:** `ProductMigrator`: `_manage_stock` written twice — removed unconditional first write. Products with `subtract=0` now correctly get `manage_stock=no`.
+* **Fixed:** `sort_order` now written to WP `menu_order`.
+* **Fixed:** `PolylangIntegration`: category SEO meta never written to translated terms. Added `writeCategorySeoMeta()` calls.
+* **Fixed:** `PolylangIntegration`: update path never refreshed WC product meta. `copyProductMeta()` now called on update path.
+
+= 2.5.2 =
+* **Fixed (CRITICAL):** 301 redirects never fired on the front end. `template_redirect` was registered inside `AdminPage::init()` which is wrapped in `is_admin()`. Moved to `octowoo.php` at `plugins_loaded` priority 1, outside `is_admin()`.
+* **Fixed:** Redirect patterns expanded — each product/category now generates 4 source patterns (query-string, SEO keyword, OC 2.x path, `.html` suffix). Handler normalises trailing slashes and URL-decodes paths.
+* **Fixed:** Missing `return` in `actionGetProgress()` after empty run_id check — execution continued, causing double JSON response.
+* **Fixed:** `_manage_stock` double-write in `ProductMigrator`.
+* **Fixed:** Category transient not cleared on Reset — now deletes all 4 transient key formats.
+* **Fixed:** Page-load button state now reflects server-side pause state after page reload.
+
+= 2.5.1 =
+* **Fixed (recurring):** `PolylangIntegration` meta key mismatch — was reading `_octowoo_sec_title` / `_octowoo_sec_name` which do not exist. Now reads correct keys matching `AbstractMigrator::secLangSuffix()` pattern.
+* **Fixed (recurring):** Category duplicates caused by `term_exists()` checking `parent=0` when real term has a real parent. Replaced with 3-check chain: OC ID meta → name+parent → name+any parent.
+* **Fixed (recurring):** Product→category assignment failures when `ProductMigrator` ran before `CategoryMigrator`. Added DB meta fallback when id_map is cold.
+* **Fixed (recurring):** Manufacturers/brands never assigned to products — `manufacturer_id` missing from SQL. Added `assignManufacturerTerm()`.
+* **Added:** "🏷️ Repair Product Categories" button re-assigns category terms for all migrated products.
+
+= 2.5.0 =
+* **Added:** Polylang integration — full support for products, categories, pages, tags.
+* **Added:** First-run onboarding wizard (3-step modal).
+* **Added:** Per-item auto-retry (2 retries, 500ms sleep) for transient DB deadlocks.
+* **Added:** Migration run history (last 10 runs) displayed in Logs tab.
+* **Added:** Cron status widget with "Run Now" button.
+* **Added:** WP-CLI dry-run progress bar.
+* **Added:** `assets/README.md` with WC.com banner/icon/screenshot specifications.
+* **Fixed:** `ManufacturerMigrator` falls back to native WooCommerce `pa_brand` attribute when no brand plugin active.
+* **Fixed:** `Encryptor` now uses plugin-specific random key (generated on activation) instead of `AUTH_KEY`.
+
 = 2.4.70 =
 * **Fixed:** `OCTOWOO_VERSION` constant was 2.4.68 while plugin header said 2.4.69 — now both are 2.4.70 and kept in sync by the improved bump script.
 * **Fixed:** `scripts/bump_version.php` now updates the plugin header `* Version:` line, the `define('OCTOWOO_VERSION',...)` constant, `readme.txt` Stable tag, and `composer.json` version — all in one command.
@@ -217,6 +288,77 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Fixed:** Reset Progress now works even with an active-run lock.
 
 == Upgrade Notice ==
+
+= 2.5.8 =
+* **Fixed:** `DataPurger` missing `defined('ABSPATH') || exit` direct-access guard (WC.com code review requirement).
+* **Fixed:** `.pot` file version header updated from 2.3.2 to 2.5.8.
+* **Updated:** Complete changelog added for versions 2.5.0–2.5.7.
+* **Updated:** Upgrade notice updated for latest releases.
+
+= 2.5.7 =
+* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The OctoWoo completion summary email is still delivered.
+* **Added:** 🔕 "Suppress emails during migration" toggle in Migration Options (default: ON). Survives across background/chunked AJAX requests via a transient.
+
+= 2.5.6 =
+* **Performance:** OrderMigrator: `fetchOrderProducts/Totals` previously loaded ALL rows at once (150k+ rows into PHP RAM for large stores). Now fetches per-order. Memory usage is now O(1) instead of O(n_orders × avg_items).
+* **Performance:** OrderMigrator: `calculate_totals()` replaced with direct WC setter calls (`set_total`, `set_cart_tax`, etc.) — 4× faster per order.
+* **Performance:** CustomerMigrator: `get_user_by('email')` and `username_exists()` called per customer removed. Replaced with `buildExistingEmailMap()` and `buildExistingUsernameSet()` — two queries total regardless of customer count.
+* **Performance:** Both migrators now wrap batches with `wp_suspend_cache_invalidation()` + single `wp_cache_flush()` at end.
+* **Added:** Order history from `oc_order_history` imported as WC private order notes with original timestamps.
+* **Added:** `oc_order_product_option` (variation/option choices) stored as WC order item meta — customers can see what colour/size they ordered.
+* **Added:** Order tracking numbers stored as `_octowoo_tracking_number` + `_wc_shipment_tracking_items` (WooCommerce Shipment Tracking plugin compatible).
+* **Added:** Order IP address, user agent stored as WC standard meta.
+* **Added:** Customer `customer_group_id` stored as `_octowoo_customer_group_id`.
+* **Added:** Customer `telephone` stored as both `billing_phone` and `shipping_phone`.
+* **Fixed:** `updateCustomerMeta()` brace-nesting bug — newsletter opt-in and customer group were only written when a billing address existed.
+
+= 2.5.5 =
+* **Improved:** Log messages across all migrators now include human-readable context: SKU, product name, customer email, order total, category slug. Example: `✔ Created simple product | WC #5043 | OC #821 | SKU: ABC-001 | Name: "Blue Linen Shirt"`.
+* **Improved:** Log viewer UI completely rebuilt — dark terminal design (VS Code palette), sticky column header, level-tinted rows, per-migrator colour coding, syntax highlighting for IDs/SKUs/names/statuses.
+* **Added:** Migrator filter dropdown — show logs for one migrator at a time.
+* **Added:** Live search box in Logs tab (debounced, client-side).
+* **Added:** Stats bar above log container: total entries, error count, warning count, success count.
+
+= 2.5.4 =
+* **Fixed:** `purgeDownloads(force)` could delete Porto, Elementor, Divi, Avada, Beaver Builder, Bricks, and 35+ other theme/builder post types. Added comprehensive 40-entry exclusion list. Added `octowoo_purge_protected_post_types` filter hook.
+* **Fixed:** `purgeProducts(force)` could delete media library images shared with theme builder posts. Added safety subquery excluding shared attachments.
+* **Fixed:** `purgeCategories()` config key typo (`oc_db` vs `db`) — category transient was never cleared after purge.
+* **Fixed:** `resetAutoIncrements()` now only runs in force mode and only on empty tables.
+* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-OctoWoo) item warnings, and safety notes.
+
+= 2.5.3 =
+* **Fixed:** `PolylangIntegration` was reading wrong meta keys for product translations (was reading `_octowoo_title_ar` / `_octowoo_desc_ar` which are InformationMigrator keys that don't exist on products). All 4 passes now use correct keys.
+* **Fixed:** Secondary product tags (`oc_product_description.tag`) now stored as `_octowoo_tag{sfx}` and assigned to translated products via Polylang.
+* **Fixed:** `ProductMigrator`: `_manage_stock` written twice — removed unconditional first write. Products with `subtract=0` now correctly get `manage_stock=no`.
+* **Fixed:** `sort_order` now written to WP `menu_order`.
+* **Fixed:** `PolylangIntegration`: category SEO meta never written to translated terms. Added `writeCategorySeoMeta()` calls.
+* **Fixed:** `PolylangIntegration`: update path never refreshed WC product meta. `copyProductMeta()` now called on update path.
+
+= 2.5.2 =
+* **Fixed (CRITICAL):** 301 redirects never fired on the front end. `template_redirect` was registered inside `AdminPage::init()` which is wrapped in `is_admin()`. Moved to `octowoo.php` at `plugins_loaded` priority 1, outside `is_admin()`.
+* **Fixed:** Redirect patterns expanded — each product/category now generates 4 source patterns (query-string, SEO keyword, OC 2.x path, `.html` suffix). Handler normalises trailing slashes and URL-decodes paths.
+* **Fixed:** Missing `return` in `actionGetProgress()` after empty run_id check — execution continued, causing double JSON response.
+* **Fixed:** `_manage_stock` double-write in `ProductMigrator`.
+* **Fixed:** Category transient not cleared on Reset — now deletes all 4 transient key formats.
+* **Fixed:** Page-load button state now reflects server-side pause state after page reload.
+
+= 2.5.1 =
+* **Fixed (recurring):** `PolylangIntegration` meta key mismatch — was reading `_octowoo_sec_title` / `_octowoo_sec_name` which do not exist. Now reads correct keys matching `AbstractMigrator::secLangSuffix()` pattern.
+* **Fixed (recurring):** Category duplicates caused by `term_exists()` checking `parent=0` when real term has a real parent. Replaced with 3-check chain: OC ID meta → name+parent → name+any parent.
+* **Fixed (recurring):** Product→category assignment failures when `ProductMigrator` ran before `CategoryMigrator`. Added DB meta fallback when id_map is cold.
+* **Fixed (recurring):** Manufacturers/brands never assigned to products — `manufacturer_id` missing from SQL. Added `assignManufacturerTerm()`.
+* **Added:** "🏷️ Repair Product Categories" button re-assigns category terms for all migrated products.
+
+= 2.5.0 =
+* **Added:** Polylang integration — full support for products, categories, pages, tags.
+* **Added:** First-run onboarding wizard (3-step modal).
+* **Added:** Per-item auto-retry (2 retries, 500ms sleep) for transient DB deadlocks.
+* **Added:** Migration run history (last 10 runs) displayed in Logs tab.
+* **Added:** Cron status widget with "Run Now" button.
+* **Added:** WP-CLI dry-run progress bar.
+* **Added:** `assets/README.md` with WC.com banner/icon/screenshot specifications.
+* **Fixed:** `ManufacturerMigrator` falls back to native WooCommerce `pa_brand` attribute when no brand plugin active.
+* **Fixed:** `Encryptor` now uses plugin-specific random key (generated on activation) instead of `AUTH_KEY`.
 
 = 2.4.70 =
 Important version consistency fix — please update. This release also adds Rank Math SEO support, replaces all browser alert() popups with smooth in-page toasts, adds ETA display, log download, settings export/import, and email reports. If you are on 2.4.63 or earlier, updating is strongly recommended before running a new migration.

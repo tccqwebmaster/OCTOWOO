@@ -2,6 +2,8 @@
 
 namespace OctoWoo\Core;
 
+defined( 'ABSPATH' ) || exit;
+
 /**
  * DataPurger — removes data that was imported by OctoWoo from OpenCart.
  *
