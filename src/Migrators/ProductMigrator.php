@@ -173,10 +173,12 @@ class ProductMigrator extends AbstractMigrator {
             }
         }
 
+        $sec_tags = '';  // Secondary-language tag string (comma-separated).
         if ( is_array( $sec ) ) {
             $sec_name      = $this->sanitizeName( $sec['name']             ?? '' );
             $sec_desc      = $this->cleanDescription( $sec['description']  ?? '' );
-            // tag field = SEO keywords; not a short description — leave empty.
+            // OC tag field = comma-separated search/SEO keywords — store for secondary tag assignment.
+            $sec_tags      = $this->sanitizeText( $sec['tag']              ?? '' );
             $sec_short     = '';
             $sec_metatitle = $this->sanitizeText( $sec['meta_title']       ?? '' );
             $sec_metadesc  = $this->sanitizeText( $sec['meta_description'] ?? '' );
@@ -229,7 +231,7 @@ class ProductMigrator extends AbstractMigrator {
 
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
-                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw );
+                return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw, $sec_tags );
             }
             // Even in skip mode: repair missing featured image without touching anything else.
             // This is a lightweight fix — no post update, no option changes, just the thumbnail.
@@ -249,7 +251,7 @@ class ProductMigrator extends AbstractMigrator {
             return true;
         }
 
-        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw );
+        return $this->createProduct( $row, $desc, $name, $description, $short_desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw, $sec_tags );
     }
 
     // ── Create product ────────────────────────────────────────────────────────
@@ -269,7 +271,8 @@ class ProductMigrator extends AbstractMigrator {
         string $sec_metatitle = '',
         string $sec_metadesc  = '',
         string $sec_short     = '',
-        string $sec_metakw    = ''
+        string $sec_metakw    = '',
+        string $sec_tags      = ''
     ): bool {
         global $wpdb;
 
@@ -289,7 +292,7 @@ class ProductMigrator extends AbstractMigrator {
                 $wpdb, $oc_id, $product_type, $has_vars,
                 $row, $desc, $name, $description, $short_desc,
                 $oc_categories, $oc_images, $oc_options, $oc_specials,
-                $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw
+                $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw, $sec_tags
             );
         } catch ( \Throwable $e ) {
             $wpdb->query( 'ROLLBACK' );
@@ -322,7 +325,8 @@ class ProductMigrator extends AbstractMigrator {
         string $sec_metatitle = '',
         string $sec_metadesc  = '',
         string $sec_short     = '',
-        string $sec_metakw    = ''
+        string $sec_metakw    = '',
+        string $sec_tags      = ''
     ): bool {
 
         // Map OpenCart status: 1 = enabled → publish, 0 = disabled → draft.
@@ -364,22 +368,27 @@ class ProductMigrator extends AbstractMigrator {
         $qty    = (int) $row['quantity'];
         $status = $this->mapStockStatus( (int) $row['stock_status_id'], $qty );
 
-        update_post_meta( $post_id, '_manage_stock',   'yes' );
+        // Stock subtract flag — OC: 0=never deduct stock, 1=deduct on purchase.
+        // Maps to WC manage_stock. Written ONCE here (not twice).
+        $subtract = isset( $row['subtract'] ) ? (bool) $row['subtract'] : true;
+        update_post_meta( $post_id, '_manage_stock',   $subtract ? 'yes' : 'no' );
         update_post_meta( $post_id, '_stock',          $qty );
         update_post_meta( $post_id, '_stock_status',   $status );
         update_post_meta( $post_id, '_backorders',     'no' );
 
-        // Dimensions and weight — stored raw; unit class IDs stored as meta for reference.
+        // Dimensions and weight.
         update_post_meta( $post_id, '_weight', $row['weight'] ?? '' );
         update_post_meta( $post_id, '_length', $row['length'] ?? '' );
         update_post_meta( $post_id, '_width',  $row['width'] ?? '' );
         update_post_meta( $post_id, '_height', $row['height'] ?? '' );
-        // Store OC unit class IDs so admins can audit unit conversions if needed.
         if ( ! empty( $row['weight_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_weight_class_id', (int) $row['weight_class_id'] ); }
         if ( ! empty( $row['length_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_length_class_id', (int) $row['length_class_id'] ); }
-        // Stock subtract flag (OC) — maps to WC manage_stock.
-        $subtract = isset( $row['subtract'] ) ? (bool) $row['subtract'] : true;
-        update_post_meta( $post_id, '_manage_stock', $subtract ? 'yes' : 'no' );
+
+        // Sort order → WP menu_order (controls display order in WC shop loops).
+        if ( isset( $row['sort_order'] ) ) {
+            // Use directly in wp_insert_post args via menu_order — set after creation.
+            $wpdb->update( $wpdb->posts, [ 'menu_order' => (int) $row['sort_order'] ], [ 'ID' => $post_id ], [ '%d' ], [ '%d' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        }
 
         // Tax class (requires TaxMigrator to have run first to build the map).
         $this->applyTaxClass( $post_id, (int) ( $row['tax_class_id'] ?? 0 ) );
@@ -397,6 +406,8 @@ class ProductMigrator extends AbstractMigrator {
         update_post_meta( $post_id, '_octowoo_metatitle' . $sfx,         $sec_metatitle );
         update_post_meta( $post_id, '_octowoo_metadesc' . $sfx,          $sec_metadesc );
         update_post_meta( $post_id, '_octowoo_metakw' . $sfx,            $sec_metakw );
+        // Secondary-language tag string — Polylang pass reads this to assign translated tags.
+        update_post_meta( $post_id, '_octowoo_tag' . $sfx,               $sec_tags );
         // SEO meta fields.
         if ( ! empty( $desc['meta_title'] ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_title', $this->sanitizeText( $desc['meta_title'] ) );
@@ -533,7 +544,8 @@ class ProductMigrator extends AbstractMigrator {
         string $sec_metatitle = '',
         string $sec_metadesc  = '',
         string $sec_short     = '',
-        string $sec_metakw    = ''
+        string $sec_metakw    = '',
+        string $sec_tags      = ''
     ): bool {
         $oc_id = (int) $row['product_id'];
 
@@ -562,6 +574,7 @@ class ProductMigrator extends AbstractMigrator {
         update_post_meta( $wc_post_id, '_octowoo_name' . $sfx,              $sec_name );
         update_post_meta( $wc_post_id, '_octowoo_description' . $sfx,       $sec_desc );
         update_post_meta( $wc_post_id, '_octowoo_short_description' . $sfx, $sec_short );
+        update_post_meta( $wc_post_id, '_octowoo_tag' . $sfx,               $sec_tags );
         if ( $sec_metatitle ) {
             update_post_meta( $wc_post_id, '_octowoo_metatitle' . $sfx, $sec_metatitle );
         }
