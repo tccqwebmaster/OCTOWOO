@@ -213,9 +213,23 @@ if ( ! $show_wizard ) { return; }
         var $res = document.getElementById('ow-wz-check-result');
         $res.innerHTML = '<em style="color:#888;">Running checks…</em>';
 
+        // Pass live wizard DB credentials so system check tests the real connection,
+        // not the empty saved config (which always fails on first run).
+        var checkData = new URLSearchParams({
+            action:    'octowoo_validate',
+            nonce:     (window.octoWoo && octoWoo.nonce) || '',
+            _wizard:   '1',
+            db_host:   document.getElementById('ow-wz-host')   ? document.getElementById('ow-wz-host').value   : '',
+            db_port:   document.getElementById('ow-wz-port')   ? document.getElementById('ow-wz-port').value   : '3306',
+            db_name:   document.getElementById('ow-wz-dbname') ? document.getElementById('ow-wz-dbname').value : '',
+            db_user:   document.getElementById('ow-wz-user')   ? document.getElementById('ow-wz-user').value   : '',
+            db_pass:   document.getElementById('ow-wz-pass')   ? document.getElementById('ow-wz-pass').value   : '',
+            db_prefix: document.getElementById('ow-wz-prefix') ? document.getElementById('ow-wz-prefix').value : 'oc_',
+        });
+
         fetch((window.octoWoo && octoWoo.ajaxUrl) || ajaxurl, {
             method: 'POST',
-            body: new URLSearchParams({ action: 'octowoo_validate', nonce: (window.octoWoo && octoWoo.nonce) || '' })
+            body:   checkData,
         })
         .then(function(r) { return r.json(); })
         .then(function(res) {

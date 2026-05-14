@@ -1272,31 +1272,31 @@ class AjaxHandler {
             is_array( $saved['db'] ?? null ) ? $saved['db'] : []
         );
 
-        // Override with live values sent from the form.
-        // Supports two key formats:
-        //   Short:  db_host, db_port, db_name, db_user, db_pass, db_prefix, db_socket
-        //           (sent by the JS testConnection() function and the onboarding wizard)
-        //   Nested: octowoo[db][host] etc. (Settings form when submitted directly)
-        $posted_host = sanitize_text_field(
-            $_POST['db_host'] ?? $_POST['octowoo']['db']['host'] ?? ''  // phpcs:ignore WordPress.Security.NonceVerification
-        );
+        // Detect which key format was posted.
+        // Use array_key_exists so EMPTY strings still trigger the override
+        // (crucial for the wizard where user may not have filled all fields yet —
+        //  we must test against what they typed, not silently fall back to saved config).
+        $has_short  = array_key_exists( 'db_host', $_POST ); // phpcs:ignore WordPress.Security.NonceVerification
+        $has_nested = ! empty( $_POST['octowoo']['db']['host'] ); // phpcs:ignore WordPress.Security.NonceVerification
+        $is_wizard  = ! empty( $_POST['_wizard'] ); // phpcs:ignore WordPress.Security.NonceVerification
 
-        if ( $posted_host !== '' ) {
-            // Short-key format (JS sends these).
-            $db_config['host']     = $posted_host;
-            $db_config['port']     = (int) ( $_POST['db_port']   ?? $_POST['octowoo']['db']['port']     ?? 3306 );
-            $db_config['database'] = sanitize_text_field( $_POST['db_name']   ?? $_POST['octowoo']['db']['database'] ?? '' );
-            $db_config['username'] = sanitize_text_field( $_POST['db_user']   ?? $_POST['octowoo']['db']['username'] ?? '' );
-            $db_config['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? $_POST['octowoo']['db']['prefix']   ?? 'oc_' );
-            $db_config['socket']   = sanitize_text_field( $_POST['db_socket'] ?? $_POST['octowoo']['db']['socket']   ?? '' );
+        if ( $has_short || $is_wizard ) {
+            // Short-key format — sent by wizard owWzTestConnection() and Settings JS testConnection().
+            $db_config['host']     = sanitize_text_field( $_POST['db_host']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['port']     = (int) ( $_POST['db_port']   ?? 3306 ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['socket']   = sanitize_text_field( $_POST['db_socket'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $db_config['source']   = sanitize_key( $_POST['source'] ?? 'remote' ); // phpcs:ignore WordPress.Security.NonceVerification
 
-            // Password: use posted value if non-blank; otherwise keep saved encrypted value.
-            $posted_pass = $_POST['db_pass'] ?? $_POST['octowoo']['db']['password'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
-            if ( $posted_pass !== '' && $posted_pass !== '••••••••' ) {
-                $db_config['password'] = $posted_pass; // Will be decrypted by DatabaseConnector.
+            // Password: use posted value; if blank keep saved encrypted value.
+            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            if ( $posted_pass !== '' && $posted_pass !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' ) {
+                $db_config['password'] = $posted_pass;
             }
-        } elseif ( ! empty( $_POST['octowoo']['db']['host'] ) ) {
-            // Nested-key format (direct form POST).
+        } elseif ( $has_nested ) {
+            // Nested-key format — direct form submission (Settings page).
             $raw = $_POST['octowoo']['db']; // phpcs:ignore WordPress.Security.NonceVerification
             $db_config['host']     = sanitize_text_field( $raw['host']     ?? '' );
             $db_config['port']     = (int) ( $raw['port']     ?? 3306 );
@@ -1305,7 +1305,7 @@ class AjaxHandler {
             $db_config['prefix']   = sanitize_text_field( $raw['prefix']   ?? 'oc_' );
             $db_config['socket']   = sanitize_text_field( $raw['socket']   ?? '' );
             $posted_pass = $raw['password'] ?? '';
-            if ( $posted_pass !== '' && $posted_pass !== '••••••••' ) {
+            if ( $posted_pass !== '' && $posted_pass !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' ) {
                 $db_config['password'] = $posted_pass;
             }
         }
@@ -1395,6 +1395,22 @@ class AjaxHandler {
         $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
         $saved    = get_option( 'octowoo_config', [] );
         $config   = array_replace_recursive( $defaults, $saved );
+
+        // When called from the wizard, merge live credentials into config
+        // so the DB connection check tests what the user actually typed.
+        $is_wizard = ! empty( $_POST['_wizard'] ); // phpcs:ignore WordPress.Security.NonceVerification
+        if ( $is_wizard && array_key_exists( 'db_host', $_POST ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['host']     = sanitize_text_field( $_POST['db_host']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['port']     = (int) ( $_POST['db_port']   ?? 3306 ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['socket']   = sanitize_text_field( $_POST['db_socket'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            if ( $posted_pass !== '' ) {
+                $config['db']['password'] = $posted_pass;
+            }
+        }
 
         $validator = new Validator( $config );
         $results   = $validator->run();

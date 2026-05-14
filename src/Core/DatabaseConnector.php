@@ -77,10 +77,17 @@ class DatabaseConnector {
                 $host = '127.0.0.1';
             }
 
-            if ( $db === '' ) {
+            // Collect ALL missing fields and report them together.
+            $missing = [];
+            if ( $host === '' ) { $missing[] = 'Host'; }
+            if ( $db   === '' ) { $missing[] = 'Database Name'; }
+
+            // Username can legitimately be empty only with socket auth, so warn not block.
+            if ( ! empty( $missing ) ) {
                 throw new \RuntimeException(
-                    'OctoWoo: OpenCart database name is empty. ' .
-                    'Please enter the database name in Settings → OpenCart Database.'
+                    'OctoWoo: The following required fields are empty: ' .
+                    implode( ', ', $missing ) .
+                    '. Please fill them in (Settings → OpenCart Database, or Wizard Step 2).'
                 );
             }
 
