@@ -65,7 +65,8 @@ return [
         'batch_size' => 20,
 
         // Dry-run: simulate all steps without writing anything to the DB.
-        'dry_run' => false,
+        'dry_run'         => false,
+        'suppress_emails' => true, // Block all WP+WC emails during migration; completion report still sent.
 
         // Demo limit: when > 0, each migrator stops after this many items.
         // Useful for a quick sanity-check before committing to a full run.

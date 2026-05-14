@@ -31,6 +31,7 @@ use OctoWoo\Migrators\OrderStatusMigrator;
 use OctoWoo\Migrators\BundleMigrator;
 use OctoWoo\Integration\WpmlIntegration;
 use OctoWoo\Integration\PolylangIntegration;
+use OctoWoo\Core\EmailSuppressor;
 use OctoWoo\Integration\AddonManager;
 
 defined( 'ABSPATH' ) || exit;
@@ -117,6 +118,15 @@ class MigrationManager {
         AddonManager::loadAddons( $this->config );
         WpmlIntegration::registerHooks( $this->config );
 
+        // Suppress all WP + WC emails during migration to prevent flooding
+        // customers with "new account" / "new order" / "order status" emails.
+        // The OctoWoo completion-summary email is explicitly allowed through.
+        $suppress_emails = (bool) ( $this->config['migration']['suppress_emails'] ?? true );
+        if ( $suppress_emails && ! ( $this->config['migration']['dry_run'] ?? false ) ) {
+            EmailSuppressor::enable( $this->run_id );
+            $this->logger->info( '[email-suppressor] Email delivery suppressed for this migration run.' );
+        }
+
         $this->logger->info( 'Migration started', [
             'run_id'  => $this->run_id,
             'dry_run' => $this->config['migration']['dry_run'],
@@ -171,6 +181,12 @@ class MigrationManager {
          * @param array  $report  Summary report.
          * @param array  $config  Resolved config.
          */
+        // Re-enable email delivery now that migration is complete.
+        if ( $suppress_emails ?? true ) {
+            EmailSuppressor::disable( $this->run_id );
+            $this->logger->info( '[email-suppressor] Email delivery restored.' );
+        }
+
         do_action( 'octowoo_migration_finished', $this->run_id, $report, $this->config );
 
         update_option( 'octowoo_last_run_id', $this->run_id );
@@ -241,6 +257,12 @@ class MigrationManager {
 
         AddonManager::loadAddons( $this->config );
         WpmlIntegration::registerHooks( $this->config );
+
+        // Re-apply email suppression for every chunk (each AJAX chunk = new PHP request).
+        $suppress_emails = (bool) ( $this->config['migration']['suppress_emails'] ?? true );
+        if ( $suppress_emails ) {
+            EmailSuppressor::maybeActivate();
+        }
 
         if ( $this->isAborted() ) {
             $this->logger->warning( 'Chunk run aborted by user flag.' );
@@ -346,6 +368,12 @@ class MigrationManager {
 
         $report = $this->buildReport();
         $this->logger->info( 'Migration finished (chunked).', $report );
+
+        // Re-enable email delivery now that all chunks are complete.
+        if ( $suppress_emails ?? true ) {
+            EmailSuppressor::disable( $this->run_id );
+            $this->logger->info( '[email-suppressor] Email delivery restored after chunked migration.' );
+        }
 
         do_action( 'octowoo_migration_finished', $this->run_id, $report, $this->config );
 

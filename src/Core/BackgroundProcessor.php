@@ -357,6 +357,8 @@ class BackgroundProcessor {
         $recipient = apply_filters( 'octowoo_report_email_recipient', $admin_email, $run_id );
 
         if ( is_email( $recipient ) ) {
+            // Allow this one email through the migration suppressor.
+            EmailSuppressor::allowReportEmail();
             wp_mail( $recipient, $subject, $html_body, $headers );
         }
     }

@@ -688,6 +688,27 @@ $db_err     = ! empty( $_GET['oc_db_err'] );
                     </div>
                 </div>
 
+                <!-- Email suppression + other migration flags -->
+                <div style="margin-top:16px;margin-bottom:16px;padding:12px 14px;background:#f0f4ff;border:1px solid #c7d3f0;border-radius:6px;">
+                    <strong style="font-size:13px;display:block;margin-bottom:8px;"><?php esc_html_e( 'Migration Flags', 'octowoo' ); ?></strong>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+
+                        <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"
+                               title="<?php esc_attr_e( 'Recommended: ON. Prevents WP and WooCommerce from sending new-account welcome emails, new-order notifications, and order-status emails to your customers and admin while migration runs. The OctoWoo completion-summary report is still delivered to the admin.', 'octowoo' ); ?>">
+                            <input type="checkbox" name="octowoo[migration][suppress_emails]" value="1"
+                                   style="margin-top:2px;flex-shrink:0;"
+                                <?php checked( $config['migration']['suppress_emails'] ?? true ); ?>>
+                            <span>
+                                <strong>🔕 <?php esc_html_e( 'Suppress emails during migration', 'octowoo' ); ?></strong>
+                                <span class="ow-form-hint" style="display:block;margin-top:2px;">
+                                    <?php esc_html_e( 'Blocks all WP + WooCommerce emails (new account, new order, status change) to customers and admin while migrating. Highly recommended — without this, every customer and every order triggers an email. The OctoWoo summary report is still sent on completion.', 'octowoo' ); ?>
+                                </span>
+                            </span>
+                        </label>
+
+                    </div>
+                </div>
+
                 <div style="margin-top:16px;">
                     <strong style="font-size:13px;"><?php esc_html_e( 'Enable / Disable Migrators:', 'octowoo' ); ?></strong>
                     <div class="ow-checkbox-group" style="margin-top:8px;">
