@@ -639,12 +639,20 @@ if ( $_ow_show_wizard ) {
             <div class="ow-card">
                 <h2><?php esc_html_e( 'OpenCart Installation', 'octowoo' ); ?></h2>
                 <div class="ow-form-grid">
-                    <div class="ow-form-group">
-                        <label><?php esc_html_e( 'Image Directory (absolute path)', 'octowoo' ); ?></label>
-                        <input type="text" name="octowoo[opencart][image_path]"
+                    <div class="ow-form-group" style="grid-column:1/-1;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                            <label style="font-weight:600;"><?php esc_html_e( '🖼 OpenCart Image Directory', 'octowoo' ); ?></label>
+                            <button type="button" id="ow-btn-detect-image-path" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
+                                🔍 <?php esc_html_e( 'Auto-Detect Image Path', 'octowoo' ); ?>
+                            </button>
+                        </div>
+                        <input type="text" id="ow-image-path-input" name="octowoo[opencart][image_path]"
                                value="<?php echo esc_attr( $config['opencart']['image_path'] ?? '' ); ?>"
-                               placeholder="/var/www/html/opencart/image">
-                        <span class="ow-form-hint"><?php esc_html_e( 'Absolute server path to OpenCart\'s /image/ directory.', 'octowoo' ); ?></span>
+                               placeholder="/var/www/html/opencart/image"
+                               style="font-family:monospace;">
+                        <span class="ow-form-hint"><?php esc_html_e( 'Absolute server path to OpenCart\'s /image/ directory. Click Auto-Detect to scan automatically.', 'octowoo' ); ?></span>
+                        <!-- Auto-detect result panel -->
+                        <div id="ow-img-detect-panel" style="display:none;margin-top:10px;"></div>
                     </div>
                     <div class="ow-form-group">
                         <label><?php esc_html_e( 'Old Store URL (for 301 redirects)', 'octowoo' ); ?></label>

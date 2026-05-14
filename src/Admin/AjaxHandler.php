@@ -56,6 +56,7 @@ class AjaxHandler {
             'octowoo_reset_migration',
             'octowoo_test_connection',
             'octowoo_detect_languages',
+            'octowoo_detect_image_path',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -181,6 +182,10 @@ class AjaxHandler {
 
             case 'octowoo_detect_languages':
                 $this->actionDetectLanguages();
+                break;
+
+            case 'octowoo_detect_image_path':
+                $this->actionDetectImagePath();
                 break;
 
             case 'octowoo_run_chunk':
@@ -2014,6 +2019,253 @@ class AjaxHandler {
             'suggested_pri' => $suggested_pri,
             'suggested_sec' => $suggested_sec,
         ] );
+    }
+
+
+    // ── Action: auto-detect OpenCart image path ────────────────────────────────
+
+    /**
+     * Attempts to auto-detect the OpenCart /image/ directory path on the server.
+     *
+     * Strategy (tried in order, stops at first confirmed hit):
+     *   1. Read oc_setting.config_url → derive possible filesystem paths
+     *      by mapping the URL to common document-root patterns.
+     *   2. Scan common OC install locations relative to WordPress's ABSPATH.
+     *   3. Try parent directories of ABSPATH (sibling installs).
+     *   4. Walk oc_product.image to validate a guessed path actually
+     *      contains an OC image (confirms we found the right directory).
+     *
+     * Returns:
+     *   candidates[] — ranked list of {path, confidence, note, image_count}
+     *   oc_image_count — total images in oc_product_image
+     *   oc_store_url   — value of config_url from oc_setting
+     */
+    private function actionDetectImagePath(): void {
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        // Accept live credentials.
+        if ( array_key_exists( 'db_host', $_POST ) ) { // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['host']     = sanitize_text_field( $_POST['db_host']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['port']     = (int) ( $_POST['db_port']   ?? 3306 ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            if ( $posted_pass !== '' ) { $config['db']['password'] = $posted_pass; }
+        }
+
+        try {
+            $connector = new \OctoWoo\Core\DatabaseConnector( $config['db'] );
+            $oc        = $connector->connect();
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => 'Cannot connect to OpenCart DB: ' . $e->getMessage() ] );
+        }
+
+        $pfx = $config['db']['prefix'] ?? 'oc_';
+
+        // ── Gather OC data ─────────────────────────────────────────────────────
+        $store_url   = '';
+        $image_count = 0;
+        $sample_images = [];
+
+        try {
+            $s = $oc->query( "SELECT value FROM `{$pfx}setting` WHERE `key` = 'config_url' AND store_id = 0 LIMIT 1" );
+            $row = $s->fetch( \PDO::FETCH_ASSOC );
+            if ( $row ) { $store_url = rtrim( (string) $row['value'], '/' ); }
+        } catch ( \Throwable ) {}
+
+        try {
+            $s = $oc->query( "SELECT COUNT(*) FROM `{$pfx}product_image`" );
+            $image_count = (int) $s->fetchColumn();
+        } catch ( \Throwable ) {}
+
+        try {
+            $s = $oc->query(
+                "SELECT image FROM `{$pfx}product` WHERE image != '' AND image IS NOT NULL
+                 UNION
+                 SELECT image FROM `{$pfx}product_image` WHERE image != '' AND image IS NOT NULL
+                 LIMIT 10"
+            );
+            $sample_images = array_column( $s->fetchAll( \PDO::FETCH_ASSOC ), 'image' );
+        } catch ( \Throwable ) {}
+
+        // ── Build candidate paths ──────────────────────────────────────────────
+        $candidates = [];
+
+        // Attempt 1: derive from oc_setting config_url.
+        if ( $store_url ) {
+            $oc_path_from_url = $this->urlToFilesystemPath( $store_url );
+            foreach ( $oc_path_from_url as $path ) {
+                $image_dir = rtrim( $path, '/' ) . '/image';
+                $candidates[] = [
+                    'path'  => $image_dir,
+                    'note'  => 'Derived from OpenCart store URL (' . esc_url( $store_url ) . ')',
+                    'score' => 90,
+                ];
+            }
+        }
+
+        // Attempt 2: scan filesystem around WordPress install.
+        $wp_root     = rtrim( ABSPATH, '/' );
+        $parent_dir  = dirname( $wp_root );
+        $grandparent = dirname( $parent_dir );
+
+        $search_roots = array_unique( [ $wp_root, $parent_dir, $grandparent ] );
+
+        foreach ( $search_roots as $root ) {
+            foreach ( [ 'opencart', 'oc', 'shop', 'store', 'opencart3', 'opencart4', 'ecommerce' ] as $subdir ) {
+                $candidates[] = [
+                    'path'  => $root . '/' . $subdir . '/image',
+                    'note'  => 'Common install location: ' . $root . '/' . $subdir,
+                    'score' => 50,
+                ];
+            }
+            // Also check the root itself (OC installed at document root).
+            $candidates[] = [
+                'path'  => $root . '/image',
+                'note'  => 'OC at same level as WordPress: ' . $root,
+                'score' => 40,
+            ];
+        }
+
+        // Attempt 3: try paths extracted from any currently-saved image_path config.
+        $saved_path = $config['opencart']['image_path'] ?? '';
+        if ( $saved_path ) {
+            $candidates[] = [
+                'path'  => rtrim( $saved_path, '/' ),
+                'note'  => 'Currently saved in settings',
+                'score' => 95,
+            ];
+        }
+
+        // ── Validate candidates ────────────────────────────────────────────────
+        $validated  = [];
+        $seen_paths = [];
+
+        foreach ( $candidates as $c ) {
+            $path = rtrim( (string) $c['path'], '/' );
+            if ( isset( $seen_paths[ $path ] ) ) { continue; }
+            $seen_paths[ $path ] = true;
+
+            if ( ! @is_dir( $path ) ) { continue; }
+            if ( ! @is_readable( $path ) ) {
+                $validated[] = array_merge( $c, [
+                    'status' => 'unreadable',
+                    'note'   => $c['note'] . ' (directory exists but not readable by web server)',
+                ] );
+                continue;
+            }
+
+            // Confirm it looks like an OC image directory.
+            $confidence = 'exists';
+            $has_catalog = @is_dir( $path . '/catalog' );
+            $has_product = @is_dir( $path . '/catalog/product' );
+
+            // Count actual image files in catalog/product.
+            $local_count = 0;
+            if ( $has_product ) {
+                $iter = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator( $path . '/catalog/product', \FilesystemIterator::SKIP_DOTS ),
+                    \RecursiveIteratorIterator::LEAVES_ONLY
+                );
+                foreach ( $iter as $file ) {
+                    if ( $file->isFile() && in_array( strtolower( $file->getExtension() ), [ 'jpg', 'jpeg', 'png', 'gif', 'webp' ], true ) ) {
+                        $local_count++;
+                        if ( $local_count >= 9999 ) { break; } // Cap for performance.
+                    }
+                }
+            }
+
+            // Verify one sample OC image path actually exists in this directory.
+            $sample_found = false;
+            foreach ( $sample_images as $sample ) {
+                $sample_abs = $path . '/' . ltrim( $sample, '/' );
+                if ( @file_exists( $sample_abs ) ) {
+                    $sample_found = true;
+                    break;
+                }
+            }
+
+            if ( $sample_found ) {
+                $confidence = 'confirmed';
+                $c['score'] += 100;
+            } elseif ( $has_product && $local_count > 0 ) {
+                $confidence = 'likely';
+                $c['score'] += 60;
+            } elseif ( $has_catalog ) {
+                $confidence = 'possible';
+                $c['score'] += 20;
+            }
+
+            $validated[] = array_merge( $c, [
+                'status'      => $confidence,
+                'has_catalog' => $has_catalog,
+                'has_product' => $has_product,
+                'local_count' => $local_count,
+                'sample_ok'   => $sample_found,
+            ] );
+        }
+
+        // Sort by score descending.
+        usort( $validated, fn( $a, $b ) => ( $b['score'] ?? 0 ) - ( $a['score'] ?? 0 ) );
+
+        // Add candidate from current saved path even if it doesn't exist on disk
+        // so the user can see it in the list.
+        if ( empty( $validated ) && $saved_path ) {
+            $validated[] = [
+                'path'   => $saved_path,
+                'note'   => 'Currently saved (directory not found on disk)',
+                'status' => 'missing',
+                'score'  => 0,
+            ];
+        }
+
+        wp_send_json_success( [
+            'candidates'   => array_values( $validated ),
+            'oc_image_count' => $image_count,
+            'oc_store_url' => $store_url,
+            'wp_abspath'   => ABSPATH,
+            'sample_images' => array_slice( $sample_images, 0, 3 ),
+        ] );
+    }
+
+    /**
+     * Attempt to convert an HTTP URL to filesystem paths by trying common
+     * document-root mappings used on cPanel, Plesk, and cloud hosting.
+     *
+     * @param  string   $url  Full store URL e.g. https://shop.example.com/
+     * @return string[]       Possible filesystem paths (may not exist).
+     */
+    private function urlToFilesystemPath( string $url ): array {
+        $parsed = parse_url( $url );
+        $host   = $parsed['host'] ?? '';
+        $path   = trim( $parsed['path'] ?? '', '/' );
+        $paths  = [];
+
+        // Common document root patterns.
+        $roots = [
+            '/var/www/html',
+            '/var/www',
+            '/home/' . $host . '/public_html',
+            '/home/' . explode( '.', $host )[0] . '/public_html',
+            '/public_html',
+        ];
+
+        // Also try relative to WordPress ABSPATH (sibling install).
+        $wp_parent = dirname( rtrim( ABSPATH, '/' ) );
+        $roots[] = $wp_parent;
+
+        foreach ( array_unique( $roots ) as $root ) {
+            $candidate = rtrim( $root, '/' );
+            if ( $path ) {
+                $candidate .= '/' . $path;
+            }
+            $paths[] = $candidate;
+        }
+
+        return $paths;
     }
 
 }

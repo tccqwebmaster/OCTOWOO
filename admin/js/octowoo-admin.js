@@ -190,7 +190,12 @@
         $('#ow-btn-repair-categories').on('click', repairCategories);
 
         // Connection test.
+        $('#ow-btn-detect-image-path').on('click', detectImagePath);
         $('#ow-btn-detect-languages').on('click', detectLanguages);
+        $(document).on('click', '.ow-use-img-path', function () {
+            $('#ow-image-path-input').val($(this).data('path'));
+            showToast('Image path set: ' + $(this).data('path'), 'success');
+        });
         // Event delegation for dynamically-created language set buttons.
         $(document).on('click', '.ow-set-lang-btn', function () {
             owSetLang($(this).data('type'), $(this).data('id'), $(this).data('name'));
