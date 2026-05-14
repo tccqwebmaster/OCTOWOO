@@ -244,6 +244,8 @@ if ( $_ow_show_wizard ) {
                 </p>
             </div>
 
+        </div><!-- /step-1-card -->
+
         <!-- ── STEP 2: Additional Options ───────────────────────────────── -->
         <div class="ow-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
@@ -1109,7 +1111,7 @@ if ( $_ow_show_wizard ) {
                 <div id="ow-log-container" class="ow-log-container" style="border-radius:0 0 6px 6px;border-top:none;">
                     <div style="color:#6e6e6e;"><?php esc_html_e( 'Select the Logs tab to load entries…', 'octowoo' ); ?></div>
                 </div><!-- /ow-log-container -->
-            </div><!-- /ow-log-stats wrapper -->
+            <!-- ow-log-stats and ow-log-container closed above -->
         </div><!-- /ow-card logs -->
 
     </div><!-- /tab-logs -->
