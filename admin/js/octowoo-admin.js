@@ -231,6 +231,11 @@
         $('#ow-btn-import-images').on('click', importImages);
 
         // Purge.
+        // Step 2 options: Select All / Deselect All
+        $('#ow-opt-select-all').on('click',   function () { $('.ow-step2-opt').prop('checked', true); });
+        $('#ow-opt-deselect-all').on('click', function () { $('.ow-step2-opt').prop('checked', false); });
+
+        // Purge section: Select All / Deselect All
         $('#ow-btn-select-all-purge').on('click',   function () { $('.ow-purge-chk').prop('checked', true); });
         $('#ow-btn-deselect-all-purge').on('click', function () { $('.ow-purge-chk').prop('checked', false); });
         $('#ow-btn-audit-purge').on('click', auditPurge);
@@ -292,6 +297,9 @@
         $('.ow-tab-btn').removeClass('active');
         $('#ow-tab-' + tab).show();
         $('.ow-tab-btn[data-tab="' + tab + '"]').addClass('active');
+        // Always hide wizard overlay when switching tabs (failsafe).
+        var wz = document.getElementById('ow-wizard-overlay');
+        if (wz) { wz.style.display = 'none'; }
 
         if (tab === 'logs' && currentRunId) { refreshLogs(); }
 
