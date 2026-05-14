@@ -167,7 +167,7 @@ class ProductMigrator extends AbstractMigrator {
             foreach ( $descriptions[ $oc_id ] as $candidate_lang_id => $candidate_desc ) {
                 if ( (int) $candidate_lang_id !== $lang_id ) {
                     $sec = $candidate_desc;
-                    $this->logger->warning( "[products] Secondary language ID {$lang_id_sec} not found for OC #{$oc_id}; using language_id={$candidate_lang_id} as fallback." );
+                    $this->logger->debug( "[products] Secondary language ID {$lang_id_sec} not matched for OC #{$oc_id}; auto-using language_id={$candidate_lang_id}." );
                     break;
                 }
             }
@@ -1042,6 +1042,40 @@ class ProductMigrator extends AbstractMigrator {
     // ── Data fetching helpers ─────────────────────────────────────────────────
 
     /** @return array<int, array<int, array<string,mixed>>> Keyed [product_id][lang_id]. */
+    /**
+     * Auto-detect secondary language ID from oc_product_description.
+     * Called once per migration run — not per product — to avoid log spam.
+     */
+    private function detectSecondaryLangId(): int {
+        $configured = $this->langIdSecondary();
+        $primary    = $this->langId();
+        $pfx        = $this->pfx();
+
+        if ( $configured > 0 ) {
+            $exists = $this->oc->fetchColumn(
+                "SELECT COUNT(*) FROM `{$pfx}product_description` WHERE language_id = ? LIMIT 1",
+                [ $configured ]
+            );
+            if ( $exists > 0 ) { return $configured; }
+            $this->logger->warning( "[products] Configured secondary language_id={$configured} not found in oc_product_description. Auto-detecting." );
+        }
+
+        $detected = $this->oc->fetchColumn(
+            "SELECT DISTINCT language_id FROM `{$pfx}product_description`
+             WHERE language_id != ? ORDER BY language_id ASC LIMIT 1",
+            [ $primary ]
+        );
+        if ( $detected ) {
+            $lid = (int) $detected;
+            if ( $lid !== $primary ) {
+                $this->logger->info( "[products] Auto-detected secondary language_id={$lid} (configured was {$configured})." );
+                return $lid;
+            }
+        }
+        $this->logger->debug( '[products] No secondary language in oc_product_description — single-language store.' );
+        return 0;
+    }
+
     private function fetchProductDescriptions(): array {
         $pfx  = $this->pfx();
         $rows = $this->oc->fetchAll(

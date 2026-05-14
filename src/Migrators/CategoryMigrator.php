@@ -45,6 +45,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         $pfx         = $this->pfx();
         $lang_id     = $this->langId();
+        $lang_id_sec = $this->detectSecondaryLangId();
 
         // Guard: if the migrator was already completed (last_id = PHP_INT_MAX),
         // bail early so the MigrationManager can advance to the next migrator.
@@ -74,8 +75,8 @@ class CategoryMigrator extends AbstractMigrator {
             return array_slice( $sorted_rows, $offset, $limit );
         };
 
-        $item_callback = function ( array $row ) use ( $descriptions, $seo_urls, $lang_id ): bool {
-            return $this->processCategory( $row, $descriptions, $seo_urls, $lang_id );
+        $item_callback = function ( array $row ) use ( $descriptions, $seo_urls, $lang_id, $lang_id_sec ): bool {
+            return $this->processCategory( $row, $descriptions, $seo_urls, $lang_id, $lang_id_sec );
         };
 
         // If WPML is active, switch to primary language so that wp_insert_term()
@@ -106,7 +107,8 @@ class CategoryMigrator extends AbstractMigrator {
         array $row,
         array $descriptions,
         array $seo_urls,
-        int   $lang_id
+        int   $lang_id,
+        int   $lang_id_sec = 0
     ): bool {
         $oc_id    = (int) $row['category_id'];
         $oc_parent = (int) $row['parent_id'];
@@ -128,15 +130,15 @@ class CategoryMigrator extends AbstractMigrator {
         }
 
         // Secondary language description.
-        $lang_id_sec = $this->langIdSecondary();
-        $sec_desc    = ( $lang_id_sec > 0 ) ? ( $descriptions[ $oc_id ][ $lang_id_sec ] ?? [] ) : [];
+        // Use same auto-detected secondary language ID for all categories (set once in migrate()).
+        $sec_desc = ( $lang_id_sec > 0 && isset( $descriptions[ $oc_id ][ $lang_id_sec ] ) )
+            ? $descriptions[ $oc_id ][ $lang_id_sec ]
+            : [];
         if ( empty( $sec_desc ) && ! empty( $descriptions[ $oc_id ] ) ) {
-            // Fallback: use first non-primary language row when secondary ID
-            // is missing/misconfigured, so multilingual pass still has secondary data.
             foreach ( $descriptions[ $oc_id ] as $candidate_lang_id => $candidate_desc ) {
                 if ( (int) $candidate_lang_id !== $lang_id ) {
                     $sec_desc = $candidate_desc;
-                    $this->logger->warning( "[categories] Secondary language ID {$lang_id_sec} not found for OC #{$oc_id}; using language_id={$candidate_lang_id} as fallback." );
+                    $this->logger->debug( "[categories] Auto-using language_id={$candidate_lang_id} for secondary data of OC #{$oc_id}." );
                     break;
                 }
             }
@@ -494,6 +496,40 @@ class CategoryMigrator extends AbstractMigrator {
     }
 
     // ── Data fetching helpers ─────────────────────────────────────────────────
+
+    /**
+     * Auto-detect the secondary language ID from oc_category_description.
+     * Tries configured language_id_secondary first, then auto-detects the first
+     * non-primary language_id present in oc_category_description.
+     */
+    private function detectSecondaryLangId(): int {
+        $configured = $this->langIdSecondary();
+        $primary    = $this->langId();
+        $pfx        = $this->pfx();
+
+        if ( $configured > 0 ) {
+            $exists = $this->oc->fetchColumn(
+                "SELECT COUNT(*) FROM `{$pfx}category_description` WHERE language_id = ? LIMIT 1",
+                [ $configured ]
+            );
+            if ( $exists > 0 ) { return $configured; }
+            $this->logger->warning( "[categories] Configured secondary language_id={$configured} not in oc_category_description. Auto-detecting." );
+        }
+
+        $detected = $this->oc->fetchColumn(
+            "SELECT DISTINCT language_id FROM `{$pfx}category_description`
+             WHERE language_id != ? ORDER BY language_id ASC LIMIT 1",
+            [ $primary ]
+        );
+        if ( $detected ) {
+            $lid = (int) $detected;
+            if ( $lid !== $primary ) {
+                $this->logger->info( "[categories] Auto-detected secondary language_id={$lid}." );
+                return $lid;
+            }
+        }
+        return 0;
+    }
 
     /**
      * Fetch all category descriptions keyed by [category_id][language_id].
