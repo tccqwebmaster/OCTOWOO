@@ -293,7 +293,12 @@ class OrderMigrator extends AbstractMigrator {
 
         $wpdb->query( 'COMMIT' );
 
-        $this->logger->info( "[orders] Created WC order #{$wc_order_id} (OC #{$oc_id}), status: {$wc_status}." );
+        $this->logger->info( sprintf(
+            '[orders] ✔ Created order | WC #%d | OC #%d | Status: %s | Total: %s %s',
+            $wc_order_id, $oc_id, $wc_status,
+            number_format( (float) ( $row['total'] ?? 0 ), 2 ),
+            strtoupper( $row['currency_code'] ?? 'USD' )
+        ) );
 
         return true;
     }

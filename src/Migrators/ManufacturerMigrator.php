@@ -213,7 +213,10 @@ class ManufacturerMigrator extends AbstractMigrator {
         // so the brand appears in the English WP admin "Brands" list.
         $this->registerBrandTermWithWpml( $term_id );
 
-        $this->logger->info( "[manufacturers] Created brand term #{$term_id} ← OC #{$oc_id}: '{$name}' ({$this->taxonomy})" );
+        $this->logger->info( sprintf(
+            '[manufacturers] ✔ Created brand | WC term #%d | OC #%d | Name: "%s" | Taxonomy: %s',
+            $term_id, $oc_id, $name, $this->taxonomy
+        ) );
 
         /**
          * Fires after a brand term has been created from an OC manufacturer.

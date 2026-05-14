@@ -224,7 +224,11 @@ class ProductMigrator extends AbstractMigrator {
                     $existing_wc_id = $by_sku;
                     // Cache in id_map so future requests use the fast path.
                     $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $by_sku );
-                    $this->logger->info( "[products] SKU match '{$sku}' OC #{$oc_id} → WC #{$by_sku} (skipping duplicate)." );
+                    $this->logger->info( sprintf(
+                        '[products] ↷ Duplicate — SKU "%s" | OC #%d → WC #%d | Name: "%s" | Skipping (use on_duplicate=update to refresh).',
+                        $sku, $oc_id, $by_sku,
+                        $this->sanitizeName( $desc['name'] ?? '' )
+                    ) );
                 }
             }
         }
@@ -524,7 +528,13 @@ class ProductMigrator extends AbstractMigrator {
         // the next run without re-creating the product.
         $this->assignImages( $post_id, $featured_oc_path, $oc_images );
 
-        $this->logger->info( "[products] Created WC product #{$post_id} ({$product_type}) from OC #{$oc_id}: \"{$name}\"" );
+        $sku_display = sanitize_text_field( $row['sku'] ?: $row['model'] );
+        $this->logger->info( sprintf(
+            '[products] ✔ Created %s product | WC #%d | OC #%d | SKU: %s | Name: "%s"',
+            $product_type, $post_id, $oc_id,
+            $sku_display ?: '—',
+            $name
+        ) );
 
         return true;
     }
@@ -655,7 +665,14 @@ class ProductMigrator extends AbstractMigrator {
         if ( ! empty( $row['ean']  ) ) { update_post_meta( $wc_post_id, '_octowoo_ean',  sanitize_text_field( $row['ean']  ) ); }
         if ( ! empty( $row['mpn']  ) ) { update_post_meta( $wc_post_id, '_octowoo_mpn',  sanitize_text_field( $row['mpn']  ) ); }
 
-        $this->logger->info( "[products] Updated WC product #{$wc_post_id} (OC #{$oc_id})." );
+        $upd_sku  = sanitize_text_field( $row['sku'] ?: $row['model'] );
+        $upd_name = $this->sanitizeName( $desc['name'] ?? '' );
+        $this->logger->info( sprintf(
+            '[products] ↺ Updated product | WC #%d | OC #%d | SKU: %s | Name: "%s"',
+            $wc_post_id, $oc_id,
+            $upd_sku ?: '—',
+            $upd_name
+        ) );
         return true;
     }
 
@@ -942,11 +959,10 @@ class ProductMigrator extends AbstractMigrator {
         }
 
         if ( ! empty( $unresolved_ids ) ) {
-            $this->logger->warning(
-                "[products] WC post #{$post_id}: could not resolve OC category IDs [" .
-                implode( ',', $unresolved_ids ) .
-                "] — CategoryMigrator may not have run yet, or these categories were inactive in OC. Run CategoryMigrator first, then re-run with on_duplicate=update."
-            );
+            $this->logger->warning( sprintf(
+                '[products] ⚠ Category not found | WC #%d | OC category IDs [%s] — run CategoryMigrator first, then re-run Products with on_duplicate=update.',
+                $post_id, implode( ',', $unresolved_ids )
+            ) );
         }
 
         if ( ! empty( $wc_term_ids ) ) {

@@ -204,8 +204,15 @@
 
         // Log controls.
         $('#ow-log-level-filter').on('change', function () { refreshLogs(); });
+        $('#ow-log-migrator-filter').on('change', function () { refreshLogs(); });
+        // Debounced search — fires 300ms after user stops typing.
+        var logSearchTimer;
+        $('#ow-log-search').on('input', function () {
+            clearTimeout(logSearchTimer);
+            logSearchTimer = setTimeout(function () { refreshLogs(); }, 300);
+        });
         $('#ow-btn-refresh-logs').on('click', function () { refreshLogs(); });
-        $('#ow-btn-clear-logs').on('click', function () { $logContainer.empty(); });
+        $('#ow-btn-clear-logs').on('click', function () { $logContainer.empty(); $('#ow-log-stats').css('border-color','#2a2d3a'); });
         $('#ow-btn-download-logs').on('click', downloadLogs);
 
         // Settings export / import.
@@ -1362,39 +1369,203 @@
        LOGS
     ════════════════════════════════════════════════════════════════════ */
     function refreshLogs() {
-        var runId   = currentRunId || octoWoo.lastRunId || '';
-        var level   = $('#ow-log-level-filter').val()   || '';
-        var limit   = 200;
+        var runId    = currentRunId || octoWoo.lastRunId || '';
+        var level    = $('#ow-log-level-filter').val()    || '';
+        var migrator = $('#ow-log-migrator-filter').val() || '';
+        var search   = $('#ow-log-search').val()          || '';
+        var limit    = 500;
 
         if (!runId) { return; }
 
-        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_logs', nonce: octoWoo.nonce, run_id: runId, level: level, limit: limit })
+        $.get(octoWoo.ajaxUrl, {
+            action:   'octowoo_get_logs',
+            nonce:    octoWoo.nonce,
+            run_id:   runId,
+            level:    level,
+            migrator: migrator,
+            limit:    limit,
+        })
         .done(function (res) {
             if (!res.success || !res.data) { return; }
-            renderLogs(res.data.logs || []);
+            var logs = res.data.logs || [];
+
+            // Client-side search filter (fast, no extra AJAX).
+            if (search) {
+                var q = search.toLowerCase();
+                logs = logs.filter(function(e) {
+                    return (e.message || '').toLowerCase().indexOf(q) !== -1
+                        || (e.migrator || '').toLowerCase().indexOf(q) !== -1;
+                });
+            }
+
+            renderLogs(logs);
+            updateLogStats(logs, runId);
         });
+    }
+
+    // Update the stats bar above the log container.
+    function updateLogStats(logs, runId) {
+        var errors   = logs.filter(function(e) { return e.level === 'ERROR'; }).length;
+        var warnings = logs.filter(function(e) { return e.level === 'WARNING'; }).length;
+        var success  = logs.filter(function(e) { return e.level === 'SUCCESS'; }).length;
+
+        $('#ow-log-stat-total').text(logs.length.toLocaleString() + ' entries');
+        $('#ow-log-stat-errors').text('✘ ' + errors + ' error' + (errors !== 1 ? 's' : ''));
+        $('#ow-log-stat-warnings').text('⚠ ' + warnings + ' warning' + (warnings !== 1 ? 's' : ''));
+        $('#ow-log-stat-success').text('✔ ' + success + ' success');
+        $('#ow-log-stat-run').text('Run: ' + (runId || '').substr(0, 8) + '…');
+
+        // Highlight stats bar if errors found.
+        var $stats = $('#ow-log-stats');
+        if (errors > 0) {
+            $stats.css('border-color', '#f4474780');
+        } else if (warnings > 0) {
+            $stats.css('border-color', '#ffcc0280');
+        } else {
+            $stats.css('border-color', '#2a2d3a');
+        }
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       LOG RENDERER — v2.5.5 rebuild
+       Dark terminal with:
+         - Colour-coded level badges with icons
+         - Per-migrator colour-coded labels
+         - Syntax highlighting for IDs, SKUs, names, statuses in messages
+         - Sticky column header
+         - Empty state with guidance
+    ════════════════════════════════════════════════════════════════════ */
+    var LOG_LEVEL_ICONS = {
+        DEBUG:   '·',
+        INFO:    'ℹ',
+        WARNING: '⚠',
+        ERROR:   '✘',
+        SUCCESS: '✔',
+    };
+
+    var LOG_MIGRATOR_CLASS = {
+        products:     'ow-mig-products',
+        categories:   'ow-mig-categories',
+        images:       'ow-mig-images',
+        orders:       'ow-mig-orders',
+        customers:    'ow-mig-customers',
+        manufacturers:'ow-mig-manufacturers',
+        seo:          'ow-mig-seo',
+        tags:         'ow-mig-tags',
+        filters:      'ow-mig-filters',
+        coupons:      'ow-mig-coupons',
+        reviews:      'ow-mig-reviews',
+        multilingual: 'ow-mig-multilingual',
+        information:  'ow-mig-information',
+        downloads:    'ow-mig-downloads',
+    };
+
+    /**
+     * Highlight structured tokens inside a plain-text log message.
+     * Converts patterns like:
+     *   WC #5043          → <span class="ow-log-id">WC #5043</span>
+     *   OC #821           → <span class="ow-log-id">OC #821</span>
+     *   SKU: "abc-123"    → <span class="ow-log-sku">SKU: "abc-123"</span>
+     *   Name: "My Product" → <span class="ow-log-name">Name: "My Product"</span>
+     *   Status: published → <span class="ow-log-status">Status: published</span>
+     *   ✔ / ↺ / ↷        → styled icons
+     */
+    function highlightLogMessage(raw) {
+        // Escape HTML first.
+        var msg = $('<span>').text(raw).html();
+
+        // ID tokens: WC #NNN, OC #NNN, term #NNN, user #NNN, order #NNN.
+        msg = msg.replace(/(WC|OC|term|user|order|post)\s*(#\d+)/g,
+            '<span class="ow-log-id">$1 $2</span>');
+
+        // SKU pattern: SKU: xxx or SKU "xxx".
+        msg = msg.replace(/SKU:\s*([^\s|,
+]+)/g,
+            'SKU: <span class="ow-log-sku">$1</span>');
+
+        // Name in quotes: Name: "…" or name: "…".
+        msg = msg.replace(/Name:\s*&quot;([^&]*)&quot;/g,
+            'Name: <span class="ow-log-name">&quot;$1&quot;</span>');
+        msg = msg.replace(/Name:\s*"([^"]*)"/g,
+            'Name: <span class="ow-log-name">"$1"</span>');
+
+        // Status: value.
+        msg = msg.replace(/Status:\s*(\w+)/g,
+            'Status: <span class="ow-log-status">$1</span>');
+
+        // Email: value.
+        msg = msg.replace(/Email:\s*([\w.@+\-]+)/g,
+            'Email: <span class="ow-log-sku">$1</span>');
+
+        // Total / currency amounts.
+        msg = msg.replace(/Total:\s*([\d.,]+\s*\w+)/g,
+            'Total: <span class="ow-log-status">$1</span>');
+
+        // Success icon prefix.
+        msg = msg.replace(/^(✔|↺|↷)\s/, '<span class="ow-log-ok">$1</span> ');
+        // Warning icon prefix.
+        msg = msg.replace(/^(⚠)\s/, '<span class="ow-log-warn">$1</span> ');
+        // Error icon prefix.
+        msg = msg.replace(/^(✘)\s/, '<span class="ow-log-err">$1</span> ');
+
+        return msg;
     }
 
     function renderLogs(logs) {
         $logContainer.empty();
-        if (!logs.length) {
-            $logContainer.html('<div style="color:#888;padding:8px;">No log entries yet.</div>');
+
+        if (!logs || !logs.length) {
+            $logContainer.html(
+                '<div class="ow-log-empty"><span>📋</span>' +
+                'No log entries yet. Start a migration to see live output here.</div>'
+            );
             return;
         }
 
-        var levelColors = { ERROR: '#c62828', WARNING: '#e65100', SUCCESS: '#2e7d32', INFO: '#1565c0', DEBUG: '#757575' };
-        var html = '';
+        // Sticky column header.
+        var header = '<div class="ow-log-header">' +
+            '<span>Timestamp</span>' +
+            '<span>Level</span>' +
+            '<span>Migrator</span>' +
+            '<span>Message</span>' +
+            '</div>';
+
+        var rows = '';
         logs.forEach(function (entry) {
-            var color = levelColors[entry.level] || '#333';
-            var bg    = entry.level === 'ERROR' ? '#fef2f2' : (entry.level === 'WARNING' ? '#fffbeb' : '#fff');
-            html += '<div style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-size:12px;background:' + bg + ';">';
-            html += '<span style="color:#9e9e9e;margin-right:8px;">' + (entry.created_at || '') + '</span>';
-            html += '<span style="color:' + color + ';font-weight:700;margin-right:8px;">[' + (entry.level || '') + ']</span>';
-            if (entry.migrator) { html += '<span style="color:#757575;margin-right:8px;">[' + entry.migrator + ']</span>'; }
-            html += '<span>' + $('<span>').text(entry.message || '').html() + '</span>';
-            html += '</div>';
+            var level    = (entry.level    || 'INFO').toUpperCase();
+            var migrator = (entry.migrator || 'general').toLowerCase();
+            var ts       = (entry.created_at || '').replace('T', ' ').substr(0, 19);
+            var icon     = LOG_LEVEL_ICONS[level]    || '·';
+            var migCls   = LOG_MIGRATOR_CLASS[migrator] || 'ow-mig-general';
+            var msg      = highlightLogMessage( entry.message || '' );
+
+            // Context JSON — show inline if present.
+            if (entry.context && entry.context !== 'null' && entry.context !== '{}') {
+                try {
+                    var ctx = (typeof entry.context === 'string') ? JSON.parse(entry.context) : entry.context;
+                    if (ctx && Object.keys(ctx).length) {
+                        var ctxParts = [];
+                        Object.keys(ctx).forEach(function(k) {
+                            ctxParts.push('<span class="ow-log-id">' + $('<s>').text(k).html() + '</span>=' +
+                                '<span class="ow-log-sku">' + $('<s>').text(String(ctx[k])).html() + '</span>');
+                        });
+                        msg += ' <span style="opacity:.5;font-size:10px;">{ ' + ctxParts.join(' ') + ' }</span>';
+                    }
+                } catch(e) {}
+            }
+
+            rows += '<div class="ow-log-entry lvl-' + level + '">' +
+                '<span class="ow-log-ts">'       + ts      + '</span>' +
+                '<span class="ow-log-level ow-lvl-' + level + '">' + icon + ' ' + level + '</span>' +
+                '<span class="ow-log-migrator ' + migCls + '">' + migrator + '</span>' +
+                '<span class="ow-log-msg">'      + msg     + '</span>' +
+                '</div>';
         });
-        $logContainer.html(html);
+
+        $logContainer.html(header + rows);
+
+        // Auto-scroll to bottom to show most recent entries.
+        $logContainer.scrollTop($logContainer[0].scrollHeight);
     }
 
     /* ── Download Logs as .txt file ─────────────────────────────────────── */

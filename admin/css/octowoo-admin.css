@@ -273,43 +273,158 @@
 /* ── Log viewer ─────────────────────────────────────────────────────────── */
 .ow-log-controls {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
     margin-bottom: 12px;
     flex-wrap: wrap;
 }
 
-.ow-log-container {
-    background: #1e1e1e;
-    color: #d4d4d4;
-    border-radius: var(--ow-radius);
-    padding: 12px;
-    max-height: 500px;
-    overflow-y: auto;
-    font-family: "Cascadia Code", "SF Mono", "Fira Code", monospace;
+.ow-log-controls select {
+    padding: 5px 10px;
+    border: 1px solid var(--ow-border);
+    border-radius: 4px;
     font-size: 12px;
-    line-height: 1.6;
+    background: #fff;
+    color: var(--ow-text);
+    cursor: pointer;
 }
 
+/* Dark terminal container */
+.ow-log-container {
+    background: #0f1117;
+    border-radius: var(--ow-radius);
+    border: 1px solid #2a2d3a;
+    max-height: 560px;
+    overflow-y: auto;
+    font-family: "Cascadia Code", "JetBrains Mono", "SF Mono", "Fira Code",
+                 "Consolas", "Courier New", monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    scroll-behavior: smooth;
+}
+
+/* Sticky header inside the log container */
+.ow-log-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: 140px 76px 90px 1fr;
+    gap: 0;
+    padding: 6px 12px;
+    background: #1a1d27;
+    border-bottom: 1px solid #2a2d3a;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #4a5070;
+    user-select: none;
+}
+
+/* Each log row */
 .ow-log-entry {
-    display: flex;
-    gap: 8px;
-    padding: 2px 0;
-    border-bottom: 1px solid rgba(255,255,255,.04);
+    display: grid;
+    grid-template-columns: 140px 76px 90px 1fr;
+    gap: 0;
+    padding: 4px 12px;
+    border-bottom: 1px solid #16192280;
+    transition: background .1s;
+    cursor: default;
+}
+.ow-log-entry:last-child { border-bottom: none; }
+.ow-log-entry:hover      { background: rgba(255,255,255,.025); }
+
+/* Level-based row tints */
+.ow-log-entry.lvl-ERROR   { background: rgba(244, 71, 71,  .06); }
+.ow-log-entry.lvl-WARNING { background: rgba(255,204,  2,  .04); }
+.ow-log-entry.lvl-SUCCESS { background: rgba(111,207, 92,  .04); }
+.ow-log-entry.lvl-DEBUG   { opacity: .65; }
+
+.ow-log-entry.lvl-ERROR:hover   { background: rgba(244, 71, 71,  .10); }
+.ow-log-entry.lvl-WARNING:hover { background: rgba(255,204,  2,  .08); }
+
+/* Cells */
+.ow-log-ts {
+    color: #4a5070;
+    font-size: 10.5px;
+    white-space: nowrap;
+    padding-right: 8px;
+    letter-spacing: -.01em;
 }
 
-.ow-log-entry:last-child { border-bottom: none; }
+.ow-log-level {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: .06em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
 
-.ow-log-ts       { color: #6e6e6e; white-space: nowrap; }
-.ow-log-level    { min-width: 64px; font-weight: 700; }
-.ow-log-migrator { color: #9cdcfe; min-width: 80px; }
-.ow-log-msg      { flex: 1; word-break: break-word; }
+.ow-log-migrator {
+    font-size: 10.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 8px;
+}
 
-.ow-log-level-DEBUG   { color: #6e6e6e; }
-.ow-log-level-INFO    { color: #4fc3f7; }
-.ow-log-level-WARNING { color: #ffcc02; }
-.ow-log-level-ERROR   { color: #f44747; }
-.ow-log-level-SUCCESS { color: #6fcf5c; }
+.ow-log-msg {
+    flex: 1;
+    word-break: break-word;
+    color: #c8ccd8;
+    padding-right: 8px;
+}
+
+/* Level colours */
+.ow-lvl-DEBUG   { color: #4a5070; }
+.ow-lvl-INFO    { color: #4fc3f7; }
+.ow-lvl-WARNING { color: #ffcc02; }
+.ow-lvl-ERROR   { color: #f44747; }
+.ow-lvl-SUCCESS { color: #6fcf5c; }
+
+/* Migrator badge colours */
+.ow-mig-products     { color: #c792ea; }
+.ow-mig-categories   { color: #80cbc4; }
+.ow-mig-images       { color: #82aaff; }
+.ow-mig-orders       { color: #ffcb6b; }
+.ow-mig-customers    { color: #f78c6c; }
+.ow-mig-manufacturers{ color: #c3e88d; }
+.ow-mig-seo          { color: #89ddff; }
+.ow-mig-tags         { color: #ff5370; }
+.ow-mig-filters      { color: #b2ccd6; }
+.ow-mig-coupons      { color: #f07178; }
+.ow-mig-reviews      { color: #addb67; }
+.ow-mig-multilingual { color: #e1acff; }
+.ow-mig-information  { color: #7fdbca; }
+.ow-mig-downloads    { color: #7fdbca; }
+.ow-mig-general      { color: #546e7a; }
+
+/* Highlighted terms inside messages */
+.ow-log-id     { color: #546e7a; font-size: 10.5px; }
+.ow-log-name   { color: #fffde7; font-weight: 600; }
+.ow-log-sku    { color: #c3e88d; font-size: 10.5px; font-style: italic; }
+.ow-log-status { color: #ffcb6b; font-size: 10.5px; }
+.ow-log-ok     { color: #6fcf5c; }
+.ow-log-warn   { color: #ffcc02; }
+.ow-log-err    { color: #f44747; }
+
+/* Scrollbar styling */
+.ow-log-container::-webkit-scrollbar        { width: 6px; }
+.ow-log-container::-webkit-scrollbar-track  { background: #0f1117; }
+.ow-log-container::-webkit-scrollbar-thumb  { background: #2a2d3a; border-radius: 3px; }
+.ow-log-container::-webkit-scrollbar-thumb:hover { background: #3a3d4a; }
+
+/* Empty state */
+.ow-log-empty {
+    padding: 32px;
+    text-align: center;
+    color: #4a5070;
+    font-size: 12px;
+}
+.ow-log-empty span { font-size: 24px; display: block; margin-bottom: 8px; }
 
 /* ── Alerts ─────────────────────────────────────────────────────────────── */
 .ow-alert {

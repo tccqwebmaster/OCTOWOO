@@ -1033,13 +1033,30 @@ class="ow-card">
             <div class="ow-log-controls">
                 <label style="font-size:13px; font-weight:500;"><?php esc_html_e( 'Filter Level:', 'octowoo' ); ?></label>
                 <select id="ow-log-level-filter">
-                    <option value=""><?php esc_html_e( 'All', 'octowoo' ); ?></option>
-                    <option value="DEBUG">DEBUG</option>
-                    <option value="INFO">INFO</option>
-                    <option value="WARNING">WARNING</option>
-                    <option value="ERROR">ERROR</option>
-                    <option value="SUCCESS">SUCCESS</option>
+                    <option value=""><?php esc_html_e( 'All Levels', 'octowoo' ); ?></option>
+                    <option value="DEBUG"><?php esc_html_e( '· Debug', 'octowoo' ); ?></option>
+                    <option value="INFO"><?php esc_html_e( 'ℹ Info', 'octowoo' ); ?></option>
+                    <option value="WARNING"><?php esc_html_e( '⚠ Warning', 'octowoo' ); ?></option>
+                    <option value="ERROR"><?php esc_html_e( '✘ Error', 'octowoo' ); ?></option>
+                    <option value="SUCCESS"><?php esc_html_e( '✔ Success', 'octowoo' ); ?></option>
                 </select>
+                <select id="ow-log-migrator-filter">
+                    <option value=""><?php esc_html_e( 'All Migrators', 'octowoo' ); ?></option>
+                    <option value="products"><?php esc_html_e( 'Products', 'octowoo' ); ?></option>
+                    <option value="categories"><?php esc_html_e( 'Categories', 'octowoo' ); ?></option>
+                    <option value="images"><?php esc_html_e( 'Images', 'octowoo' ); ?></option>
+                    <option value="orders"><?php esc_html_e( 'Orders', 'octowoo' ); ?></option>
+                    <option value="customers"><?php esc_html_e( 'Customers', 'octowoo' ); ?></option>
+                    <option value="manufacturers"><?php esc_html_e( 'Brands', 'octowoo' ); ?></option>
+                    <option value="seo"><?php esc_html_e( 'SEO', 'octowoo' ); ?></option>
+                    <option value="tags"><?php esc_html_e( 'Tags', 'octowoo' ); ?></option>
+                    <option value="coupons"><?php esc_html_e( 'Coupons', 'octowoo' ); ?></option>
+                    <option value="reviews"><?php esc_html_e( 'Reviews', 'octowoo' ); ?></option>
+                    <option value="multilingual"><?php esc_html_e( 'Multilingual', 'octowoo' ); ?></option>
+                </select>
+                <input type="search" id="ow-log-search"
+                    placeholder="<?php esc_attr_e( 'Search…', 'octowoo' ); ?>"
+                    style="padding:5px 10px;border:1px solid var(--ow-border);border-radius:4px;font-size:12px;width:160px;">
                 <button type="button" id="ow-btn-refresh-logs" class="ow-btn ow-btn-secondary">
                     ⟳ <?php esc_html_e( 'Refresh', 'octowoo' ); ?>
                 </button>
@@ -1056,7 +1073,14 @@ class="ow-card">
                 <?php endif; ?>
             </div>
 
-            <div id="ow-log-container" class="ow-log-container">
+            <div id="ow-log-stats" style="display:flex;gap:14px;padding:6px 14px;background:#1a1d27;border:1px solid #2a2d3a;border-bottom:none;border-radius:6px 6px 0 0;font-size:10px;color:#4a5070;font-family:monospace;align-items:center;">
+                    <span id="ow-log-stat-total">0 entries</span>
+                    <span id="ow-log-stat-errors" style="color:#f44747;">✘ 0 errors</span>
+                    <span id="ow-log-stat-warnings" style="color:#ffcc02;">⚠ 0 warnings</span>
+                    <span id="ow-log-stat-success" style="color:#6fcf5c;">✔ 0 success</span>
+                    <span style="margin-left:auto;font-size:9px;" id="ow-log-stat-run"></span>
+                </div>
+                <div id="ow-log-container" class="ow-log-container" style="border-radius:0 0 6px 6px;border-top:none;">
                 <div style="color:#6e6e6e;"><?php esc_html_e( 'Select the Logs tab to load entries…', 'octowoo' ); ?></div>
             </div>
         </div>

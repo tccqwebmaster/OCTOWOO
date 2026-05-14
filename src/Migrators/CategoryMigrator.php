@@ -313,7 +313,10 @@ class CategoryMigrator extends AbstractMigrator {
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_term_id );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
 
-        $this->logger->info( "[categories] Created WC term #{$wc_term_id} from OC #{$oc_id}: \"{$name}\"" );
+        $this->logger->info( sprintf(
+            '[categories] ✔ Created category | WC term #%d | OC #%d | Name: "%s" | Slug: %s',
+            $wc_term_id, $oc_id, $name, $slug
+        ) );
         return true;
     }
 
@@ -383,7 +386,10 @@ class CategoryMigrator extends AbstractMigrator {
 
         $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
-        $this->logger->info( "[categories] Updated WC term #{$wc_term_id} (OC #{$oc_id})." );
+        $this->logger->info( sprintf(
+            '[categories] ↺ Updated category | WC term #%d | OC #%d | Name: "%s"',
+            $wc_term_id, $oc_id, $this->sanitizeName( $desc['name'] ?? '' )
+        ) );
         return true;
     }
 

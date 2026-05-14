@@ -202,7 +202,13 @@ class CustomerMigrator extends AbstractMigrator {
 
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $user_id );
 
-        $this->logger->info( "[customers] Created WP user #{$user_id} (OC #{$oc_id}): {$email}" );
+        $this->logger->info( sprintf(
+            '[customers] ✔ Created customer | WC user #%d | OC #%d | Email: %s | Name: %s %s',
+            $user_id, $oc_id,
+            $row['email'] ?? '—',
+            $this->sanitizeText( $row['firstname'] ?? '' ),
+            $this->sanitizeText( $row['lastname']  ?? '' )
+        ) );
         return true;
     }
 
