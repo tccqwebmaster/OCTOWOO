@@ -395,12 +395,30 @@ class WpmlIntegration extends AbstractMigrator {
         $sec_lang_id = $this->langIdSecondary();
         $pri_lang_id = $this->langId();
 
-        if ( $sec_lang_id === 0 ) {
-            return;
-        }
-
         $pfx         = $this->pfx();
         $placeholders = implode( ',', array_fill( 0, count( $oc_ids ), '?' ) );
+
+        // If language_id_secondary = 0 (not configured), auto-detect by fetching
+        // the first language_id that is not the primary language.
+        if ( $sec_lang_id === 0 ) {
+            $all_langs = $this->oc->fetchAll(
+                "SELECT DISTINCT language_id FROM `{$pfx}product_description`
+                  WHERE product_id = ? ORDER BY language_id ASC",
+                [ $oc_ids[0] ]
+            );
+            foreach ( $all_langs as $lr ) {
+                if ( (int) $lr['language_id'] !== $pri_lang_id ) {
+                    $sec_lang_id = (int) $lr['language_id'];
+                    $this->logger->info( "[multilingual] Auto-detected secondary language_id={$sec_lang_id} for tags (language_id_secondary not configured)." );
+                    break;
+                }
+            }
+        }
+
+        if ( $sec_lang_id === 0 ) {
+            $this->logger->warning( '[multilingual] Cannot determine secondary language ID for tag fetch — only one language in oc_product_description?' );
+            return;
+        }
 
         // Fetch secondary-language tags for the whole batch.
         $sec_rows = $this->oc->fetchAll(
@@ -409,6 +427,26 @@ class WpmlIntegration extends AbstractMigrator {
              WHERE product_id IN ({$placeholders}) AND language_id = ?",
             array_merge( $oc_ids, [ $sec_lang_id ] )
         );
+
+        // Fallback: if the configured secondary_lang_id returned no rows at all,
+        // try the first non-primary language ID for these products.
+        if ( empty( $sec_rows ) && count( $oc_ids ) > 0 ) {
+            $alt_lang = $this->oc->fetchColumn(
+                "SELECT DISTINCT language_id FROM `{$pfx}product_description`
+                  WHERE product_id = ? AND language_id != ? ORDER BY language_id ASC LIMIT 1",
+                [ $oc_ids[0], $pri_lang_id ]
+            );
+            if ( $alt_lang && (int) $alt_lang !== $sec_lang_id ) {
+                $sec_lang_id = (int) $alt_lang;
+                $sec_rows    = $this->oc->fetchAll(
+                    "SELECT product_id, `tag`
+                     FROM `{$pfx}product_description`
+                     WHERE product_id IN ({$placeholders}) AND language_id = ?",
+                    array_merge( $oc_ids, [ $sec_lang_id ] )
+                );
+                $this->logger->info( "[multilingual] Fallback secondary language_id={$sec_lang_id} used for tag fetch." );
+            }
+        }
 
         // Fetch primary-language tags for the whole batch.
         $pri_rows = $this->oc->fetchAll(
@@ -473,6 +511,31 @@ class WpmlIntegration extends AbstractMigrator {
             if ( ! $primary_post_raw ) {
                 $failed++;
                 continue;
+            }
+
+            // If postmeta is empty (e.g. ProductMigrator ran with wrong language_id_secondary),
+            // try to fetch the secondary-language data directly from the OC database.
+            // This ensures the multilingual pass can recover Arabic data even when the
+            // primary migration stored empty strings.
+            if ( ( $sec_title === '' || $sec_content === '' ) && $post_type === 'product' ) {
+                $oc_id_meta = (int) get_post_meta( $primary_id, '_octowoo_oc_id', true );
+                if ( $oc_id_meta > 0 ) {
+                    $fresh = $this->fetchSecDescriptionFromOC( $oc_id_meta );
+                    if ( $fresh !== null ) {
+                        if ( $sec_title   === '' && isset( $fresh['name'] ) ) {
+                            $sec_title   = $this->sanitizeName( $fresh['name'] );
+                            $this->logger->info( "[multilingual] Fetched Arabic title directly from OC for product #{$primary_id} (OC #{$oc_id_meta})." );
+                        }
+                        if ( $sec_content === '' && isset( $fresh['description'] ) ) {
+                            $sec_content = $this->cleanDescription( $fresh['description'] );
+                        }
+                        if ( $sec_excerpt === '' && isset( $fresh['tag'] ) ) {
+                            // OC tag field = excerpt-equivalent for secondary language.
+                            // Leave blank; tags are handled by copyProductDataToTranslation().
+                            $sec_excerpt = '';
+                        }
+                    }
+                }
             }
 
             if ( $sec_title === '' ) {
@@ -1950,6 +2013,76 @@ class WpmlIntegration extends AbstractMigrator {
 
         $parts = preg_split( '/[_-]/', $value );
         return (string) ( $parts[0] ?? $value );
+    }
+
+    // ── Override: normalize secLangSuffix to first-segment only ─────────────────
+
+    /**
+     * Return the meta-key suffix for secondary-language data.
+     *
+     * Overrides AbstractMigrator::secLangSuffix() to ALWAYS use only the first
+     * segment of the locale code (e.g. 'ar_SA' → '_ar', 'ar' → '_ar').
+     * This ensures WpmlIntegration reads the same keys that ProductMigrator wrote
+     * even when the locale was configured as a full BCP-47 tag.
+     *
+     * ProductMigrator uses the same normalization (both call this via parent::secLangSuffix
+     * in AbstractMigrator, but AbstractMigrator now normalises too — see v2.5.18 fix).
+     */
+    protected function secLangSuffix(): string {
+        $locale = $this->config['multilingual']['secondary_locale'] ?? 'ar';
+        return '_' . strtolower( explode( '_', $locale )[0] );
+    }
+
+    // ── Direct OC description fetch (fallback when postmeta empty) ──────────────
+
+    /**
+     * Fetch the secondary-language product description row directly from OpenCart.
+     *
+     * Used as a fallback when _octowoo_name_{sfx} postmeta is empty — which happens
+     * when ProductMigrator ran with the wrong language_id_secondary, or when the
+     * secondary language was added to OC after the primary migration ran.
+     *
+     * Tries the configured language_id_secondary first, then auto-detects by finding
+     * the first non-primary language row for this product.
+     *
+     * @param  int        $oc_id  OpenCart product_id.
+     * @return array|null         Associative row from oc_product_description, or null.
+     */
+    private function fetchSecDescriptionFromOC( int $oc_id ): ?array {
+        try {
+            $pfx     = $this->pfx();
+            $pri_lid = $this->langId();
+            $sec_lid = $this->langIdSecondary();
+
+            // Try configured secondary language first.
+            if ( $sec_lid > 0 ) {
+                $row = $this->oc->fetchAll(
+                    "SELECT name, description, meta_title, meta_description, meta_keyword, tag
+                     FROM `{$pfx}product_description`
+                     WHERE product_id = ? AND language_id = ? LIMIT 1",
+                    [ $oc_id, $sec_lid ]
+                );
+                if ( ! empty( $row ) ) {
+                    return $row[0];
+                }
+            }
+
+            // Auto-detect: first language_id that is not primary.
+            $all = $this->oc->fetchAll(
+                "SELECT language_id, name, description, meta_title, meta_description, meta_keyword, tag
+                 FROM `{$pfx}product_description`
+                 WHERE product_id = ? AND language_id != ?
+                 ORDER BY language_id ASC LIMIT 1",
+                [ $oc_id, $pri_lid ]
+            );
+            if ( ! empty( $all ) ) {
+                $this->logger->info( "[multilingual] Auto-detected secondary description (language_id={$all[0]['language_id']}) for OC product #{$oc_id}." );
+                return $all[0];
+            }
+        } catch ( \Throwable $e ) {
+            $this->logger->warning( "[multilingual] fetchSecDescriptionFromOC failed for OC #{$oc_id}: " . $e->getMessage() );
+        }
+        return null;
     }
 
     // ── Static registration helper ────────────────────────────────────────────

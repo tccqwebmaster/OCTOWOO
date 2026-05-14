@@ -112,7 +112,11 @@ abstract class AbstractMigrator {
 
 
     protected function secLangSuffix(): string {
-        return '_' . ( $this->config['multilingual']['secondary_locale'] ?? 'ar' );
+        // Normalise to first segment so 'ar_SA' → '_ar', 'ar' → '_ar'.
+        // This ensures all migrators write to the same meta key regardless of
+        // whether the user configured a short code ('ar') or full locale ('ar_SA').
+        $locale = $this->config['multilingual']['secondary_locale'] ?? 'ar';
+        return '_' . strtolower( explode( '_', $locale )[0] );
     }
 
     /**
