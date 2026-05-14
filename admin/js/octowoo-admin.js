@@ -1495,9 +1495,8 @@
             '<span class="ow-log-id">$1 $2</span>');
 
         // SKU pattern: SKU: xxx or SKU "xxx".
-        msg = msg.replace(/SKU:\s*([^\s|,
-]+)/g,
-            'SKU: <span class="ow-log-sku">$1</span>');
+        msg = msg.replace(/\bSKU:\s*([^\s|,<>]+)/g,
+            'SKU: <span class="ow-log-sku">$1</span>')
 
         // Name in quotes: Name: "…" or name: "…".
         msg = msg.replace(/Name:\s*&quot;([^&]*)&quot;/g,
