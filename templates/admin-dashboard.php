@@ -674,6 +674,19 @@ if ( $_ow_show_wizard ) {
                             <div id="ow-lang-detect-result"></div>
                         </div>
 
+                        <!-- Diagnostic: check OC language content per product -->
+                        <div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
+                            <p style="margin:0 0 6px;font-size:12px;font-weight:600;">🔬 <?php esc_html_e( 'Diagnose: Why is Arabic description showing in English?', 'octowoo' ); ?></p>
+                            <p style="margin:0 0 8px;font-size:11px;color:#92400e;"><?php esc_html_e( 'Enter a WooCommerce product ID to see what OpenCart has in each language. This shows if the Arabic description is missing or not entered in OpenCart admin.', 'octowoo' ); ?></p>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <input type="number" id="ow-diag-wc-id" placeholder="<?php esc_attr_e( 'WC Product ID e.g. 42', 'octowoo' ); ?>" style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;width:160px;">
+                                <button type="button" id="ow-btn-check-product-langs" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
+                                    🔬 <?php esc_html_e( 'Check in OpenCart', 'octowoo' ); ?>
+                                </button>
+                            </div>
+                            <div id="ow-diag-result" style="margin-top:10px;"></div>
+                        </div>
+
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
                             <div class="ow-form-group" style="margin:0;">
                                 <label><?php esc_html_e( 'Primary Language ID', 'octowoo' ); ?></label>

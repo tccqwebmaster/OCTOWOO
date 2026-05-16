@@ -524,10 +524,12 @@ class WpmlIntegration extends AbstractMigrator {
                     if ( $fresh !== null ) {
                         if ( $sec_title   === '' && isset( $fresh['name'] ) ) {
                             $sec_title   = $this->sanitizeName( $fresh['name'] );
-                            $this->logger->info( "[multilingual] Fetched Arabic title directly from OC for product #{$primary_id} (OC #{$oc_id_meta})." );
+                            $this->logger->info( "[multilingual] Fetched secondary title from OC for product #{$primary_id} (OC #{$oc_id_meta}): '{$sec_title}'" );
                         }
                         if ( $sec_content === '' && isset( $fresh['description'] ) ) {
                             $sec_content = $this->cleanDescription( $fresh['description'] );
+                            $sec_content_len = mb_strlen( wp_strip_all_tags( $sec_content ) );
+                            $this->logger->info( "[multilingual] Fetched secondary description from OC for product #{$primary_id}: {$sec_content_len} chars" );
                         }
                         if ( $sec_excerpt === '' && isset( $fresh['tag'] ) ) {
                             // OC tag field = excerpt-equivalent for secondary language.
@@ -590,6 +592,13 @@ class WpmlIntegration extends AbstractMigrator {
                 // save_post: WPML field-sync may copy primary-language post_content back over
                 // the secondary content we set in $update_data, erasing the description.
                 // Direct DB write + meta update bypass all hooks (same as fixTranslationSlug).
+                $sec_len = mb_strlen( wp_strip_all_tags( $sec_content ) );
+                $pri_len = mb_strlen( wp_strip_all_tags( $primary_post_raw->post_content ) );
+                if ( $sec_len > 0 ) {
+                    $this->logger->info( "[multilingual] Updating {$post_type} #{$existing_translation_id} — secondary content: {$sec_len} chars | primary: {$pri_len} chars" );
+                } else {
+                    $this->logger->warning( "[multilingual] ⚠ {$post_type} #{$primary_id}: secondary description is EMPTY — translation will use primary (English) content. Check oc_product_description language_id={$this->langIdSecondary()} has Arabic description." );
+                }
                 $this->forceTranslationContent(
                     $existing_translation_id,
                     $sec_title,
@@ -633,9 +642,13 @@ class WpmlIntegration extends AbstractMigrator {
             $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
 
             // Force secondary-language content + thumbnail AFTER all WPML/Polylang operations.
-            // wpml_set_element_language_details (inside linkPostTranslation) can trigger
-            // field-sync that copies primary-language post_content back, erasing the secondary
-            // description. Direct DB write is the same technique as fixTranslationSlug().
+            $sec_len_c = mb_strlen( wp_strip_all_tags( $sec_content ) );
+            $pri_len_c = mb_strlen( wp_strip_all_tags( $primary_post_raw->post_content ) );
+            if ( $sec_len_c === 0 ) {
+                $this->logger->warning( "[multilingual] ⚠ {$post_type} #{$primary_id}: secondary description is EMPTY — translation #{$translated_id} will use primary (English) content." );
+            } elseif ( $sec_len_c === $pri_len_c ) {
+                $this->logger->debug( "[multilingual] Note: secondary content same length as primary for {$post_type} #{$primary_id} (may not be translated in OC)." );
+            }
             $this->forceTranslationContent(
                 $translated_id,
                 $sec_title,

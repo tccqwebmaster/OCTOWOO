@@ -192,6 +192,45 @@
         // Connection test.
         $('#ow-btn-detect-image-path').on('click', detectImagePath);
         $('#ow-btn-detect-languages').on('click', detectLanguages);
+        $('#ow-btn-check-product-langs').on('click', function() {
+            var wc_id = parseInt($('#ow-diag-wc-id').val()) || 0;
+            if (!wc_id) { showToast('Enter a WC product ID first.', 'warning'); return; }
+            var $res = $('#ow-diag-result');
+            $res.html('<em style="color:#888;">Checking OC languages…</em>');
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_check_product_languages', nonce: octoWoo.nonce, wc_id: wc_id })
+            .done(function(res) {
+                if (!res || !res.success) { $res.html('<span style="color:#c62828;">✘ ' + ((res && res.data && res.data.message) || 'Error') + '</span>'); return; }
+                var d = res.data;
+                var html = '<div style="font-size:12px;">';
+                html += '<p style="margin:0 0 6px;"><strong>WC Product #' + d.wc_id + '</strong> ← OC Product #' + d.oc_id + '</p>';
+                html += '<p style="margin:0 0 4px;color:#555;">Stored meta key: <code>' + d.wp_data.sec_meta_key + '</code></p>';
+                html += '<p style="margin:0 0 4px;color:' + (d.wp_data.sec_name_meta ? '#2e7d32' : '#c62828') + ';">Secondary name meta: <strong>' + (d.wp_data.sec_name_meta || '(empty — not stored)') + '</strong></p>';
+                html += '<p style="margin:0 0 10px;color:' + (d.wp_data.sec_desc_meta !== '0 chars' ? '#2e7d32' : '#c62828') + ';">Secondary description meta: <strong>' + d.wp_data.sec_desc_meta + '</strong></p>';
+                if (d.wpml_translation_id) {
+                    html += '<p style="margin:0 0 10px;">WPML Arabic translation: post #' + d.wpml_translation_id + ' | Title: <strong>' + $('<span>').text(d.wpml_title).html() + '</strong> | Content: <strong>' + d.wpml_content_len + ' chars</strong></p>';
+                } else {
+                    html += '<p style="margin:0 0 10px;color:#c62828;">⚠ No WPML Arabic translation found for this product.</p>';
+                }
+                html += '<table style="width:100%;border-collapse:collapse;margin-top:4px;">';
+                html += '<thead><tr style="background:#e8f0fe;"><th style="padding:4px 8px;border:1px solid #c7d3f0;text-align:left;">Lang ID</th><th style="padding:4px 8px;border:1px solid #c7d3f0;">Name</th><th style="padding:4px 8px;border:1px solid #c7d3f0;">Product Name in OC</th><th style="padding:4px 8px;border:1px solid #c7d3f0;">Description Length</th><th style="padding:4px 8px;border:1px solid #c7d3f0;">Preview</th></tr></thead><tbody>';
+                d.oc_languages.forEach(function(lang) {
+                    var hasDesc = parseInt(lang.desc_len) > 0;
+                    var rowBg = hasDesc ? '#edf7ed' : '#fef2f2';
+                    html += '<tr style="background:' + rowBg + ';">';
+                    html += '<td style="padding:4px 8px;border:1px solid #ddd;font-weight:700;">' + lang.language_id + '</td>';
+                    html += '<td style="padding:4px 8px;border:1px solid #ddd;">' + $('<span>').text(lang.lang_name + ' (' + lang.code + ')').html() + '</td>';
+                    html += '<td style="padding:4px 8px;border:1px solid #ddd;">' + $('<span>').text(lang.product_name || '').html() + '</td>';
+                    html += '<td style="padding:4px 8px;border:1px solid #ddd;text-align:center;color:' + (hasDesc ? '#2e7d32' : '#c62828') + ';font-weight:700;">' + (lang.desc_len || 0) + ' chars</td>';
+                    html += '<td style="padding:4px 8px;border:1px solid #ddd;font-size:10px;color:#555;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + $('<span>').text(lang.desc_preview || '').html() + '">' + $('<span>').text((lang.desc_preview || '').replace(/<[^>]+>/g,'').substring(0,80)).html() + '</td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                html += '<p style="margin:8px 0 0;font-size:11px;color:#555;"><strong>If Arabic description length = 0 or same as English:</strong> Go to OpenCart Admin → Catalog → Products → Edit → Arabic tab → enter Arabic description → then run Multilingual Recovery.</p>';
+                html += '</div>';
+                $res.html(html);
+            })
+            .fail(function() { $res.html('<span style="color:#c62828;">Request failed.</span>'); });
+        });
         $(document).on('click', '.ow-use-img-path', function () {
             $('#ow-image-path-input').val($(this).data('path'));
             showToast('Image path set: ' + $(this).data('path'), 'success');

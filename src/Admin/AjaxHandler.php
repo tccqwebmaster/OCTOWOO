@@ -57,6 +57,7 @@ class AjaxHandler {
             'octowoo_test_connection',
             'octowoo_detect_languages',
             'octowoo_detect_image_path',
+            'octowoo_check_product_languages',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -186,6 +187,10 @@ class AjaxHandler {
 
             case 'octowoo_detect_image_path':
                 $this->actionDetectImagePath();
+                break;
+
+            case 'octowoo_check_product_languages':
+                $this->actionCheckProductLanguages();
                 break;
 
             case 'octowoo_run_chunk':
@@ -2284,6 +2289,94 @@ class AjaxHandler {
         }
 
         return $paths;
+    }
+
+
+    // ── Action: check what OC has per language for a product ───────────────────
+
+    /**
+     * Diagnostic: show what OpenCart has in each language for a WC product.
+     * Called from Migration tab → click product WC ID → see Arabic/English content.
+     * Helps diagnose why Arabic description is showing in English.
+     */
+    private function actionCheckProductLanguages(): void {
+        $wc_id = (int) filter_input( INPUT_POST, 'wc_id', FILTER_VALIDATE_INT );
+        if ( $wc_id <= 0 ) {
+            wp_send_json_error( [ 'message' => 'Invalid WC product ID.' ] );
+        }
+
+        $oc_id = (int) get_post_meta( $wc_id, '_octowoo_oc_id', true );
+        if ( ! $oc_id ) {
+            wp_send_json_error( [ 'message' => "WC product #{$wc_id} has no _octowoo_oc_id meta. Was it migrated by OctoWoo?" ] );
+        }
+
+        // Connect to OC.
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        try {
+            $connector = new \OctoWoo\Core\DatabaseConnector( $config['db'] );
+            $oc        = $connector->connect();
+        } catch ( \Throwable $e ) {
+            wp_send_json_error( [ 'message' => 'OC DB error: ' . $e->getMessage() ] );
+        }
+
+        $pfx = $config['db']['prefix'] ?? 'oc_';
+
+        // Get all language rows for this product.
+        $stmt = $oc->prepare(
+            "SELECT pd.language_id, l.name AS lang_name, l.code,
+                    pd.name AS product_name,
+                    CHAR_LENGTH(pd.description) AS desc_len,
+                    LEFT(pd.description, 200) AS desc_preview,
+                    pd.tag, pd.meta_title
+             FROM `{$pfx}product_description` pd
+             LEFT JOIN `{$pfx}language` l ON l.language_id = pd.language_id
+             WHERE pd.product_id = ?
+             ORDER BY pd.language_id ASC"
+        );
+        $stmt->execute( [ $oc_id ] );
+        $rows = $stmt->fetchAll( \PDO::FETCH_ASSOC );
+
+        // What is currently stored in WP postmeta.
+        $sfx = '_' . strtolower( explode( '_', $config['multilingual']['secondary_locale'] ?? 'ar' )[0] );
+        $wp_data = [
+            'wc_title'       => get_the_title( $wc_id ),
+            'wc_content_len' => mb_strlen( wp_strip_all_tags( get_post_field( 'post_content', $wc_id ) ) ),
+            'sec_name_meta'  => get_post_meta( $wc_id, '_octowoo_name' . $sfx, true ),
+            'sec_desc_meta'  => mb_strlen( wp_strip_all_tags( (string) get_post_meta( $wc_id, '_octowoo_description' . $sfx, true ) ) ) . ' chars',
+            'sec_meta_key'   => '_octowoo_description' . $sfx,
+            'sfx'            => $sfx,
+        ];
+
+        // Check WPML translation.
+        $wpml_translation_id = 0;
+        $wpml_title          = '';
+        $wpml_content_len    = 0;
+        if ( function_exists( 'wpml_get_content_trid' ) ) {
+            global $sitepress;
+            if ( $sitepress ) {
+                $sec_locale = $config['multilingual']['secondary_locale'] ?? 'ar';
+                $sec_lang   = strtolower( explode( '_', $sec_locale )[0] );
+                $translation_id = apply_filters( 'wpml_object_id', $wc_id, 'product', false, $sec_lang );
+                if ( $translation_id && $translation_id !== $wc_id ) {
+                    $wpml_translation_id = (int) $translation_id;
+                    $wpml_title          = get_the_title( $wpml_translation_id );
+                    $wpml_content_len    = mb_strlen( wp_strip_all_tags( get_post_field( 'post_content', $wpml_translation_id ) ) );
+                }
+            }
+        }
+
+        wp_send_json_success( [
+            'wc_id'                => $wc_id,
+            'oc_id'                => $oc_id,
+            'oc_languages'         => $rows,
+            'wp_data'              => $wp_data,
+            'wpml_translation_id'  => $wpml_translation_id,
+            'wpml_title'           => $wpml_title,
+            'wpml_content_len'     => $wpml_content_len,
+        ] );
     }
 
 }
