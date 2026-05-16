@@ -381,10 +381,12 @@ class ProductMigrator extends AbstractMigrator {
         update_post_meta( $post_id, '_backorders',     'no' );
 
         // Dimensions and weight.
-        update_post_meta( $post_id, '_weight', $row['weight'] ?? '' );
-        update_post_meta( $post_id, '_length', $row['length'] ?? '' );
-        update_post_meta( $post_id, '_width',  $row['width'] ?? '' );
-        update_post_meta( $post_id, '_height', $row['height'] ?? '' );
+        // Format dimensions/weight: OC stores as DECIMAL(15,8) → "208.00000000".
+        // WooCommerce displays the raw stored value. Strip trailing zeros for clean display.
+        update_post_meta( $post_id, '_weight', $this->formatDimension( $row['weight'] ?? '' ) );
+        update_post_meta( $post_id, '_length', $this->formatDimension( $row['length'] ?? '' ) );
+        update_post_meta( $post_id, '_width',  $this->formatDimension( $row['width']  ?? '' ) );
+        update_post_meta( $post_id, '_height', $this->formatDimension( $row['height'] ?? '' ) );
         if ( ! empty( $row['weight_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_weight_class_id', (int) $row['weight_class_id'] ); }
         if ( ! empty( $row['length_class_id'] ) ) { update_post_meta( $post_id, '_octowoo_length_class_id', (int) $row['length_class_id'] ); }
 

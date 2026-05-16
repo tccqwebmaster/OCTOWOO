@@ -544,6 +544,13 @@ class WpmlIntegration extends AbstractMigrator {
             }
             if ( $sec_content === '' ) {
                 $sec_content = $primary_post_raw->post_content;
+            } elseif ( trim( wp_strip_all_tags( $sec_content ) ) === trim( wp_strip_all_tags( $primary_post_raw->post_content ) ) ) {
+                // Secondary description identical to primary — OC product likely has the
+                // same (untranslated) content in both language rows.
+                $this->logger->debug(
+                    "[multilingual] Note: secondary-language description for {$post_type} #{$primary_id} is identical to primary. " .
+                    'This may mean the OpenCart description was not translated in the source store.'
+                );
             }
             if ( $sec_excerpt === '' && $post_type === 'product' ) {
                 $sec_excerpt = $primary_post_raw->post_excerpt;

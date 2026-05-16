@@ -185,6 +185,20 @@ abstract class AbstractMigrator {
     /**
      * Sanitise text values coming from OpenCart (ensure valid UTF-8).
      */
+    /**
+     * Format a dimension or weight value from OC for WC storage.
+     * OC stores dimensions as DECIMAL(15,8) in MySQL (e.g. "208.00000000").
+     * WC displays the raw stored value so we strip trailing zeros for clean display.
+     * Examples: "208.00000000" → "208", "13.90000000" → "13.9", "0.00000000" → ""
+     */
+    protected function formatDimension( $value ): string {
+        if ( $value === '' || $value === null ) { return ''; }
+        $float = (float) $value;
+        if ( $float <= 0 ) { return ''; }
+        // rtrim trailing zeros and decimal point: "13.90" → "13.9", "208.00" → "208"
+        return rtrim( rtrim( number_format( $float, 4, '.', '' ), '0' ), '.' );
+    }
+
     protected function sanitizeText( string $text ): string {
         // Convert encoding to UTF-8 if necessary.
         if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
