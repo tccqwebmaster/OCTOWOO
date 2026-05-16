@@ -13,6 +13,13 @@
 (function ($) {
     'use strict';
 
+    /* ── Guard: bail if octoWoo config object not injected by PHP ───────── */
+    if ( typeof octoWoo === 'undefined' || ! octoWoo.ajaxUrl ) {
+        // eslint-disable-next-line no-console
+        console.error( '[OctoWoo] octoWoo config object not found. wp_localize_script may have failed. Check WP admin errors.' );
+        return;
+    }
+
     /* ── State ───────────────────────────────────────────────────────────── */
     let pollTimer        = null;
     let currentRunId     = octoWoo.activeRunId || octoWoo.lastRunId || '';
