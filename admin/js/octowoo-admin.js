@@ -191,6 +191,14 @@
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
+        $('#ow-btn-fix-secondary-content').on('click', function() {
+            var $b = $(this);
+            $b.prop('disabled', true).text('Fixing...');
+            $.post(octoWoo.ajaxUrl, {action:'octowoo_fix_secondary_content', nonce:octoWoo.nonce})
+            .done(function(r) { showToast(r.success ? r.data.message : ((r.data && r.data.message)||'Error'), r.success ? 'success' : 'error'); })
+            .fail(function() { showToast('Request failed.', 'error'); })
+            .always(function() { $b.prop('disabled', false).text('Fix Arabic/Secondary Content'); });
+        });
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
         $('#ow-btn-rerun-seo').on('click', rerunSeoMigrator);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
@@ -1148,6 +1156,60 @@
             $('#ow-lang-secondary-name').text(name ? '\u2192 ' + name : '');
         }
     };
+
+    /* IMAGE PATH AUTO-DETECTOR */
+    function detectImagePath() {
+        var $btn   = $('#ow-btn-detect-image-path');
+        var $panel = $('#ow-img-detect-panel');
+        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Scanning...');
+        $panel.show().html('<em style="color:#888;">Scanning server for OpenCart image directory...</em>');
+        var payload = {
+            action:    'octowoo_detect_image_path',
+            nonce:     octoWoo.nonce,
+            db_host:   $('input[name="octowoo[db][host]"]').val()     || '',
+            db_port:   $('input[name="octowoo[db][port]"]').val()     || '3306',
+            db_name:   $('input[name="octowoo[db][database]"]').val() || '',
+            db_user:   $('input[name="octowoo[db][username]"]').val() || '',
+            db_prefix: $('input[name="octowoo[db][prefix]"]').val()   || 'oc_',
+        };
+        var pass = $('input[name="octowoo[db][password]"]').val();
+        if (pass && pass.indexOf('\u2022') === -1) { payload.db_pass = pass; }
+        $.post(octoWoo.ajaxUrl, payload)
+        .done(function(res) {
+            if (!res || !res.success || !res.data) {
+                $panel.html('<div style="color:#c62828;padding:8px;">[X] ' + ((res && res.data && res.data.message) || 'Detection failed') + '</div>');
+                return;
+            }
+            var data = res.data, candidates = data.candidates || [];
+            var html = '<div style="padding:10px;background:#f8faff;border:1px solid #dbe4f7;border-radius:6px;">';
+            html += '<p style="margin:0 0 8px;font-size:12px;">Images in OC DB: <strong>' + (data.oc_image_count || 0).toLocaleString() + '</strong>';
+            if (data.oc_store_url) { html += ' | Store: <code>' + $('<span>').text(data.oc_store_url).html() + '</code>'; }
+            html += '</p>';
+            if (!candidates.length) {
+                html += '<p style="color:#c62828;">No candidates found. Enter path manually.</p>';
+            } else {
+                html += '<p style="margin:0 0 6px;font-size:12px;font-weight:600;">' + candidates.length + ' candidate(s):</p>';
+                candidates.forEach(function(c, idx) {
+                    var statusColor = c.status === 'confirmed' ? '#2e7d32' : (c.status === 'likely' ? '#1565c0' : (c.status === 'missing' ? '#c62828' : '#555'));
+                    var statusText  = c.status === 'confirmed' ? '[CONFIRMED]' : (c.status === 'likely' ? '[LIKELY]' : '[' + c.status.toUpperCase() + ']');
+                    html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:' + (idx===0 ? '#edf7ed' : '#fff') + ';border:1px solid #ddd;border-radius:4px;flex-wrap:wrap;">';
+                    html += '<span style="color:' + statusColor + ';font-weight:700;font-size:11px;">' + statusText + '</span>';
+                    html += '<code style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + $('<span>').text(c.path).html() + '</code>';
+                    if (c.local_count > 0) { html += '<span style="font-size:11px;color:#555;">' + c.local_count.toLocaleString() + ' imgs</span>'; }
+                    if (c.status !== 'missing' && c.status !== 'unreadable') {
+                        html += '<button type="button" class="ow-btn ow-btn-secondary ow-use-img-path" data-path="' + $('<span>').text(c.path).html() + '" style="font-size:10px;padding:2px 10px;">' + (idx===0 && c.status==='confirmed' ? 'Use (Confirmed)' : 'Use This Path') + '</button>';
+                    }
+                    html += '</div>';
+                });
+            }
+            html += '<p style="margin:6px 0 0;font-size:11px;color:#888;">Path should end in /image and contain catalog/ subfolder.</p></div>';
+            $panel.html(html);
+            var best = candidates.find(function(c) { return c.status === 'confirmed' || c.status === 'likely'; });
+            if (best && !$('#ow-image-path-input').val()) { $('#ow-image-path-input').val(best.path); }
+        })
+        .fail(function() { $panel.html('<div style="color:#c62828;padding:8px;">Request failed. Check DB connection.</div>'); })
+        .always(function() { $btn.prop('disabled', false).html('Auto-Detect Image Path'); });
+    }
 
     function testConnection() {
         var $btn    = $('#ow-btn-test-connection');
