@@ -72,19 +72,29 @@ class AdminPage {
             true
         );
 
-        $cfg = self::getConfig();
+        // Build the JS config object. Wrap in try/catch so a failure in any
+        // one value (e.g. CronManager::getStatus() throwing) does not prevent
+        // wp_localize_script from running — which would make octoWoo undefined
+        // in the browser and kill ALL button event handlers.
+        try {
+            $cfg = self::getConfig();
+            $cron_status = \OctoWoo\Core\CronManager::getStatus();
+        } catch ( \Throwable $e ) {
+            $cfg         = [];
+            $cron_status = [ 'status' => 'error', 'error' => $e->getMessage() ];
+            error_log( '[OctoWoo] enqueueAssets error: ' . $e->getMessage() );
+        }
+
         wp_localize_script( 'octowoo-admin', 'octoWoo', [
             'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
             'nonce'       => wp_create_nonce( 'octowoo_ajax' ),
             'activeRunId' => CheckpointManager::getActiveRunId() ?? '',
             'lastRunId'   => get_option( 'octowoo_last_run_id', '' ),
-            // ── v2.4.72: demoLimit now properly passed from saved config ──────
             'demoLimit'   => (int) ( $cfg['migration']['demo_limit'] ?? 20 ),
             'batchSize'   => (int) ( $cfg['migration']['batch_size'] ?? 20 ),
             'isDryRun'    => ! empty( $cfg['migration']['dry_run'] ),
             'onDuplicate' => $cfg['migration']['on_duplicate'] ?? 'skip',
-            // ── Cron status for Settings tab widget ───────────────────────────
-            'cronStatus'  => \OctoWoo\Core\CronManager::getStatus(),
+            'cronStatus'  => $cron_status,
             'i18n'        => [
                 'starting'     => __( 'Starting migration…', 'octowoo' ),
                 'running'      => __( 'Migration in progress…', 'octowoo' ),
