@@ -1338,40 +1338,40 @@
         if (!$panel.length) { return; }
 
         var LABELS = {
-            products:      '📦 Products',
-            categories:    '📁 Categories',
-            customers:     '👤 Customers',
-            orders:        '🧾 Orders',
-            manufacturers: '🏭 Brands',
-            reviews:       '⭐ Reviews',
-            coupons:       '🏷️ Coupons',
-            images:        '🖼️ Images',
+            products:        '📦 Products',
+            categories:      '📁 Categories',
+            manufacturers:   '🏭 Brands',
+            customers:       '👤 Customers',
+            orders:          '🧾 Orders',
+            reviews:         '⭐ Reviews',
+            coupons:         '🏷️ Coupons',
+            product_images:  '🖼 Images',
+            information:     '📄 CMS Pages',
+            tags:            '🔖 Tags',
+            downloads:       '⬇️ Downloads',
         };
+        // Keys to exclude from totalItems count (meta-info, not migrated entities).
+        var EXCLUDE_FROM_TOTAL = ['product_images', 'order_statuses', 'languages', 'filter_groups', 'tax_classes'];
 
         var html = '';
         var totalItems = 0;
         var counts = {};
 
-        // Merge data from prescan (may have counts nested)
-        $.each(data, function(key, val) {
-            if (LABELS[key]) {
-                var count = 0;
-                if (typeof val === 'number') { count = val; }
-                else if (val && typeof val.count === 'number') { count = val.count; }
-                else if (val && typeof val.total === 'number') { count = val.total; }
-                counts[key] = count;
+        // Merge data from prescan or scan_counts response.
+        var rawCounts = data.counts || data;
+        $.each(rawCounts, function(key, val) {
+            if (!LABELS[key]) { return; }
+            var count = 0;
+            if (typeof val === 'number') { count = val; }
+            else if (val && typeof val.count === 'number') { count = val.count; }
+            else if (val && typeof val.total === 'number') { count = val.total; }
+            else if (typeof val === 'string') { count = parseInt(val) || 0; }
+            counts[key] = count;
+            // Only add to total for real migratable entities.
+            if (EXCLUDE_FROM_TOTAL.indexOf(key) === -1 && count > 0) {
                 totalItems += count;
             }
         });
-        // Also check data.counts (from scan_counts action)
-        if (data.counts) {
-            $.each(data.counts, function(key, val) {
-                if (LABELS[key]) {
-                    counts[key] = parseInt(val) || 0;
-                    totalItems += counts[key];
-                }
-            });
-        }
 
         if (!Object.keys(counts).length) {
             $panel.hide();
@@ -1379,11 +1379,11 @@
         }
 
         $.each(counts, function(key, count) {
-            var pct   = totalItems > 0 ? Math.round(count / totalItems * 100) : 0;
+            if (count < 0) { return; } // skip -1 tags etc
             var color = count > 10000 ? '#e65100' : (count > 1000 ? '#1565c0' : '#2e7d32');
-            html += '<div style="background:#f9f9f9;border:1px solid #e0e0e0;border-radius:6px;padding:10px 12px;text-align:center;">' +
-                '<div style="font-size:18px;font-weight:700;color:' + color + ';">' + count.toLocaleString() + '</div>' +
-                '<div style="font-size:11px;color:#666;margin-top:2px;">' + (LABELS[key] || key) + '</div>' +
+            html += '<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:14px 10px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06);">' +
+                '<div style="font-size:22px;font-weight:800;color:' + color + ';line-height:1;">' + count.toLocaleString() + '</div>' +
+                '<div style="font-size:11px;color:#666;margin-top:5px;line-height:1.3;">' + (LABELS[key] || key) + '</div>' +
                 '</div>';
         });
 
@@ -1398,7 +1398,7 @@
         } else {
             advice = '✔ Small store (' + totalItems.toLocaleString() + ' total items). Standard AJAX migration should work fine.';
         }
-        $advice.html(advice);
+        $advice.html(advice).show();
 
         $panel.slideDown(200);
     }
@@ -1407,31 +1407,31 @@
        SCAN SOURCE COUNTS
     ════════════════════════════════════════════════════════════════════ */
     function scanSourceCounts() {
-        var $btn   = $('#ow-btn-scan');
-        var $panel = $('#ow-scan-panel');
+        var $btn = $('#ow-btn-scan');
         $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Scanning…');
-        if (!$panel.length) { $btn.after('<div id="ow-scan-panel" style="margin-top:10px;"></div>'); }
-        $('#ow-scan-panel').html('<em style="color:#888;">Counting OpenCart records…</em>').show();
+        // Show the prescan panel with a loading state while waiting.
+        $('#ow-prescan-summary').slideDown(150);
+        $('#ow-prescan-grid').html('<em style="color:#888;font-size:12px;">Counting OpenCart records…</em>');
+        $('#ow-prescan-advice').html('');
 
         $.post(octoWoo.ajaxUrl, { action: 'octowoo_scan_counts', nonce: octoWoo.nonce })
         .done(function (res) {
             if (!res.success || !res.data) {
-                $('#ow-scan-panel').html('<span style="color:#c62828;">Scan failed.</span>');
+                $('#ow-prescan-grid').html('<span style="color:#c62828;">Scan failed. Check DB connection in Settings.</span>');
                 return;
             }
             var counts = res.data.counts || {};
-            var html = '<table style="font-size:12px;border-collapse:collapse;">';
+            // Update count badges on entity checkboxes.
             $.each(counts, function (entity, count) {
-                html += '<tr><td style="padding:3px 10px 3px 0;color:#555;font-weight:600;">' + entity + '</td>';
-                html += '<td style="padding:3px 0;font-weight:700;">' + parseInt(count).toLocaleString() + '</td></tr>';
+                $('.ow-count-badge[data-scan="' + entity + '"]').text(parseInt(count).toLocaleString()).show();
             });
-            html += '</table>';
-            $('#ow-scan-panel').html(html);
             renderPrescanPanel({ counts: counts });
-            showToast('Source counts refreshed.', 'success');
+            showToast('Source counts loaded.', 'success');
         })
-        .fail(function () { $('#ow-scan-panel').html('<span style="color:#c62828;">Scan request failed.</span>'); })
-        .always(function () { $btn.prop('disabled', false).text('🔍 Scan Source'); });
+        .fail(function () {
+            $('#ow-prescan-grid').html('<span style="color:#c62828;">Scan request failed. Save settings and try again.</span>');
+        })
+        .always(function () { $btn.prop('disabled', false).html('🔍 Scan Source DB'); });
     }
 
     /* ════════════════════════════════════════════════════════════════════
