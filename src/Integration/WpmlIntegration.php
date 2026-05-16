@@ -1519,20 +1519,35 @@ class WpmlIntegration extends AbstractMigrator {
                 // Passing 'octowoo-sec-{id}' (unique per term, never used by any real term)
                 // bypasses all uniqueness conflicts. fixTranslationTermSlug() immediately
                 // overwrites it with the correct shared slug via direct DB write.
-                $temp_slug = 'octowoo-sec-' . $existing_translation_id;
+                // Use timestamp in temp slug to guarantee uniqueness across recovery runs.
+                // The old slug 'octowoo-sec-{id}' from a prior run may still be attached
+                // to another term_id, causing wp_update_term to reject it as "already in use".
+                $temp_slug = 'ow-t-' . $existing_translation_id . '-' . time();
 
-                $updated = wp_update_term( $existing_translation_id, $taxonomy, [
-                    'name'        => $sec_name,
-                    'description' => $sec_description,
-                    'slug'        => $temp_slug,
-                    'parent'      => $sec_parent,
-                ] );
+                // Update via direct DB write to bypass wp_update_term slug uniqueness check entirely.
+                // This is safe because fixTranslationTermSlug() rewrites the slug after this.
+                global $wpdb;
+                $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->terms,
+                    [ 'name' => $sec_name, 'slug' => $temp_slug ],
+                    [ 'term_id' => $existing_translation_id ]
+                );
+                $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->term_taxonomy,
+                    [ 'description' => $sec_description, 'parent' => $sec_parent ],
+                    [ 'term_id' => $existing_translation_id, 'taxonomy' => $taxonomy ]
+                );
+                clean_term_cache( $existing_translation_id, $taxonomy );
 
-                if ( is_wp_error( $updated ) ) {
-                    $this->logger->error( "[multilingual] Failed updating existing translated term #{$existing_translation_id}: " . $updated->get_error_message() );
+                // Verify update succeeded.
+                $verify_term = get_term( $existing_translation_id, $taxonomy );
+                if ( ! $verify_term || is_wp_error( $verify_term ) ) {
+                    $this->logger->error( "[multilingual] Term #{$existing_translation_id} not found after update in {$taxonomy}." );
                     $failed++;
                     continue;
                 }
+                $name_has_ar_check = preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_name );
+                $this->logger->info( "[multilingual] Updated {$taxonomy} term #{$existing_translation_id}: name='{$sec_name}' " . ( $name_has_ar_check ? '[ARABIC]' : '[NOT ARABIC]' ) );
 
                 // Re-register the WPML translation link on every update run.
                 // This is idempotent and repairs any stale or missing
