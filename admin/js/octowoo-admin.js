@@ -207,6 +207,29 @@
         // Connection test.
         $('#ow-btn-detect-image-path').on('click', detectImagePath);
         $('#ow-btn-detect-languages').on('click', detectLanguages);
+        $('#ow-btn-show-migrated').on('click', function() {
+            var $div = $('#ow-migrated-ids');
+            $div.html('<em style="color:#888;">Loading recently migrated products...</em>');
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_get_migrated_products', nonce: octoWoo.nonce })
+            .done(function(res) {
+                if (!res || !res.success || !res.data.products.length) {
+                    $div.html('<span style="color:#c62828;">No OctoWoo-migrated products found. Run a migration first.</span>');
+                    return;
+                }
+                var html = '<p style="margin:0 0 4px;font-size:11px;color:#555;">Recently migrated WC product IDs (click to check):</p>';
+                html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+                res.data.products.forEach(function(p) {
+                    html += '<button type="button" class="ow-btn ow-btn-secondary ow-pick-migrated" ' +
+                        'data-wc-id="' + p.ID + '" ' +
+                        'style="font-size:10px;padding:2px 8px;" title="OC ID: ' + p.oc_id + '">' +
+                        'WC #' + p.ID + ' (OC #' + p.oc_id + ')</button>';
+                });
+                html += '</div>';
+                $div.html(html);
+            })
+            .fail(function() { $div.html('<span style="color:#c62828;">Request failed.</span>'); });
+        });
+
         $('#ow-btn-check-product-langs').on('click', function() {
             var wc_id = parseInt($('#ow-diag-wc-id').val()) || 0;
             if (!wc_id) { showToast('Enter a WC product ID first.', 'warning'); return; }
@@ -240,7 +263,24 @@
                     html += '</tr>';
                 });
                 html += '</tbody></table>';
-                html += '<p style="margin:8px 0 0;font-size:11px;color:#555;"><strong>If Arabic description length = 0 or same as English:</strong> Go to OpenCart Admin → Catalog → Products → Edit → Arabic tab → enter Arabic description → then run Multilingual Recovery.</p>';
+                // Check if Arabic desc length same as English — critical warning
+                var arLang = d.oc_languages.find(function(l) { return String(l.code).toLowerCase().indexOf('ar') === 0; });
+                var enLang = d.oc_languages.find(function(l) { return String(l.code).toLowerCase().indexOf('en') === 0; });
+                if (arLang && enLang && arLang.desc_len > 0 && arLang.desc_len === enLang.desc_len) {
+                    html += '<div style="margin-top:8px;padding:10px;background:#fef2f2;border:2px solid #c62828;border-radius:4px;">' +
+                        '<strong style="color:#c62828;">⚠ ROOT CAUSE FOUND: Arabic description in OpenCart is the SAME LENGTH as English (' + arLang.desc_len + ' chars).</strong><br>' +
+                        '<span style="font-size:11px;">This almost always means the Arabic language tab in OpenCart was populated by COPYING the English text, not translating it. ' +
+                        'OctoWoo correctly migrated the Arabic content from OC — but that content IS English text.<br>' +
+                        '<strong>Fix: OpenCart Admin → Catalog → Products → Edit → click the Arabic tab → replace the English text with real Arabic content → Save → then run Multilingual Recovery.</strong></span>' +
+                        '</div>';
+                } else if (arLang && (!arLang.desc_len || arLang.desc_len === 0)) {
+                    html += '<div style="margin-top:8px;padding:10px;background:#fef2f2;border:2px solid #c62828;border-radius:4px;">' +
+                        '<strong style="color:#c62828;">⚠ Arabic description is EMPTY in OpenCart (0 chars).</strong><br>' +
+                        '<span style="font-size:11px;">The Arabic tab in OpenCart has no description. Go to OpenCart Admin → Catalog → Products → Edit → Arabic tab → enter description → Save → run Multilingual Recovery.</span>' +
+                        '</div>';
+                } else {
+                    html += '<p style="margin:8px 0 0;font-size:11px;color:#555;">Arabic description has different content from English — this is correct. Run Multilingual Recovery to update WC.</p>';
+                }
                 html += '</div>';
                 $res.html(html);
             })
@@ -251,6 +291,9 @@
             showToast('Image path set: ' + $(this).data('path'), 'success');
         });
         // Event delegation for dynamically-created language set buttons.
+        $(document).on('click', '.ow-pick-migrated', function () {
+            $('#ow-diag-wc-id').val($(this).data('wc-id'));
+        });
         $(document).on('click', '.ow-set-lang-btn', function () {
             owSetLang($(this).data('type'), $(this).data('id'), $(this).data('name'));
         });

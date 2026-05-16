@@ -680,13 +680,17 @@ if ( $_ow_show_wizard ) {
                         <!-- Diagnostic: check OC language content per product -->
                         <div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
                             <p style="margin:0 0 6px;font-size:12px;font-weight:600;">🔬 <?php esc_html_e( 'Diagnose: Why is Arabic description showing in English?', 'octowoo' ); ?></p>
-                            <p style="margin:0 0 8px;font-size:11px;color:#92400e;"><?php esc_html_e( 'Enter a WooCommerce product ID to see what OpenCart has in each language. This shows if the Arabic description is missing or not entered in OpenCart admin.', 'octowoo' ); ?></p>
-                            <div style="display:flex;gap:8px;align-items:center;">
-                                <input type="number" id="ow-diag-wc-id" placeholder="<?php esc_attr_e( 'WC Product ID e.g. 42', 'octowoo' ); ?>" style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;width:160px;">
+                            <p style="margin:0 0 8px;font-size:11px;color:#92400e;"><?php esc_html_e( 'IMPORTANT: Enter a WC product ID that was migrated by OctoWoo (has _octowoo_oc_id meta). Click "Show Migrated IDs" to see valid IDs.', 'octowoo' ); ?></p>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                                <input type="number" id="ow-diag-wc-id" placeholder="<?php esc_attr_e( 'WC Product ID', 'octowoo' ); ?>" style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;width:140px;">
                                 <button type="button" id="ow-btn-check-product-langs" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
                                     🔬 <?php esc_html_e( 'Check in OpenCart', 'octowoo' ); ?>
                                 </button>
+                                <button type="button" id="ow-btn-show-migrated" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
+                                    📋 <?php esc_html_e( 'Show Migrated IDs', 'octowoo' ); ?>
+                                </button>
                             </div>
+                            <div id="ow-migrated-ids" style="margin-top:8px;"></div>
                             <div id="ow-diag-result" style="margin-top:10px;"></div>
                         </div>
 
@@ -911,6 +915,9 @@ if ( $_ow_show_wizard ) {
             <div class="ow-actions">
                 <button type="submit" id="ow-btn-save-settings" class="ow-btn ow-btn-primary">
                     💾 <?php esc_html_e( 'Save Settings', 'octowoo' ); ?>
+                </button>
+                <button type="button" id="ow-btn-repair-dimensions" class="ow-btn ow-btn-secondary" style="margin-left:8px;" title="Fix 208.00000000cm to 208 on already-migrated products">
+                    📐 Repair Dimensions
                 </button>
                 <button type="button" id="ow-btn-auto-detect" class="ow-btn ow-btn-secondary" style="margin-left:8px;">
                     🔎 <?php esc_html_e( 'Auto-detect Image Path & Logs', 'octowoo' ); ?>

@@ -59,6 +59,8 @@ class AjaxHandler {
             'octowoo_detect_image_path',
             'octowoo_check_product_languages',
             'octowoo_fix_secondary_content',
+            'octowoo_get_migrated_products',
+            'octowoo_repair_dimensions',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -196,6 +198,14 @@ class AjaxHandler {
 
             case 'octowoo_fix_secondary_content':
                 $this->actionFixSecondaryContent();
+                break;
+
+            case 'octowoo_get_migrated_products':
+                $this->actionGetMigratedProducts();
+                break;
+
+            case 'octowoo_repair_dimensions':
+                $this->actionRepairDimensions();
                 break;
 
             case 'octowoo_run_chunk':
@@ -2483,6 +2493,60 @@ class AjaxHandler {
             'fixed'       => $fixed,
             'already_ok'  => $already,
             'skipped'     => $skipped,
+        ] );
+    }
+
+
+    // ── Action: get list of recently migrated WC product IDs ──────────────────
+    private function actionGetMigratedProducts(): void {
+        global $wpdb;
+        $limit = 20;
+        $rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT p.ID, pm.meta_value AS oc_id
+                 FROM {$wpdb->posts} p
+                 JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
+                 WHERE p.post_type = 'product' AND p.post_status != 'trash'
+                 ORDER BY p.ID DESC LIMIT %d",
+                $limit
+            ),
+            ARRAY_A
+        );
+        wp_send_json_success( [ 'products' => $rows ?: [] ] );
+    }
+
+    // ── Action: repair dimension formatting on already-migrated products ────────
+    private function actionRepairDimensions(): void {
+        global $wpdb;
+
+        // Find all OctoWoo-migrated products.
+        $product_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT DISTINCT post_id FROM {$wpdb->postmeta}
+             WHERE meta_key = '_octowoo_oc_id'"
+        );
+
+        $fixed = 0;
+        $dim_keys = [ '_weight', '_length', '_width', '_height' ];
+
+        foreach ( $product_ids as $pid ) {
+            $pid = (int) $pid;
+            foreach ( $dim_keys as $key ) {
+                $val = get_post_meta( $pid, $key, true );
+                if ( $val === '' || $val === null || $val === false ) { continue; }
+                // Check if value has trailing zeros (needs fixing).
+                if ( strpos( (string) $val, '.' ) !== false ) {
+                    $clean = rtrim( rtrim( number_format( (float) $val, 4, '.', '' ), '0' ), '.' );
+                    if ( $clean !== (string) $val && $clean !== '' ) {
+                        update_post_meta( $pid, $key, $clean );
+                        $fixed++;
+                    }
+                }
+            }
+        }
+
+        wp_send_json_success( [
+            'message' => sprintf( 'Repaired dimension/weight values on %d field(s) across %d migrated products.', $fixed, count( $product_ids ) ),
+            'fixed'   => $fixed,
         ] );
     }
 
