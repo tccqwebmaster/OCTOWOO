@@ -516,7 +516,7 @@ class WpmlIntegration extends AbstractMigrator {
             // Log preview of what is stored in postmeta — shows if content is Arabic or English
             if ( $sec_content !== '' ) {
                 $preview = mb_substr( wp_strip_all_tags( $sec_content ), 0, 100 );
-                $has_arabic = preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_content ) ? '[IS ARABIC]' : '[NOT ARABIC - OC Arabic field has English text]';
+                $has_arabic = preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_content ) ? '[IS ARABIC]' : '[NOT ARABIC - will re-fetch from OC]';
                 $this->logger->info( "[multilingual] content-check #{$primary_id}: {$has_arabic} preview: {$preview}" );
             }
 
@@ -524,7 +524,9 @@ class WpmlIntegration extends AbstractMigrator {
             // try to fetch the secondary-language data directly from the OC database.
             // This ensures the multilingual pass can recover Arabic data even when the
             // primary migration stored empty strings.
-            if ( ( $sec_title === '' || $sec_content === '' ) && $post_type === 'product' ) {
+            // Re-fetch if postmeta is empty OR has no Arabic characters (English stored in Arabic field)
+            $sec_has_arabic   = $sec_content !== '' && preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_content );
+            if ( ! $sec_has_arabic && $post_type === 'product' ) {
                 $oc_id_meta = (int) get_post_meta( $primary_id, '_octowoo_oc_id', true );
                 if ( $oc_id_meta > 0 ) {
                     $fresh = $this->fetchSecDescriptionFromOC( $oc_id_meta );
@@ -533,10 +535,19 @@ class WpmlIntegration extends AbstractMigrator {
                             $sec_title   = $this->sanitizeName( $fresh['name'] );
                             $this->logger->info( "[multilingual] Fetched secondary title from OC for product #{$primary_id} (OC #{$oc_id_meta}): '{$sec_title}'" );
                         }
-                        if ( $sec_content === '' && isset( $fresh['description'] ) ) {
-                            $sec_content = $this->cleanDescription( $fresh['description'] );
-                            $sec_content_len = mb_strlen( wp_strip_all_tags( $sec_content ) );
-                            $this->logger->info( "[multilingual] Fetched secondary description from OC for product #{$primary_id}: {$sec_content_len} chars" );
+                        if ( isset( $fresh['description'] ) && $fresh['description'] !== '' ) {
+                            $fresh_desc = $this->cleanDescription( $fresh['description'] );
+                            $fresh_has_ar = preg_match( '/[\x{0600}-\x{06FF}]/u', $fresh_desc );
+                            if ( $fresh_has_ar || $sec_content === '' ) {
+                                // Use fresh OC content if it has Arabic, or if postmeta was empty.
+                                $sec_content     = $fresh_desc;
+                                $sec_content_len = mb_strlen( wp_strip_all_tags( $sec_content ) );
+                                $ar_label        = $fresh_has_ar ? '[ARABIC]' : '[not Arabic]';
+                                $this->logger->info( "[multilingual] Re-fetched description from OC for #{$primary_id}: {$sec_content_len} chars {$ar_label}" );
+                                // Update postmeta so future runs don't re-fetch unnecessarily.
+                                $sfx_key = '_octowoo_description' . $this->secLangSuffix();
+                                update_post_meta( $primary_id, $sfx_key, $sec_content );
+                            }
                         }
                         if ( $sec_excerpt === '' && isset( $fresh['tag'] ) ) {
                             // OC tag field = excerpt-equivalent for secondary language.
