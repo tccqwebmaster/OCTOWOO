@@ -327,54 +327,93 @@ if ( $_ow_show_wizard ) {
                 <?php esc_html_e( 'If you want to run in the background (so you can close the browser tab), scroll down and choose "Start in Background" instead of the standard Start buttons.', 'octowoo' ); ?>
                 <?php esc_html_e( 'Background mode uses WooCommerce Action Scheduler — make sure WooCommerce cron is running.', 'octowoo' ); ?>
             </div>
-            <!-- Standard (AJAX chunk) mode -->
-            <div class="ow-actions">
-                <button type="button" id="ow-btn-demo" class="ow-btn ow-btn-warning">
-                    ▷ <?php esc_html_e( 'Start Demo Migration', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-start" class="ow-btn ow-btn-primary">
-                    ▶ <?php esc_html_e( 'Start Full Migration', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-images-only" class="ow-btn ow-btn-secondary">
-                    🖼 <?php esc_html_e( 'Images-Only Recovery', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-products-images" class="ow-btn ow-btn-secondary">
-                    🧩 <?php esc_html_e( 'Products + Images Recovery', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-cats-manufacturers" class="ow-btn ow-btn-secondary">
-                    🗂 <?php esc_html_e( 'Categories + Manufacturers Recovery', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary">
-                    🌐 <?php esc_html_e( 'Multilingual Recovery', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-fix-secondary-content" class="ow-btn ow-btn-secondary">
-                    🌐 <?php esc_html_e( 'Fix Arabic/Secondary Content', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-cleanup-ml-terms" class="ow-btn ow-btn-secondary">
-                    🧹 <?php esc_html_e( 'Fix Orphan Categories', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-repair-order-items" class="ow-btn ow-btn-secondary">
-                    🔗 <?php esc_html_e( 'Repair Order Items', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-repair-categories" class="ow-btn ow-btn-secondary">
-                    🏷️ <?php esc_html_e( 'Repair Product Categories', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-rerun-seo" class="ow-btn ow-btn-secondary">
-                    🔍 <?php esc_html_e( 'Rerun SEO Migrator', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>>
-                    ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
-                </button>
-                <button type="button" id="ow-btn-abort" class="ow-btn ow-btn-danger" disabled>
+            <!-- ── GROUP A: Start ─────────────────────────────────────────────── -->
+            <div style="margin-bottom:10px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;color:#888;letter-spacing:.5px;"><?php esc_html_e( 'Start Migration', 'octowoo' ); ?></p>
+                <div class="ow-actions" style="gap:8px;">
+                    <button type="button" id="ow-btn-demo" class="ow-btn ow-btn-warning"
+                        title="<?php esc_attr_e( 'Migrates the first 20 items per entity (products, categories, orders, customers…). Use this to verify everything looks correct before running the full migration. Safe to run multiple times.', 'octowoo' ); ?>">
+                        ▷ <?php esc_html_e( 'Start Demo (20 items)', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-start" class="ow-btn ow-btn-primary"
+                        title="<?php esc_attr_e( 'Migrates ALL items from OpenCart. Runs all selected migrators in order: categories → products → customers → orders → SEO → multilingual. Use after Demo confirms results are correct.', 'octowoo' ); ?>">
+                        ▶ <?php esc_html_e( 'Start Full Migration', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>
+                        title="<?php esc_attr_e( 'Continue a migration that was paused or interrupted. Picks up from where it stopped — does not re-migrate items already completed.', 'octowoo' ); ?>">
+                        ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── GROUP B: Recovery (run specific migrators again) ───────────── -->
+            <div style="margin-bottom:10px;padding:10px 14px;background:#f8faff;border:1px solid #dbe4f7;border-radius:6px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;color:#888;letter-spacing:.5px;"><?php esc_html_e( 'Recovery — Re-run a specific part of the migration', 'octowoo' ); ?></p>
+                <p style="margin:0 0 8px;font-size:11px;color:#666;"><?php esc_html_e( 'Use these when the full migration is done but one area needs to be re-run (e.g. images were missing, Arabic translation was skipped). Each button re-runs only that part — existing data is updated, nothing is duplicated.', 'octowoo' ); ?></p>
+                <div class="ow-actions" style="gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="ow-btn-images-only" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-downloads all product images from OpenCart into the WooCommerce media library. Use when images were missing or the image path was wrong during the main migration.', 'octowoo' ); ?>">
+                        🖼 <?php esc_html_e( 'Re-run Images', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-products-images" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-runs Products + Images together. Use when products need to be refreshed along with their images (e.g. prices, stock, descriptions changed in OpenCart).', 'octowoo' ); ?>">
+                        🧩 <?php esc_html_e( 'Re-run Products + Images', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-cats-manufacturers" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-runs Categories and Brands/Manufacturers. Use when categories were missing, had wrong hierarchy, or new categories were added in OpenCart.', 'octowoo' ); ?>">
+                        🗂 <?php esc_html_e( 'Re-run Categories + Brands', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-runs the Arabic / secondary language translation pass for all products, categories, and brands using WPML or Polylang. Use after entering Arabic descriptions in OpenCart, or if translations were missing.', 'octowoo' ); ?>">
+                        🌐 <?php esc_html_e( 'Re-run Multilingual / Arabic', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-rerun-seo" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-runs SEO URL migration and 301 redirect rules. Use when product slugs were wrong or the .htaccess redirect file needs to be rebuilt.', 'octowoo' ); ?>">
+                        🔍 <?php esc_html_e( 'Re-run SEO + Redirects', 'octowoo' ); ?>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── GROUP C: Fix / Repair (targeted one-time fixes) ────────────── -->
+            <div style="margin-bottom:10px;padding:10px 14px;background:#fff8e7;border:1px solid #fde68a;border-radius:6px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;color:#888;letter-spacing:.5px;"><?php esc_html_e( 'Fix / Repair — One-time targeted fixes', 'octowoo' ); ?></p>
+                <p style="margin:0 0 8px;font-size:11px;color:#666;"><?php esc_html_e( 'Run these only if you see a specific problem. Each performs a surgical fix without touching other data.', 'octowoo' ); ?></p>
+                <div class="ow-actions" style="gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="ow-btn-fix-secondary-content" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Scans all WPML Arabic translation posts, detects any that still show English (WPML overwrote the Arabic content), and directly re-writes the Arabic text into the database bypassing all hooks. Run this if Multilingual Recovery completed but Arabic pages still show English content.', 'octowoo' ); ?>">
+                        🌐 <?php esc_html_e( 'Fix Arabic Content (direct DB write)', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-repair-categories" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-assigns WooCommerce product category terms for all migrated products. Use when products are missing their categories or show in the wrong category after migration.', 'octowoo' ); ?>">
+                        🏷️ <?php esc_html_e( 'Fix Product → Category Links', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-cleanup-ml-terms" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Removes orphan term taxonomy entries created by WPML during the multilingual pass that no longer have a matching parent term. Run if you see duplicate or broken category entries.', 'octowoo' ); ?>">
+                        🧹 <?php esc_html_e( 'Fix Orphan Categories', 'octowoo' ); ?>
+                    </button>
+                    <button type="button" id="ow-btn-repair-order-items" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Re-links WooCommerce order line items to their WooCommerce products using the OpenCart product ID. Use if order items show as deleted products or have no product link.', 'octowoo' ); ?>">
+                        🔗 <?php esc_html_e( 'Fix Order → Product Links', 'octowoo' ); ?>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── GROUP D: Controls (running migration) ─────────────────────── -->
+            <div class="ow-actions" style="gap:6px;">
+                <button type="button" id="ow-btn-abort" class="ow-btn ow-btn-danger" disabled
+                    title="<?php esc_attr_e( 'Stop the migration immediately. Progress is saved — you can Resume later.', 'octowoo' ); ?>">
                     ⏹ <?php esc_html_e( 'Abort', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-pause" class="ow-btn ow-btn-secondary" disabled>
+                <button type="button" id="ow-btn-pause" class="ow-btn ow-btn-secondary" disabled
+                    title="<?php esc_attr_e( 'Pause after the current batch completes. The migration stays locked — click Resume to continue.', 'octowoo' ); ?>">
                     ⏸ <?php esc_html_e( 'Pause', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-skip" class="ow-btn ow-btn-secondary" disabled>
+                <button type="button" id="ow-btn-skip" class="ow-btn ow-btn-secondary" disabled
+                    title="<?php esc_attr_e( 'Skip the current migrator and move to the next one. Use if one entity type is stuck or failing.', 'octowoo' ); ?>">
                     ⏭ <?php esc_html_e( 'Skip Current', 'octowoo' ); ?>
                 </button>
-                <button type="button" id="ow-btn-reset" class="ow-btn ow-btn-secondary">
+                <button type="button" id="ow-btn-reset" class="ow-btn ow-btn-secondary"
+                    title="<?php esc_attr_e( 'Clears all migration progress (checkpoints and ID map). The next migration will start fresh from the beginning. Does NOT delete migrated WooCommerce data — use Purge for that.', 'octowoo' ); ?>">
                     ↺ <?php esc_html_e( 'Reset Progress', 'octowoo' ); ?>
                 </button>
             </div>
