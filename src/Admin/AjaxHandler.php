@@ -363,10 +363,28 @@ class AjaxHandler {
         // phpcs:ignore WordPress.Security.NonceVerification
         $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
         if ( $migrators_raw !== '' ) {
-            $allowed   = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
-            $selected  = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
+            $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
             foreach ( $allowed as $key ) {
                 $overrides['migration'][ 'run_' . $key ] = in_array( $key, $selected, true );
+            }
+
+            // Recovery mode: when running specific migrators, reset their checkpoints
+            // so they re-run even if previously marked 'completed'.
+            // Without this, the migrator sees isCompleted()=true and returns 0 instantly.
+            if ( ! $resume && ! empty( $selected ) ) {
+                // Use the active run_id to find the checkpoint, or the last run.
+                $reset_run_id = CheckpointManager::getActiveRunId()
+                    ?? get_option( 'octowoo_last_run_id', '' );
+                if ( $reset_run_id ) {
+                    $cp_reset = new CheckpointManager( $reset_run_id );
+                    foreach ( $selected as $key ) {
+                        $cp_reset->reset( $key );
+                    }
+                    // Checkpoint reset logged via error_log for debugging.
+                    // phpcs:ignore WordPress.PHP.DevelopmentFunctions
+                    error_log( '[OctoWoo] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id );
+                }
             }
         }
 
