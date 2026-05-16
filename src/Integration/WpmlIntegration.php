@@ -1450,21 +1450,35 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
-            // When secondary-language meta is empty (e.g. wrong language_id_secondary
-            // was used during CategoryMigrator run), try to fetch directly from OC.
-            if ( ( ! $sec_name || ! $sec_description ) && $oc_id > 0 ) {
+            // Re-fetch from OC when:
+            // a) sec_name/sec_description is empty (wrong language_id during CategoryMigrator), OR
+            // b) sec_name exists but contains NO Arabic/secondary-language characters
+            //    (English was stored in the Arabic term meta — same bug as products).
+            $name_has_arabic = $sec_name        && preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_name );
+            $desc_has_arabic = $sec_description && preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_description );
+            $need_term_fresh = $oc_id > 0 && ( ! $name_has_arabic || ! $desc_has_arabic );
+
+            if ( $need_term_fresh ) {
                 $fresh_cat = $this->fetchSecCategoryDescriptionFromOC( $oc_id );
                 if ( $fresh_cat !== null ) {
-                    if ( ! $sec_name && ! empty( $fresh_cat['name'] ) ) {
-                        $sec_name = sanitize_text_field( $fresh_cat['name'] );
-                        $this->logger->info( "[multilingual] Fetched secondary category name directly from OC for term #{$primary_term_id} (OC #{$oc_id})." );
+                    // Use fresh name if it has Arabic OR if current is empty.
+                    if ( ! empty( $fresh_cat['name'] ) ) {
+                        $fresh_name     = sanitize_text_field( $fresh_cat['name'] );
+                        $fresh_name_ar  = preg_match( '/[\x{0600}-\x{06FF}]/u', $fresh_name );
+                        if ( $fresh_name_ar || ! $sec_name ) {
+                            $sec_name = $fresh_name;
+                            $this->logger->info( "[multilingual] Re-fetched {$taxonomy} name from OC for term #{$primary_term_id} (OC #{$oc_id}): '{$sec_name}'" );
+                            update_term_meta( $primary_term_id, '_octowoo_name' . $sfx, $sec_name );
+                        }
                     }
-                    if ( ! $sec_description && ! empty( $fresh_cat['description'] ) ) {
-                        $sec_description = wp_kses_post( $fresh_cat['description'] );
-                    }
-                    // Also update the stored meta so next run doesn't re-fetch from OC.
-                    if ( $sec_name ) {
-                        update_term_meta( $primary_term_id, '_octowoo_name' . $sfx, $sec_name );
+                    // Use fresh description if it has Arabic OR if current is empty.
+                    if ( ! empty( $fresh_cat['description'] ) ) {
+                        $fresh_desc    = wp_kses_post( $fresh_cat['description'] );
+                        $fresh_desc_ar = preg_match( '/[\x{0600}-\x{06FF}]/u', $fresh_desc );
+                        if ( $fresh_desc_ar || ! $sec_description ) {
+                            $sec_description = $fresh_desc;
+                            update_term_meta( $primary_term_id, '_octowoo_description' . $sfx, $sec_description );
+                        }
                     }
                 }
             }
@@ -2122,27 +2136,42 @@ class WpmlIntegration extends AbstractMigrator {
             $pri_lid = $this->langId();
             $sec_lid = $this->langIdSecondary();
 
-            if ( $sec_lid > 0 ) {
-                $row = $this->oc->fetchAll(
-                    "SELECT name, description, meta_title, meta_description, meta_keyword
-                     FROM `{$pfx}category_description`
-                     WHERE category_id = ? AND language_id = ? LIMIT 1",
-                    [ $oc_id, $sec_lid ]
-                );
-                if ( ! empty( $row ) ) { return $row[0]; }
-            }
-            // Auto-detect: first non-primary language.
+            // Fetch ALL non-primary language rows and prefer the one with Arabic characters.
             $all = $this->oc->fetchAll(
                 "SELECT language_id, name, description, meta_title, meta_description, meta_keyword
                  FROM `{$pfx}category_description`
                  WHERE category_id = ? AND language_id != ?
-                 ORDER BY language_id ASC LIMIT 1",
+                 ORDER BY language_id ASC",
                 [ $oc_id, $pri_lid ]
             );
-            if ( ! empty( $all ) ) {
-                $this->logger->info( "[multilingual] Auto-detected secondary category description (language_id={$all[0]['language_id']}) for OC #{$oc_id}." );
-                return $all[0];
+
+            if ( empty( $all ) ) { return null; }
+
+            // Priority 1: configured secondary language ID with Arabic content.
+            foreach ( $all as $row ) {
+                if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid
+                     && preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                    return $row;
+                }
             }
+
+            // Priority 2: any row with Arabic characters.
+            foreach ( $all as $row ) {
+                if ( preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                    $this->logger->info( "[multilingual] Found Arabic category row language_id={$row['language_id']} for OC #{$oc_id}." );
+                    return $row;
+                }
+            }
+
+            // Priority 3: configured language_id even if not Arabic.
+            foreach ( $all as $row ) {
+                if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid ) { return $row; }
+            }
+
+            // Priority 4: first available non-primary row.
+            $this->logger->info( "[multilingual] No Arabic category row found for OC #{$oc_id}, using language_id={$all[0]['language_id']}." );
+            return $all[0];
+
         } catch ( \Throwable $e ) {
             $this->logger->warning( "[multilingual] fetchSecCategoryDescriptionFromOC failed for OC #{$oc_id}: " . $e->getMessage() );
         }
@@ -2188,31 +2217,43 @@ class WpmlIntegration extends AbstractMigrator {
             $pri_lid = $this->langId();
             $sec_lid = $this->langIdSecondary();
 
-            // Try configured secondary language first.
-            if ( $sec_lid > 0 ) {
-                $row = $this->oc->fetchAll(
-                    "SELECT name, description, meta_title, meta_description, meta_keyword, tag
-                     FROM `{$pfx}product_description`
-                     WHERE product_id = ? AND language_id = ? LIMIT 1",
-                    [ $oc_id, $sec_lid ]
-                );
-                if ( ! empty( $row ) ) {
-                    return $row[0];
-                }
-            }
-
-            // Auto-detect: first language_id that is not primary.
+            // Fetch ALL non-primary language rows, then pick the best one:
+            // Priority: configured sec lang + Arabic > any Arabic > configured sec lang > first non-primary.
             $all = $this->oc->fetchAll(
                 "SELECT language_id, name, description, meta_title, meta_description, meta_keyword, tag
                  FROM `{$pfx}product_description`
                  WHERE product_id = ? AND language_id != ?
-                 ORDER BY language_id ASC LIMIT 1",
+                 ORDER BY language_id ASC",
                 [ $oc_id, $pri_lid ]
             );
-            if ( ! empty( $all ) ) {
-                $this->logger->info( "[multilingual] Auto-detected secondary description (language_id={$all[0]['language_id']}) for OC product #{$oc_id}." );
-                return $all[0];
+
+            if ( empty( $all ) ) { return null; }
+
+            // Priority 1: configured secondary language ID with Arabic content.
+            foreach ( $all as $row ) {
+                if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid
+                     && preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                    return $row;
+                }
             }
+
+            // Priority 2: any row with Arabic characters.
+            foreach ( $all as $row ) {
+                if ( preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                    $this->logger->info( "[multilingual] Found Arabic product row language_id={$row['language_id']} for OC #{$oc_id}." );
+                    return $row;
+                }
+            }
+
+            // Priority 3: configured language_id (even if not Arabic).
+            foreach ( $all as $row ) {
+                if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid ) { return $row; }
+            }
+
+            // Priority 4: first available non-primary row.
+            $this->logger->info( "[multilingual] No Arabic product row found for OC #{$oc_id}, using language_id={$all[0]['language_id']}." );
+            return $all[0];
+
         } catch ( \Throwable $e ) {
             $this->logger->warning( "[multilingual] fetchSecDescriptionFromOC failed for OC #{$oc_id}: " . $e->getMessage() );
         }
