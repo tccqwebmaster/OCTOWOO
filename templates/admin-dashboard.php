@@ -106,7 +106,7 @@ if ( $_ow_show_wizard ) {
                     🔎 <?php esc_html_e( 'Run System Check', 'octowoo' ); ?>
                 </button>
             </div>
-            <div id="ow-validate-results" style="display:none;"></div>
+            <div id="ow-validate-panel" style="display:none;"></div>
         </div>
 
         <!-- ── Pre-scan Summary (v2.4.72) ──────────────────────────────── -->
@@ -180,7 +180,7 @@ if ( $_ow_show_wizard ) {
                     echo '<div style="display:grid;grid-template-columns:1fr 1fr;' . ( $ow_is_last ? '' : 'border-bottom:1px solid #e0e0e0;' ) . '">';
                     foreach ( [ $ow_left, $ow_right ] as $ow_ci => $ow_ent ) {
                         if ( ! $ow_ent ) { echo '<div></div>'; continue; }
-                        echo '<div style="padding:12px 16px;' . ( $ow_ci === 0 ? 'border-right:1px solid #e0e0e0;' : '' ) . '">';
+                        echo '<div style="padding:8px 10px;' . ( $ow_ci === 0 ? 'border-right:1px solid #e0e0e0;' : '' ) . '">';
                         $ow_badge = $ow_ent['scan_key']
                             ? ' <span class="ow-count-badge" data-scan="' . esc_attr( $ow_ent['scan_key'] ) . '" style="display:none;background:#2271b1;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:normal;"></span>'
                             : '';
@@ -211,9 +211,13 @@ if ( $_ow_show_wizard ) {
                 * <?php esc_html_e( 'Bundles requires WooCommerce Product Bundles (SomewhereWarm) + OpenCart 4.x.', 'octowoo' ); ?>
             </p>
 
-            <!-- Language reference & timing note -->
-            <div style="margin-top:14px;padding:12px 16px;background:#f0f6fc;border-left:4px solid #2271b1;border-radius:4px;font-size:12px;color:#3c434a;line-height:1.6;">
-                <strong style="font-size:13px;">🌐 <?php esc_html_e( 'Multilingual — Secondary Language', 'octowoo' ); ?></strong><br>
+            <!-- Language reference & timing note — collapsed by default -->
+            <details style="margin-top:10px;" open>
+            <summary style="cursor:pointer;padding:8px 12px;background:#f0f6fc;border-left:4px solid #2271b1;border-radius:4px;font-size:12px;font-weight:600;color:#2271b1;list-style:none;display:flex;align-items:center;gap:6px;">
+                🌐 <?php esc_html_e( 'Multilingual — Secondary Language (click to expand)', 'octowoo' ); ?>
+            </summary>
+            <div style="padding:10px 12px;background:#f8faff;border:1px solid #dbe4f7;border-top:none;border-radius:0 0 4px 4px;font-size:12px;color:#3c434a;line-height:1.6;">
+                <strong style="font-size:12px;">🌐 <?php esc_html_e( 'Multilingual — Secondary Language', 'octowoo' ); ?></strong><br>
                 <?php esc_html_e( 'Secondary language (Arabic, French, Turkish, etc.) is imported automatically at the END of the full migration in a dedicated "multilingual pass" — you do not need to start a second migration. Just enable "Multilingual data (WPML / Polylang)" in Step 2 below.', 'octowoo' ); ?>
                 <hr style="border:none;border-top:1px solid #c9d9e8;margin:10px 0;">
                 <strong><?php esc_html_e( 'OpenCart Language IDs — quick reference:', 'octowoo' ); ?></strong>
