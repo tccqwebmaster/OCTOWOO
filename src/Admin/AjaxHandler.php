@@ -58,6 +58,7 @@ class AjaxHandler {
             'octowoo_detect_languages',
             'octowoo_detect_image_path',
             'octowoo_check_product_languages',
+            'octowoo_fix_secondary_content',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -191,6 +192,10 @@ class AjaxHandler {
 
             case 'octowoo_check_product_languages':
                 $this->actionCheckProductLanguages();
+                break;
+
+            case 'octowoo_fix_secondary_content':
+                $this->actionFixSecondaryContent();
                 break;
 
             case 'octowoo_run_chunk':
@@ -363,6 +368,24 @@ class AjaxHandler {
         // Clear image circuit-breaker so a fresh run always reattempts remote images.
         if ( ! $resume ) {
             delete_transient( 'octowoo_img_remote_down' );
+        }
+
+        // Fresh start (not resume): clear ALL checkpoints from the last run so
+        // every migrator runs from scratch instead of being skipped as 'completed'.
+        // This fixes the "0 items processed" symptom when re-running after a prior run.
+        if ( ! $resume && $migrators_raw === '' ) {
+            $last_run_to_clear = get_option( 'octowoo_last_run_id', '' );
+            if ( $last_run_to_clear ) {
+                global $wpdb;
+                $cp_table_c = $wpdb->prefix . 'octowoo_checkpoints';
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                    "DELETE FROM `{$cp_table_c}` WHERE run_id = %s",
+                    $last_run_to_clear
+                ) );
+            }
+            // Also clear all multilingual chunk transients so they restart.
+            global $wpdb;
+            $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_octowoo_ml_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
         }
 
         // phpcs:ignore WordPress.Security.NonceVerification
@@ -2376,6 +2399,90 @@ class AjaxHandler {
             'wpml_translation_id'  => $wpml_translation_id,
             'wpml_title'           => $wpml_title,
             'wpml_content_len'     => $wpml_content_len,
+        ] );
+    }
+
+
+    // ── Action: re-write secondary language content bypassing WPML hooks ───────
+
+    private function actionFixSecondaryContent(): void {
+        global $wpdb, $sitepress;
+
+        $defaults = require OCTOWOO_PLUGIN_DIR . 'config/default-config.php';
+        $saved    = get_option( 'octowoo_config', [] );
+        $config   = array_replace_recursive( $defaults, $saved );
+
+        $sec_locale = $config['multilingual']['secondary_locale'] ?? 'ar';
+        $sec_lang   = strtolower( explode( '_', $sec_locale )[0] );
+        $sfx        = '_' . $sec_lang;
+
+        // Find all WPML secondary-language product posts.
+        // These have _octowoo_translation_of meta (set by WpmlIntegration).
+        $translation_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT DISTINCT p.ID FROM {$wpdb->posts} p
+             JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+             WHERE pm.meta_key = '_octowoo_translation_of'
+               AND p.post_type = 'product'"
+        );
+
+        $fixed   = 0;
+        $skipped = 0;
+        $already = 0;
+
+        foreach ( $translation_ids as $trans_id ) {
+            $trans_id  = (int) $trans_id;
+            $primary_id = (int) get_post_meta( $trans_id, '_octowoo_translation_of', true );
+            if ( ! $primary_id ) { $skipped++; continue; }
+
+            $sec_content = (string) get_post_meta( $primary_id, '_octowoo_description' . $sfx, true );
+            $sec_title   = (string) get_post_meta( $primary_id, '_octowoo_name'        . $sfx, true );
+            $sec_excerpt = (string) get_post_meta( $primary_id, '_octowoo_short_description' . $sfx, true );
+
+            // Skip if no secondary content stored.
+            if ( $sec_title === '' && $sec_content === '' ) { $skipped++; continue; }
+
+            // Read current content from DB.
+            $current = get_post( $trans_id );
+            if ( ! $current ) { $skipped++; continue; }
+
+            $current_len = mb_strlen( wp_strip_all_tags( $current->post_content ) );
+            $primary     = get_post( $primary_id );
+            $primary_len = $primary ? mb_strlen( wp_strip_all_tags( $primary->post_content ) ) : 0;
+            $wanted_len  = mb_strlen( wp_strip_all_tags( $sec_content ) );
+
+            // If content matches primary → WPML overwrote it. Re-fix.
+            if ( $sec_content !== '' && $current_len === $primary_len && $current_len > 0 ) {
+                // Direct DB write — bypasses all hooks.
+                $wpdb->update( $wpdb->posts, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    [
+                        'post_title'   => $sec_title   ?: $current->post_title,
+                        'post_content' => $sec_content,
+                        'post_excerpt' => $sec_excerpt,
+                    ],
+                    [ 'ID' => $trans_id ]
+                );
+                clean_post_cache( $trans_id );
+                $fixed++;
+            } elseif ( $current_len === $wanted_len ) {
+                $already++;
+            } else {
+                // Different lengths — write the secondary anyway.
+                if ( $sec_content !== '' ) {
+                    $wpdb->update( $wpdb->posts, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        [ 'post_content' => $sec_content, 'post_title' => $sec_title ?: $current->post_title ],
+                        [ 'ID' => $trans_id ]
+                    );
+                    clean_post_cache( $trans_id );
+                    $fixed++;
+                }
+            }
+        }
+
+        wp_send_json_success( [
+            'message'     => sprintf( '%d translation(s) re-written with Arabic content. %d already correct. %d skipped (no Arabic meta).', $fixed, $already, $skipped ),
+            'fixed'       => $fixed,
+            'already_ok'  => $already,
+            'skipped'     => $skipped,
         ] );
     }
 

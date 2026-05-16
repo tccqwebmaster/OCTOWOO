@@ -566,6 +566,18 @@ class WpmlIntegration extends AbstractMigrator {
                     continue;
                 }
 
+                // Temporarily remove WPML's save_post field-sync handler so it
+                // doesn't copy primary-language content over our Arabic content
+                // when wp_update_post fires save_post on the translated post.
+                global $sitepress;
+                $wpml_handler_removed = false;
+                if ( isset( $sitepress ) && method_exists( $sitepress, 'save_post_handler' ) ) {
+                    remove_action( 'save_post', [ $sitepress, 'save_post_handler' ] );
+                    $wpml_handler_removed = true;
+                }
+                // Also try the newer WPML hook name used in WPML 4.5+.
+                $wpml_save_removed = remove_filter( 'save_post', [ 'WPML_Translation_Job_Helper', 'save_post_handler' ], 10 );
+
                 $update_data = [
                     'ID'           => $existing_translation_id,
                     'post_title'   => $sec_title,
@@ -574,6 +586,11 @@ class WpmlIntegration extends AbstractMigrator {
                     'post_name'    => $primary_post_raw->post_name,
                 ];
                 $updated = wp_update_post( $update_data, true );
+
+                // Re-hook WPML after our write completes.
+                if ( $wpml_handler_removed && isset( $sitepress ) ) {
+                    add_action( 'save_post', [ $sitepress, 'save_post_handler' ] );
+                }
 
                 if ( is_wp_error( $updated ) ) {
                     $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $updated->get_error_message() );
@@ -606,6 +623,23 @@ class WpmlIntegration extends AbstractMigrator {
                     $sec_excerpt,
                     (int) get_post_meta( $primary_id, '_thumbnail_id', true )
                 );
+
+                // Read-back verification: confirm the DB actually has our content.
+                $verify_post = get_post( $existing_translation_id );
+                if ( $verify_post ) {
+                    $saved_len = mb_strlen( wp_strip_all_tags( $verify_post->post_content ) );
+                    $want_len  = mb_strlen( wp_strip_all_tags( $sec_content ) );
+                    if ( $saved_len !== $want_len ) {
+                        $this->logger->warning( "[multilingual] ⚠ Content mismatch after write for {$post_type} #{$existing_translation_id}: wanted {$want_len} chars, DB has {$saved_len} chars. WPML may be overwriting — trying direct DB update again." );
+                        // Second direct DB write attempt.
+                        $this->forceTranslationContent(
+                            $existing_translation_id, $sec_title, $sec_content, $sec_excerpt,
+                            (int) get_post_meta( $primary_id, '_thumbnail_id', true )
+                        );
+                    } else {
+                        $this->logger->info( "[multilingual] ✔ Verified: {$post_type} #{$existing_translation_id} has {$saved_len} chars of secondary content in DB." );
+                    }
+                }
 
                 if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
                     $this->queueSecondaryLangRedirect( $existing_translation_id, $sec_seo_map[ $oc_id ] );

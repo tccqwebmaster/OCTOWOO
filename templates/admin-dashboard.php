@@ -347,6 +347,9 @@ if ( $_ow_show_wizard ) {
                 <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary">
                     🌐 <?php esc_html_e( 'Multilingual Recovery', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-fix-secondary-content" class="ow-btn ow-btn-secondary">
+                    🌐 <?php esc_html_e( 'Fix Arabic/Secondary Content', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-cleanup-ml-terms" class="ow-btn ow-btn-secondary">
                     🧹 <?php esc_html_e( 'Fix Orphan Categories', 'octowoo' ); ?>
                 </button>
