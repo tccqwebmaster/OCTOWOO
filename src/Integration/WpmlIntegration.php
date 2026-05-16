@@ -513,6 +513,13 @@ class WpmlIntegration extends AbstractMigrator {
                 continue;
             }
 
+            // Log preview of what is stored in postmeta — shows if content is Arabic or English
+            if ( $sec_content !== '' ) {
+                $preview = mb_substr( wp_strip_all_tags( $sec_content ), 0, 100 );
+                $has_arabic = preg_match( '/[\x{0600}-\x{06FF}]/u', $sec_content ) ? '[IS ARABIC]' : '[NOT ARABIC - OC Arabic field has English text]';
+                $this->logger->info( "[multilingual] content-check #{$primary_id}: {$has_arabic} preview: {$preview}" );
+            }
+
             // If postmeta is empty (e.g. ProductMigrator ran with wrong language_id_secondary),
             // try to fetch the secondary-language data directly from the OC database.
             // This ensures the multilingual pass can recover Arabic data even when the
