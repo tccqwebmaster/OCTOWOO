@@ -1677,17 +1677,15 @@ class WpmlIntegration extends AbstractMigrator {
                 continue; // Already correct.
             }
 
-            $result = wp_update_term( $sec_term_id, $taxonomy, [ 'parent' => $sec_parent_id ] );
-            if ( is_wp_error( $result ) ) {
-                $this->logger->warning( "[multilingual] Could not fix secondary-language parent for {$taxonomy} term #{$sec_term_id}: " . $result->get_error_message() );
-            } else {
-                // wp_update_term may suffix the slug for uniqueness; restore it.
-                $pri_term_for_slug = get_term( $pri_term_id, $taxonomy );
-                if ( $pri_term_for_slug && ! is_wp_error( $pri_term_for_slug ) ) {
-                    $this->fixTranslationTermSlug( $sec_term_id, $pri_term_for_slug->slug );
-                }
-                $this->logger->debug( "[multilingual] Fixed secondary-language parent for {$taxonomy} term #{$sec_term_id} → parent #{$sec_parent_id}." );
-            }
+            // Direct DB write to avoid wp_update_term slug conflict errors.
+            global $wpdb;
+            $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->term_taxonomy,
+                [ 'parent' => $sec_parent_id ],
+                [ 'term_id' => $sec_term_id, 'taxonomy' => $taxonomy ]
+            );
+            clean_term_cache( $sec_term_id, $taxonomy );
+            $this->logger->debug( "[multilingual] Fixed secondary-language parent for {$taxonomy} term #{$sec_term_id} → parent #{$sec_parent_id}." );
         }
     }
 
