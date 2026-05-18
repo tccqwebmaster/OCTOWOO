@@ -961,7 +961,8 @@
             var $tr = $('<tr>').attr('data-migrator', cp.migrator).append(
                 $('<td>').html('<strong>' + (LABEL_MAP[cp.migrator] || cp.migrator) + '</strong>'),
                 $('<td>').html('<span style="color:' + color + ';white-space:nowrap;">' + icon + ' ' + cp.status.toUpperCase() + '</span>'),
-                $('<td>').html(safe.toLocaleString() + ' / ' + (total > 0 ? total.toLocaleString() : '—')),
+                $('<td>').html(safe.toLocaleString() + ' / ' + (total > 0 ? total.toLocaleString() : '—') +
+                    (cp.skipped_count > 0 ? ' <span style="color:#888;font-size:10px;" title="' + parseInt(cp.skipped_count).toLocaleString() + ' already existed in WooCommerce">(' + parseInt(cp.skipped_count).toLocaleString() + ' skipped)</span>' : '')),
                 $('<td>').html(barHtml),
                 $('<td>').html('<strong>' + pct + '%</strong>')
             );
@@ -1951,10 +1952,17 @@
                 '</div>';
         });
 
-        $logContainer.html(header + rows);
+        // Reverse: newest entries first so user always sees latest at top.
+        // Build rows in reverse order.
+        var reversedRows = '';
+        var $temp = $('<div>').html(rows);
+        var entries = $temp.find('.ow-log-entry').get().reverse();
+        entries.forEach(function(el) { reversedRows += el.outerHTML; });
 
-        // Auto-scroll to bottom to show most recent entries.
-        $logContainer.scrollTop($logContainer[0].scrollHeight);
+        $logContainer.html(header + reversedRows);
+
+        // Scroll to TOP so newest entry is immediately visible.
+        $logContainer.scrollTop(0);
     }
 
     /* ── Download Logs as .txt file ─────────────────────────────────────── */
