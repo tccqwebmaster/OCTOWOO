@@ -237,16 +237,25 @@ class SeoMigrator extends AbstractMigrator {
             return null;
         }
 
-        $post = get_post( $wc_id );
-        if ( ! $post ) {
+        // Fetch only post_name — avoids loading full post object from DB.
+        global $wpdb;
+        $current_slug = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT post_name FROM {$wpdb->posts} WHERE ID = %d AND post_status != 'trash' LIMIT 1",
+            $wc_id
+        ) );
+        if ( $current_slug === null ) {
             return false;
         }
 
-        // Update WC product slug.
-        $old_slug = $post->post_name;
+        // Update WC product slug — direct DB write bypasses all WC hooks.
+        // wp_update_post() fires 15+ WC hooks per product = 60+ minutes for 4,500 items.
+        // post_name update needs no hooks — just a simple column write.
+        $old_slug = $current_slug;
         if ( $old_slug !== $slug ) {
             if ( ! $this->isDry() ) {
-                wp_update_post( [ 'ID' => $wc_id, 'post_name' => $slug ] );
+                global $wpdb;
+                $wpdb->update( $wpdb->posts, [ 'post_name' => $slug ], [ 'ID' => $wc_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                clean_post_cache( $wc_id );
             }
             $this->logger->info( "[seo] Updated product #{$wc_id} slug: [{$old_slug}] → [{$slug}]" );
         }
@@ -300,7 +309,9 @@ class SeoMigrator extends AbstractMigrator {
         $old_slug = $term->slug;
         if ( $old_slug !== $slug ) {
             if ( ! $this->isDry() ) {
-                wp_update_term( $wc_term_id, 'product_cat', [ 'slug' => $slug ] );
+                // Direct DB write for term slug — avoids wp_update_term slug uniqueness errors.
+                $wpdb->update( $wpdb->terms, [ 'slug' => $slug ], [ 'term_id' => $wc_term_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                clean_term_cache( $wc_term_id, 'product_cat' );
             }
             $this->logger->info( "[seo] Updated category #{$wc_term_id} slug: [{$old_slug}] → [{$slug}]" );
         }
