@@ -380,22 +380,43 @@ class AjaxHandler {
             delete_transient( 'octowoo_img_remote_down' );
         }
 
-        // Fresh start (not resume): clear ALL checkpoints from the last run so
-        // every migrator runs from scratch instead of being skipped as 'completed'.
-        // This fixes the "0 items processed" symptom when re-running after a prior run.
+        // Smart fresh-start logic:
+        // Only delete checkpoints when the last run was FULLY completed.
+        // If the last run was interrupted mid-way (some migrators still pending),
+        // "Start Full Migration" should behave like Resume — keeping completed
+        // migrators (e.g. categories) and only re-running the rest.
+        // User must click "Reset Progress" to explicitly start from zero.
         if ( ! $resume && $migrators_raw === '' ) {
             $last_run_to_clear = get_option( 'octowoo_last_run_id', '' );
             if ( $last_run_to_clear ) {
                 global $wpdb;
                 $cp_table_c = $wpdb->prefix . 'octowoo_checkpoints';
-                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
-                    "DELETE FROM `{$cp_table_c}` WHERE run_id = %s",
+                // Check if ANY migrator in the last run was NOT completed.
+                $incomplete = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT COUNT(*) FROM `{$cp_table_c}` WHERE run_id = %s AND status != 'completed'",
                     $last_run_to_clear
                 ) );
+                // Also count how many migrators finished.
+                $completed_count = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT COUNT(*) FROM `{$cp_table_c}` WHERE run_id = %s AND status = 'completed'",
+                    $last_run_to_clear
+                ) );
+
+                if ( $incomplete === 0 && $completed_count > 0 ) {
+                    // All migrators completed — this is a clean re-run. Clear checkpoints.
+                    $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                        "DELETE FROM `{$cp_table_c}` WHERE run_id = %s",
+                        $last_run_to_clear
+                    ) );
+                    $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_octowoo_ml_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                } elseif ( $incomplete > 0 ) {
+                    // Last run was interrupted. Treat Start as Resume — keep completed migrators.
+                    // The new run_id will be the same as last_run_id so checkpoints carry over.
+                    $resume     = true;
+                    $active_run = $last_run_to_clear;
+                }
+                // If $completed_count === 0: truly fresh start, no checkpoints to worry about.
             }
-            // Also clear all multilingual chunk transients so they restart.
-            global $wpdb;
-            $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_octowoo_ml_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
         }
 
         // phpcs:ignore WordPress.Security.NonceVerification
