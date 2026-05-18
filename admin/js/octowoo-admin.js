@@ -911,7 +911,14 @@
                 $('<td>').html('<strong>' + pct + '%</strong>')
             );
 
-            $tbody.append($tr);
+            // Replace existing row in-place (prevents duplicates), or append if new.
+            var $existing = $tbody.find('tr[data-migrator="' + cp.migrator + '"]');
+            if ($existing.length) {
+                $existing.replaceWith($tr);
+            } else {
+                $tbody.append($tr);
+            }
+            renderedKeys[cp.migrator] = true;
         });
     }
 
