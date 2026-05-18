@@ -234,17 +234,28 @@ class ProductMigrator extends AbstractMigrator {
         }
 
         if ( $existing_wc_id ) {
+            // Verify the post actually exists and is not deleted/trashed.
+            // If it was purged after a previous demo run, the id_map entry is stale.
+            // In that case, treat the product as new and create it fresh.
+            $post_status = get_post_status( $existing_wc_id );
+            if ( ! $post_status || $post_status === 'trash' ) {
+                $this->logger->info( "[products] id_map points to deleted/trashed WC #{$existing_wc_id} for OC #{$oc_id} — treating as new product." );
+                $existing_wc_id = 0;
+                // Remove stale id_map entry so future runs don't hit this again.
+                $this->checkpoint->deleteIdMap( self::MAP_KEY, $oc_id );
+            }
+        }
+
+        if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
                 return $this->updateProduct( $existing_wc_id, $row, $desc, $categories[ $oc_id ] ?? [], $extra_images[ $oc_id ] ?? [], $options[ $oc_id ] ?? [], $specials[ $oc_id ] ?? [], $sec_name, $sec_desc, $sec_metatitle, $sec_metadesc, $sec_short, $sec_metakw, $sec_tags );
             }
             // Even in skip mode: repair missing featured image without touching anything else.
-            // This is a lightweight fix — no post update, no option changes, just the thumbnail.
             if ( ! get_post_thumbnail_id( $existing_wc_id ) ) {
                 $this->imageMigrator = $this->imageMigrator ?? new ImageMigrator(
                     $this->oc, $this->logger, $this->checkpoint, $this->batch, $this->config
                 );
                 $this->assignImages( $existing_wc_id, $row['image'] ?? '', $extra_images[ $oc_id ] ?? [] );
-                $this->logger->debug( "[products] Repaired missing featured image for WC #{$existing_wc_id} (OC #{$oc_id})." );
             }
             $this->logger->debug( "[products] Duplicate OC #{$oc_id} → WC #{$existing_wc_id} – skipping." );
             return false;

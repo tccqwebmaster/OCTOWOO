@@ -414,6 +414,15 @@ class CheckpointManager {
      * @param int    $oc_id  OpenCart source ID.
      * @param int    $wc_id  WordPress/WooCommerce destination ID.
      */
+    public function deleteIdMap( string $entity, int $oc_id ): void {
+        global $wpdb;
+        $wpdb->delete( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prefix . 'octowoo_id_map',
+            [ 'run_id' => $this->run_id, 'entity' => $entity, 'oc_id' => $oc_id ],
+            [ '%s', '%s', '%d' ]
+        );
+    }
+
     public function saveIdMap( string $entity, int $oc_id, int $wc_id ): void {
         global $wpdb;
 
