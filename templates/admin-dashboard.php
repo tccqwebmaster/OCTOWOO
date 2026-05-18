@@ -768,7 +768,7 @@ if ( $_ow_show_wizard ) {
                         <input type="number" name="octowoo[migration][batch_size]"
                                value="<?php echo esc_attr( $config['migration']['batch_size'] ?? 20 ); ?>"
                                min="5" max="500">
-                        <span class="ow-form-hint"><?php esc_html_e( 'Items per request (5–500). This controls both full-run batches and chunked AJAX requests. Lower = safer on shared hosting (10–30 recommended for products).', 'octowoo' ); ?></span>
+                        <span class="ow-form-hint"><?php esc_html_e( 'Items per request (5–500). Recommended: 50 for products/categories (no images). 10–20 for images only. 100+ for orders/customers. Higher = faster migration but more memory. Start with 50 and increase if no timeouts.', 'octowoo' ); ?></span>
                     </div>
                     <div class="ow-form-group">
                         <label><?php esc_html_e( 'If Item Already Exists in WooCommerce', 'octowoo' ); ?></label>

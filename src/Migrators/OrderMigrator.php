@@ -90,6 +90,12 @@ class OrderMigrator extends AbstractMigrator {
 		// Suspend WP cache flush per-row — flush once at end of batch.
 		wp_suspend_cache_invalidation( true );
 		wp_defer_term_counting( true );
+		// Suppress WC order hooks during bulk import — no emails, no stats rebuild per order.
+		remove_all_actions( 'woocommerce_new_order' );
+		remove_all_actions( 'woocommerce_checkout_order_created' );
+		remove_all_actions( 'woocommerce_order_status_changed' );
+		remove_all_actions( 'woocommerce_payment_complete' );
+		remove_all_actions( 'woocommerce_thankyou' );
 
 		$item_callback = function ( array $row ) use ( $currencies, $has_history, $has_options ): bool {
 			return $this->processOrder( $row, $currencies, $has_history, $has_options );
