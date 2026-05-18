@@ -340,30 +340,41 @@ class ImageMigrator extends AbstractMigrator {
     /**
      * Find an existing WP attachment by its OC image path meta.
      */
-    public function findAttachmentByOcPath( string $oc_path ): ?int {
-        global $wpdb;
+    /** In-memory cache: oc_path → attachment_id. Populated on first use. */
+    private array $pathCache = [];
+    private bool $pathCacheLoaded = false;
 
-        // JOIN with wp_posts to guarantee we only return an actual media-library
-        // attachment.  ProductMigrator also stores '_octowoo_oc_image_path' on the
-        // product post (for multilingual-pass retry), so without the post_type
-        // filter a plain wp_postmeta lookup can return the product's own post_id
-        // instead of the attachment — making _thumbnail_id point to the wrong post
-        // and causing the featured image to appear missing on the storefront.
-        $id = $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+    /**
+     * Load ALL oc_path → attachment_id mappings in one query.
+     * Called once per batch. Subsequent calls are instant (array lookup).
+     */
+    private function warmPathCache(): void {
+        if ( $this->pathCacheLoaded ) { return; }
+        global $wpdb;
+        $rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->prepare(
-                "SELECT pm.post_id
+                "SELECT pm.meta_value AS oc_path, pm.post_id
                  FROM {$wpdb->postmeta} pm
                  INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                 WHERE pm.meta_key  = %s
-                   AND pm.meta_value = %s
-                   AND p.post_type  = 'attachment'
-                 LIMIT 1",
-                self::META_KEY_OC_PATH,
-                $oc_path
-            )
+                 WHERE pm.meta_key = %s AND p.post_type = 'attachment'",
+                self::META_KEY_OC_PATH
+            ),
+            ARRAY_A
         );
+        foreach ( $rows as $row ) {
+            $this->pathCache[ $row['oc_path'] ] = (int) $row['post_id'];
+        }
+        $this->pathCacheLoaded = true;
+    }
 
-        return $id ? (int) $id : null;
+    public function findAttachmentByOcPath( string $oc_path ): ?int {
+        $this->warmPathCache();
+        return $this->pathCache[ $oc_path ] ?? null;
+    }
+
+    /** Add a newly imported attachment to the in-memory cache. */
+    public function cacheAttachmentPath( string $oc_path, int $attachment_id ): void {
+        $this->pathCache[ $oc_path ] = $attachment_id;
     }
 
     /**
