@@ -648,7 +648,7 @@
     /* ── Reset ───────────────────────────────────────────────────────────── */
     /* ── Reset Specific Migrators ──────────────────────────────────────── */
     function resetPartial() {
-        if (isRunning) { showToast('Abort first before resetting.', 'warning'); return; }
+        if (isRunning) { showToast('⚠ Click ⏹ Abort first, wait for it to stop, then try Reset Specific.', 'warning'); return; }
 
         var migrators = [
             { key: 'tax',            label: 'Tax Classes' },
@@ -701,7 +701,7 @@
     }
 
     function resetMigration() {
-        if (isRunning) { showToast('Abort the running migration before resetting.', 'warning'); return; }
+        if (isRunning) { showToast('⚠ Click ⏹ Abort first, wait for it to stop, then try Full Reset.', 'warning'); return; }
 
         owConfirm('FULL RESET: Deletes ALL migration progress AND the ID map. Categories and Images will re-run from scratch. Use \"Reset Products Only\" for a partial reset. Continue?', 'Yes, reset everything', 'Cancel')
         .then(function (confirmed) {
