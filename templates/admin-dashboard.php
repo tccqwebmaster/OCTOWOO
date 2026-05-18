@@ -416,9 +416,13 @@ if ( $_ow_show_wizard ) {
                     title="<?php esc_attr_e( 'Skip the current migrator and move to the next one. Use if one entity type is stuck or failing.', 'octowoo' ); ?>">
                     ⏭ <?php esc_html_e( 'Skip Current', 'octowoo' ); ?>
                 </button>
+                <button type="button" id="ow-btn-reset-partial" class="ow-btn ow-btn-secondary"
+                    title="<?php esc_attr_e( 'Select which migrators to reset. Completed migrators (Categories, Images) stay done — only selected ones re-run. Does NOT clear the ID map so no duplicates.', 'octowoo' ); ?>">
+                    ↺ <?php esc_html_e( 'Reset Specific...', 'octowoo' ); ?>
+                </button>
                 <button type="button" id="ow-btn-reset" class="ow-btn ow-btn-secondary"
-                    title="<?php esc_attr_e( 'Clears all migration progress (checkpoints and ID map). The next migration will start fresh from the beginning. Does NOT delete migrated WooCommerce data — use Purge for that.', 'octowoo' ); ?>">
-                    ↺ <?php esc_html_e( 'Reset Progress', 'octowoo' ); ?>
+                    title="<?php esc_attr_e( 'FULL RESET: Clears ALL migration progress AND the ID map. Every migrator runs from scratch including Categories and Images. Use Reset Specific instead to keep completed migrators.', 'octowoo' ); ?>">
+                    ⚠ <?php esc_html_e( 'Full Reset', 'octowoo' ); ?>
                 </button>
             </div>
 

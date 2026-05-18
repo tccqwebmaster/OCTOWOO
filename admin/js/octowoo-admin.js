@@ -183,6 +183,7 @@
         $btnPause.on('click', pauseMigration);
         $btnSkip.on('click',  skipCurrentMigrator);
         $btnReset.on('click', resetMigration);
+        $('#ow-btn-reset-partial').on('click', resetPartial);
 
         $('#ow-btn-demo').on('click', function () { startMigration(false, true); });
 
@@ -645,10 +646,64 @@
     }
 
     /* ── Reset ───────────────────────────────────────────────────────────── */
+    /* ── Reset Specific Migrators ──────────────────────────────────────── */
+    function resetPartial() {
+        if (isRunning) { showToast('Abort first before resetting.', 'warning'); return; }
+
+        var migrators = [
+            { key: 'tax',            label: 'Tax Classes' },
+            { key: 'order_statuses', label: 'Order Statuses' },
+            { key: 'categories',     label: 'Categories' },
+            { key: 'images',         label: 'Images' },
+            { key: 'products',       label: 'Products' },
+            { key: 'manufacturers',  label: 'Brands / Manufacturers' },
+            { key: 'related',        label: 'Related Products' },
+            { key: 'customers',      label: 'Customers' },
+            { key: 'orders',         label: 'Orders' },
+            { key: 'coupons',        label: 'Coupons' },
+            { key: 'seo',            label: 'SEO URLs' },
+            { key: 'information',    label: 'CMS Pages' },
+            { key: 'tags',           label: 'Tags' },
+            { key: 'reviews',        label: 'Reviews' },
+            { key: 'multilingual',   label: 'Multilingual / Arabic' },
+        ];
+
+        var html = '<p style="margin:0 0 10px;font-size:13px;">Select which migrators to reset (they will re-run from scratch).<br>'
+            + '<strong>Tip:</strong> If Products are stuck, only tick Products — Categories and Images stay done.</p>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-bottom:12px;">';
+        migrators.forEach(function(m) {
+            html += '<label style="font-size:12px;cursor:pointer;">'
+                + '<input type="checkbox" class="ow-reset-pick" value="' + m.key + '" style="margin-right:5px;">'
+                + m.label + '</label>';
+        });
+        html += '</div>';
+        html += '<p style="margin:0;font-size:11px;color:#888;">This does NOT clear the ID map — no duplicate products will be created.</p>';
+
+        owConfirmHtml(html, 'Reset Selected', 'Cancel').then(function(confirmed) {
+            if (!confirmed) { return; }
+            var selected = [];
+            $('.ow-reset-pick:checked').each(function() { selected.push($(this).val()); });
+            if (!selected.length) { showToast('No migrators selected.', 'warning'); return; }
+
+            $.post(octoWoo.ajaxUrl, {
+                action:    'octowoo_reset_migration',
+                nonce:     octoWoo.nonce,
+                migrators: selected.join(','),
+            }).done(function(res) {
+                if (res.success) {
+                    showToast('Reset: ' + selected.join(', '), 'success');
+                    setBannerInfo('Selected migrators reset. Click Resume or Start Full Migration.');
+                } else {
+                    setBannerError(res.data ? res.data.message : 'Reset failed.');
+                }
+            });
+        });
+    }
+
     function resetMigration() {
         if (isRunning) { showToast('Abort the running migration before resetting.', 'warning'); return; }
 
-        owConfirm('This will delete ALL migration progress records and the ID map. Are you sure?', 'Yes, reset', 'Cancel')
+        owConfirm('FULL RESET: Deletes ALL migration progress AND the ID map. Categories and Images will re-run from scratch. Use \"Reset Products Only\" for a partial reset. Continue?', 'Yes, reset everything', 'Cancel')
         .then(function (confirmed) {
             if (!confirmed) { return; }
             $.post(octoWoo.ajaxUrl, { action: 'octowoo_reset_migration', nonce: octoWoo.nonce })

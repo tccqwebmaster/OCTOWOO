@@ -1423,9 +1423,23 @@ class AjaxHandler {
         $cp_table  = $wpdb->prefix . 'octowoo_checkpoints';
         $map_table = $wpdb->prefix . 'octowoo_id_map';
 
-        // If a migration appears to be active, force-abort it first rather than
-        // hard-blocking the reset. This handles stale locks (crash, orphaned
-        // Background jobs) so the user is never stuck.
+        // Partial reset: if specific migrators are requested, only reset those checkpoints.
+        // The id_map is NOT cleared — prevents duplicate products/categories on next run.
+        $migrators_raw = sanitize_text_field( $_POST['migrators'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
+        if ( $migrators_raw !== '' ) {
+            $allowed   = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
+            $selected  = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
+            $last_run  = get_option( 'octowoo_last_run_id', '' );
+            if ( $last_run && ! empty( $selected ) ) {
+                foreach ( $selected as $migrator ) {
+                    $wpdb->delete( $cp_table, [ 'run_id' => $last_run, 'migrator' => $migrator ], [ '%s', '%s' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                }
+            }
+            wp_send_json_success( [ 'message' => 'Reset: ' . implode( ', ', $selected ) ] );
+            return;
+        }
+
+        // Full reset: abort active run, clear all checkpoints, clear id_map.
         $active_run = CheckpointManager::getActiveRunId();
         if ( $active_run ) {
             BackgroundProcessor::abort( $active_run );
@@ -1441,7 +1455,6 @@ class AjaxHandler {
             MigrationManager::clearRuntimeSignals( $active_run );
         }
 
-        // Delete ALL checkpoint rows for every known run.
         $run_ids = array_filter( array_unique( [
             $active_run ?? '',
             get_option( 'octowoo_last_run_id', '' ),
@@ -1451,8 +1464,6 @@ class AjaxHandler {
             $wpdb->delete( $cp_table, [ 'run_id' => $rid ], [ '%s' ] );
         }
 
-        // Truncate the entire id_map — it only stores OC→WC ID cross-references
-        // and the run_id filter would miss rows from older runs with different IDs.
         // phpcs:ignore WordPress.DB.PreparedSQL
         $wpdb->query( "TRUNCATE TABLE `{$map_table}`" );
 
