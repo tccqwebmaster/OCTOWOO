@@ -763,9 +763,17 @@
             isPausedState = !!data.paused;
             if (data.checkpoints) { renderProgressTable(data.checkpoints); }
 
-            if (isPausedState && !isRunning) { setButtonState('paused'); }
-
-            if (!data.active && !isRunning && currentRunId && data.run_id === currentRunId && !isPausedState) {
+            // Re-enable control buttons when migration is active (even after page reload).
+            // On refresh, buttons default to disabled. Poll detects active run → enable them.
+            if (data.active) {
+                isRunning = true;
+                setButtonState('running');
+                $btnPause.prop('disabled', false);
+                $btnAbort.prop('disabled', false);
+                $btnSkip.prop('disabled', false);
+            } else if (isPausedState) {
+                setButtonState('paused');
+            } else if (!isRunning && currentRunId && data.run_id === currentRunId) {
                 setButtonState('idle');
                 $('#ow-btn-cancel-bg').prop('disabled', true);
                 stopPolling();
