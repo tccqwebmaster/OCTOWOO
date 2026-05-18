@@ -848,16 +848,20 @@
         var $tbody = $progressTable.find('tbody');
 
         if (!checkpoints || !checkpoints.length) {
-            // Only show "no data" if the table is truly empty (first load).
-            // Never replace real rows with this placeholder during active polling.
             if (!$tbody.find('tr[data-migrator]').length) {
                 $tbody.html('<tr><td colspan="5" style="color:#888;">No migration data yet.</td></tr>');
             }
             return;
         }
 
-        // Remove the placeholder row if it exists, but ONLY when we have real data.
+        // Remove placeholder and ANY rows not in the current checkpoint set.
+        // This prevents stale rows from old (aborted) runs persisting in the table.
         $tbody.find('tr:not([data-migrator])').remove();
+        var incomingKeys = {};
+        checkpoints.forEach(function(cp) { incomingKeys[cp.migrator] = true; });
+        $tbody.find('tr[data-migrator]').each(function() {
+            if (!incomingKeys[$(this).data('migrator')]) { $(this).remove(); }
+        });
 
         var runningCp = checkpoints.filter(function (cp) { return cp.status === 'running'; })[0]
                      || checkpoints.filter(function (cp) { return cp.status === 'pending'; })[0];
