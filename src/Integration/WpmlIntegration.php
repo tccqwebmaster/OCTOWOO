@@ -1125,10 +1125,19 @@ class WpmlIntegration extends AbstractMigrator {
             // wp_insert_post). Passing the existing trid avoids creating a duplicate
             // translation group for the same post.
             $existing_trid = $this->wpmlGetTrid( $primary_id, $element_type );
-            // is_primary = true → source_language_code = null (this IS the original).
-            $this->wpmlSetPostLanguage( $primary_id, $element_type, $this->primary_lang, $existing_trid, true );
-            // Re-fetch trid after language update to ensure we have the canonical value.
+            // Only re-register primary post if not already correctly set as primary language.
+            // Re-registering an already-correct English product/page causes it to drop
+            // from the English language filter — same bug as categories.
+            $current_post_lang = apply_filters( 'wpml_element_language_code', null, [
+                'element_id'   => $primary_id,
+                'element_type' => $element_type,
+            ] );
+            if ( $current_post_lang !== $this->primary_lang ) {
+                $this->wpmlSetPostLanguage( $primary_id, $element_type, $this->primary_lang, $existing_trid, true );
+            }
+            // Re-fetch trid after potential update to ensure we have the canonical value.
             $trid = $this->wpmlGetTrid( $primary_id, $element_type );
+            if ( ! $trid ) { $trid = $existing_trid; }
             // is_primary = false → source_language_code = $this->primary_lang (translated FROM primary).
             $this->wpmlSetPostLanguage( $translated_id, $element_type, $this->secondary_lang, $trid, false );
 

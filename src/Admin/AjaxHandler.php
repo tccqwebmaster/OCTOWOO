@@ -2747,9 +2747,14 @@ class AjaxHandler {
         );
         $lang_fixed = 0;
         foreach ( $unassigned as $row ) {
+            // Get taxonomy for this term
+            $term_tax = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT taxonomy FROM {$wpdb->term_taxonomy} WHERE term_id = %d LIMIT 1",
+                (int) $row['term_id']
+            ) );
             do_action( 'wpml_set_element_language_details', [
                 'element_id'    => (int) $row['term_id'],
-                'element_type'  => 'tax_product_cat',
+                'element_type'  => 'tax_' . ( $term_tax ?: 'product_cat' ),
                 'trid'          => null,
                 'language_code' => 'en',
                 'source_language_code' => null,
@@ -2757,10 +2762,33 @@ class AjaxHandler {
             $lang_fixed++;
         }
 
+        // Also fix English PRODUCTS with no WPML language assignment.
+        $unassigned_products = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT p.ID FROM {$wpdb->posts} p
+             JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
+             LEFT JOIN {$wpdb->prefix}icl_translations tr
+               ON tr.element_id = p.ID AND tr.element_type = 'post_product'
+             WHERE p.post_type = 'product' AND p.post_status != 'trash'
+               AND tr.element_id IS NULL"
+        );
+        $prod_fixed = 0;
+        foreach ( $unassigned_products as $pid ) {
+            $existing_trid = apply_filters( 'wpml_element_trid', null, (int) $pid, 'post_product' );
+            do_action( 'wpml_set_element_language_details', [
+                'element_id'           => (int) $pid,
+                'element_type'         => 'post_product',
+                'trid'                 => $existing_trid,
+                'language_code'        => 'en',
+                'source_language_code' => null,
+            ] );
+            $prod_fixed++;
+        }
+
         wp_send_json_success( [
-            'message' => "Fixed {$fixed} temp slugs. Assigned English language to {$lang_fixed} unlinked categories.",
-            'fixed_slugs' => $fixed,
-            'fixed_lang'  => $lang_fixed,
+            'message'      => "Fixed {$fixed} temp slugs. Assigned English to {$lang_fixed} categories/brands + {$prod_fixed} products.",
+            'fixed_slugs'  => $fixed,
+            'fixed_terms'  => $lang_fixed,
+            'fixed_products' => $prod_fixed,
         ] );
     }
 
