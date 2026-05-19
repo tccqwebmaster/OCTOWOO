@@ -1819,10 +1819,20 @@ class WpmlIntegration extends AbstractMigrator {
             // Get existing trid FIRST (WPML may have auto-assigned one during
             // wp_insert_term) to avoid creating a duplicate translation group.
             $existing_trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
-            // is_primary = true → source_language_code = null (this IS the original).
-            $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid, true );
-            // Re-fetch after update for canonical trid.
+            // Only re-register primary term if it's not already correctly set as primary language.
+            // Re-registering an already-correct English term can reset it, causing it to
+            // disappear from the English language filter (drops from English 290 → 42).
+            $current_lang = apply_filters( 'wpml_element_language_code', null, [
+                'element_id'   => (int) $primary_term->term_taxonomy_id,
+                'element_type' => $element_type,
+            ] );
+            if ( $current_lang !== $this->primary_lang ) {
+                // Not yet registered as primary — set it now.
+                $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid, true );
+            }
+            // Re-fetch after potential update for canonical trid.
             $trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
+            if ( ! $trid ) { $trid = $existing_trid; }
             $translated_term = get_term( $translated_term_id, $taxonomy );
             if ( $translated_term && ! is_wp_error( $translated_term ) ) {
                 // is_primary = false → source_language_code = $this->primary_lang.
