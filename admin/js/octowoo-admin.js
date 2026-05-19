@@ -306,6 +306,38 @@
         $('#ow-btn-validate').on('click', runSystemCheck);
 
         // Background mode.
+        $('#ow-btn-check-bg').on('click', function() {
+            var $btn = $(this);
+            $btn.prop('disabled', true).text('Checking...');
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_check_background', nonce: octoWoo.nonce })
+            .done(function(res) {
+                if (!res || !res.success) { showToast('Check failed.', 'error'); return; }
+                var d = res.data;
+                var html = '<div style="font-size:12px;">';
+                html += '<p style="margin:0 0 10px;font-weight:600;color:' + (d.all_ok ? '#2e7d32' : '#c62828') + ';">'
+                    + (d.all_ok ? '✔ ' : '⚠ ') + d.summary + '</p>';
+                d.checks.forEach(function(c) {
+                    html += '<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f0f0f0;">'
+                        + '<span style="color:' + (c.ok ? '#2e7d32' : '#c62828') + ';font-weight:700;width:14px;">'
+                        + (c.ok ? '✔' : '✘') + '</span>'
+                        + '<span style="color:#555;width:180px;">' + c.name + '</span>'
+                        + '<span style="color:#333;">' + c.detail + '</span>'
+                        + '</div>';
+                });
+                html += '</div>';
+
+                var $overlay = $('<div>').css({position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.5)',zIndex:99999,display:'flex',alignItems:'center',justifyContent:'center'});
+                var $box = $('<div>').css({background:'#fff',borderRadius:'8px',padding:'24px',maxWidth:'560px',width:'92%',boxShadow:'0 8px 32px rgba(0,0,0,.2)'});
+                $box.append('<h3 style="margin:0 0 12px;font-size:14px;">⚡ Background Mode Check</h3>');
+                $box.append(html);
+                var $close = $('<button class="ow-btn ow-btn-primary" style="margin-top:14px;">OK</button>').on('click', function() { $overlay.remove(); });
+                $box.append($close);
+                $overlay.append($box).appendTo('body');
+                $overlay.on('click', function(e) { if ($(e.target).is($overlay)) { $overlay.remove(); } });
+            })
+            .fail(function() { showToast('Request failed.', 'error'); })
+            .always(function() { $btn.prop('disabled', false).text('✓ Check Background Mode'); });
+        });
         $('#ow-btn-start-bg').on('click', function () { startBackgroundMigration(false); });
         $('#ow-btn-resume-bg').on('click', function () { startBackgroundMigration(true); });
         $('#ow-btn-cancel-bg').on('click', cancelBackgroundMigration);

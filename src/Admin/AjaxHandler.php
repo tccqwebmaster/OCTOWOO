@@ -60,6 +60,7 @@ class AjaxHandler {
             'octowoo_check_product_languages',
             'octowoo_fix_secondary_content',
             'octowoo_get_migrated_products',
+            'octowoo_check_background',
             'octowoo_repair_dimensions',
             'octowoo_run_chunk',
             'octowoo_import_sql',
@@ -202,6 +203,10 @@ class AjaxHandler {
 
             case 'octowoo_get_migrated_products':
                 $this->actionGetMigratedProducts();
+                break;
+
+            case 'octowoo_check_background':
+                $this->actionCheckBackground();
                 break;
 
             case 'octowoo_repair_dimensions':
@@ -2579,6 +2584,97 @@ class AjaxHandler {
         wp_send_json_success( [
             'message' => sprintf( 'Repaired dimension/weight values on %d field(s) across %d migrated products.', $fixed, count( $product_ids ) ),
             'fixed'   => $fixed,
+        ] );
+    }
+
+
+    // ── Action: check background mode readiness ────────────────────────────────
+
+    private function actionCheckBackground(): void {
+        $checks = [];
+
+        // 1. Action Scheduler available?
+        $as_ok = function_exists( 'as_schedule_single_action' );
+        $checks[] = [
+            'name'   => 'Action Scheduler',
+            'ok'     => $as_ok,
+            'detail' => $as_ok ? 'Available (included with WooCommerce)' : 'Not found — WooCommerce must be active',
+        ];
+
+        // 2. WP-Cron enabled?
+        $cron_disabled = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
+        $has_real_cron = false;
+        if ( $cron_disabled ) {
+            // Check if server cron is set up (look for last WC scheduled action run).
+            $last_wc = get_option( 'action_scheduler_lock_action-scheduler_run_queue', 0 );
+            $has_real_cron = $last_wc && ( time() - (int) $last_wc < 300 );
+        }
+        $cron_ok = ! $cron_disabled || $has_real_cron;
+        $checks[] = [
+            'name'   => 'WP-Cron / Scheduler',
+            'ok'     => $cron_ok,
+            'detail' => $cron_disabled
+                ? ( $has_real_cron ? 'WP-Cron disabled but server cron is running ✔' : 'WP-Cron disabled — set up a server cron job or enable WP-Cron' )
+                : 'WP-Cron enabled ✔',
+        ];
+
+        // 3. Any stuck/failed OctoWoo AS jobs?
+        $stuck = 0;
+        $failed_jobs = 0;
+        if ( $as_ok && class_exists( '\ActionScheduler_Store' ) ) {
+            try {
+                $stuck = count( as_get_scheduled_actions( [
+                    'hook' => 'octowoo_bg_chunk',
+                    'status' => \ActionScheduler_Store::STATUS_RUNNING,
+                    'per_page' => 10,
+                ] ) );
+                $failed_jobs = count( as_get_scheduled_actions( [
+                    'hook' => 'octowoo_bg_chunk',
+                    'status' => \ActionScheduler_Store::STATUS_FAILED,
+                    'per_page' => 10,
+                ] ) );
+            } catch ( \Throwable ) {}
+        }
+        $checks[] = [
+            'name'   => 'Stuck background jobs',
+            'ok'     => $stuck === 0,
+            'detail' => $stuck > 0 ? "{$stuck} job(s) still showing RUNNING — click Cancel Background then try again" : 'None ✔',
+        ];
+        if ( $failed_jobs > 0 ) {
+            $checks[] = [
+                'name'   => 'Failed background jobs',
+                'ok'     => false,
+                'detail' => "{$failed_jobs} previous job(s) failed — check WooCommerce → Status → Action Scheduler",
+            ];
+        }
+
+        // 4. Memory limit
+        $mem_limit = ini_get( 'memory_limit' );
+        $mem_bytes = wp_convert_hr_to_bytes( $mem_limit );
+        $mem_ok    = $mem_bytes >= 256 * 1024 * 1024;
+        $checks[] = [
+            'name'   => 'PHP Memory Limit',
+            'ok'     => $mem_ok,
+            'detail' => $mem_limit . ( $mem_ok ? ' ✔' : ' — recommend 256M or higher (set in php.ini or .htaccess)' ),
+        ];
+
+        // 5. AS runner last fired
+        $last_run = get_option( 'action_scheduler_lock_action-scheduler_run_queue', '' );
+        $last_run_ago = $last_run ? ( time() - (int) $last_run ) . 's ago' : 'never recorded';
+        $checks[] = [
+            'name'   => 'Last Action Scheduler run',
+            'ok'     => true,
+            'detail' => $last_run_ago . ' — if this says "never", visit any WP page to trigger cron',
+        ];
+
+        $all_ok = ! in_array( false, array_column( $checks, 'ok' ), true );
+
+        wp_send_json_success( [
+            'checks'     => $checks,
+            'all_ok'     => $all_ok,
+            'summary'    => $all_ok
+                ? 'Background Mode is ready. You can close the browser after clicking Start in Background.'
+                : 'Fix the issues above before using Background Mode. Use standard Start/Resume instead.',
         ] );
     }
 
