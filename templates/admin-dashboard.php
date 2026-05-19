@@ -343,7 +343,7 @@ if ( $_ow_show_wizard ) {
                         title="<?php esc_attr_e( 'Migrates ALL items from OpenCart. Runs all selected migrators in order: categories → products → customers → orders → SEO → multilingual. Use after Demo confirms results are correct.', 'octowoo' ); ?>">
                         ▶ <?php esc_html_e( 'Start Full Migration', 'octowoo' ); ?>
                     </button>
-                    <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>
+                    <button type="button" id="ow-btn-resume" class="ow-btn ow-btn-warning"
                         title="<?php esc_attr_e( 'Continue a migration that was paused or interrupted. Picks up from where it stopped — does not re-migrate items already completed.', 'octowoo' ); ?>">
                         ⏯ <?php esc_html_e( 'Resume', 'octowoo' ); ?>
                     </button>
@@ -444,7 +444,7 @@ if ( $_ow_show_wizard ) {
                         <button type="button" id="ow-btn-start-bg" class="ow-btn ow-btn-secondary">
                             ⚙ <?php esc_html_e( 'Start in Background', 'octowoo' ); ?>
                         </button>
-                        <button type="button" id="ow-btn-resume-bg" class="ow-btn ow-btn-secondary" <?php echo ( ! $active_run && ! $last_run ) ? 'disabled' : ''; ?>>
+                        <button type="button" id="ow-btn-resume-bg" class="ow-btn ow-btn-secondary">
                             ⚙ <?php esc_html_e( 'Resume in Background', 'octowoo' ); ?>
                         </button>
                         <button type="button" id="ow-btn-cancel-bg" class="ow-btn ow-btn-danger" disabled>
