@@ -937,10 +937,21 @@
                      || checkpoints.filter(function (cp) { return cp.status === 'pending'; })[0];
         if (runningCp) { currentMigrator = runningCp.migrator; }
 
-        // Track which migrators we rendered so we can add new ones at the end.
+        // Render all canonical migrators in order.
         var renderedKeys = {};
 
-        checkpoints.forEach(function (cp) {
+        MIGRATOR_ORDER.forEach(function(migKey) {
+            // Use checkpoint data if available, else render as PENDING placeholder.
+            var cp = cpMap[migKey] || {
+                migrator: migKey,
+                status: 'pending',
+                processed_count: 0,
+                total_count: 0,
+                skipped_count: 0,
+                label: MIGRATOR_LABELS[migKey] || migKey,
+            };
+            // Always override label with canonical label.
+            if (MIGRATOR_LABELS[migKey]) { cp.label = MIGRATOR_LABELS[migKey]; }
             var processed = parseInt(cp.processed_count, 10) || 0;
             var total     = parseInt(cp.total_count, 10)     || 0;
             var safe      = total > 0 ? Math.min(processed, total) : processed;
@@ -990,7 +1001,7 @@
                 $tbody.append($tr);
             }
             renderedKeys[cp.migrator] = true;
-        });
+        }); // end MIGRATOR_ORDER.forEach
     }
 
     /* ════════════════════════════════════════════════════════════════════
