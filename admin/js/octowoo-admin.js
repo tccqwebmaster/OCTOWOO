@@ -650,6 +650,10 @@
     function resetPartial() {
         if (isRunning) { showToast('⚠ Click ⏹ Abort first, wait for it to stop, then try Reset Specific.', 'warning'); return; }
 
+        // Build inline modal — no external dependency
+        var $overlay = $('<div id="ow-reset-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;"></div>');
+        var $box = $('<div style="background:#fff;border-radius:8px;padding:24px 28px;max-width:480px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;"></div>');
+
         var migrators = [
             { key: 'tax',            label: 'Tax Classes' },
             { key: 'order_statuses', label: 'Order Statuses' },
@@ -668,36 +672,45 @@
             { key: 'multilingual',   label: 'Multilingual / Arabic' },
         ];
 
-        var html = '<p style="margin:0 0 10px;font-size:13px;">Select which migrators to reset (they will re-run from scratch).<br>'
-            + '<strong>Tip:</strong> If Products are stuck, only tick Products — Categories and Images stay done.</p>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-bottom:12px;">';
+        $box.append('<h3 style="margin:0 0 8px;font-size:15px;">↺ Reset Specific Migrators</h3>');
+        $box.append('<p style="margin:0 0 12px;font-size:12px;color:#555;">Tick the migrators you want to re-run. Completed ones (Categories, Images) stay done.<br><strong>The ID map is kept — no duplicate products.</strong></p>');
+
+        var $grid = $('<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin-bottom:14px;"></div>');
         migrators.forEach(function(m) {
-            html += '<label style="font-size:12px;cursor:pointer;">'
-                + '<input type="checkbox" class="ow-reset-pick" value="' + m.key + '" style="margin-right:5px;">'
-                + m.label + '</label>';
+            $grid.append('<label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px;">'
+                + '<input type="checkbox" class="ow-reset-pick" value="' + m.key + '"> ' + m.label + '</label>');
         });
-        html += '</div>';
-        html += '<p style="margin:0;font-size:11px;color:#888;">This does NOT clear the ID map — no duplicate products will be created.</p>';
+        $box.append($grid);
 
-        owConfirmHtml(html, 'Reset Selected', 'Cancel').then(function(confirmed) {
-            if (!confirmed) { return; }
+        var $btns = $('<div style="display:flex;gap:8px;justify-content:flex-end;padding-top:10px;border-top:1px solid #eee;"></div>');
+        var $cancel = $('<button class="ow-btn ow-btn-secondary">Cancel</button>');
+        var $confirm = $('<button class="ow-btn ow-btn-primary">Reset Selected</button>');
+
+        $cancel.on('click', function() { $overlay.remove(); });
+        $confirm.on('click', function() {
             var selected = [];
-            $('.ow-reset-pick:checked').each(function() { selected.push($(this).val()); });
-            if (!selected.length) { showToast('No migrators selected.', 'warning'); return; }
-
+            $overlay.find('.ow-reset-pick:checked').each(function() { selected.push($(this).val()); });
+            if (!selected.length) { showToast('Tick at least one migrator.', 'warning'); return; }
+            $overlay.remove();
             $.post(octoWoo.ajaxUrl, {
                 action:    'octowoo_reset_migration',
                 nonce:     octoWoo.nonce,
                 migrators: selected.join(','),
             }).done(function(res) {
-                if (res.success) {
-                    showToast('Reset: ' + selected.join(', '), 'success');
-                    setBannerInfo('Selected migrators reset. Click Resume or Start Full Migration.');
+                if (res && res.success) {
+                    showToast('✔ Reset done: ' + selected.join(', ') + '. Click Resume.', 'success');
+                    setBannerInfo('Selected migrators reset. Click ⏯ Resume to continue.');
                 } else {
-                    setBannerError(res.data ? res.data.message : 'Reset failed.');
+                    setBannerError((res && res.data && res.data.message) || 'Reset failed.');
                 }
-            });
+            }).fail(function() { showToast('Request failed.', 'error'); });
         });
+
+        $btns.append($cancel).append($confirm);
+        $box.append($btns);
+        $overlay.append($box).appendTo('body');
+        // Close on overlay click
+        $overlay.on('click', function(e) { if ($(e.target).is($overlay)) { $overlay.remove(); } });
     }
 
     function resetMigration() {
