@@ -933,10 +933,13 @@
         // Remove placeholder and ANY rows not in the current checkpoint set.
         // This prevents stale rows from old (aborted) runs persisting in the table.
         $tbody.find('tr:not([data-migrator])').remove();
-        var incomingKeys = {};
-        checkpoints.forEach(function(cp) { incomingKeys[cp.migrator] = true; });
+        // Use MIGRATOR_ORDER as the authoritative key set — never remove canonical migrators.
+        var canonicalKeys = {};
+        MIGRATOR_ORDER.forEach(function(k) { canonicalKeys[k] = true; });
         $tbody.find('tr[data-migrator]').each(function() {
-            if (!incomingKeys[$(this).data('migrator')]) { $(this).remove(); }
+            var key = $(this).data('migrator');
+            // Remove stale rows from old runs that are NOT in the canonical list.
+            if (!canonicalKeys[key]) { $(this).remove(); }
         });
 
         var runningCp = checkpoints.filter(function (cp) { return cp.status === 'running'; })[0]
