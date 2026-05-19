@@ -62,6 +62,7 @@ class AjaxHandler {
             'octowoo_get_migrated_products',
             'octowoo_check_background',
             'octowoo_repair_dimensions',
+            'octowoo_fix_term_slugs',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -211,6 +212,10 @@ class AjaxHandler {
 
             case 'octowoo_repair_dimensions':
                 $this->actionRepairDimensions();
+                break;
+
+            case 'octowoo_fix_term_slugs':
+                $this->actionFixTermSlugs();
                 break;
 
             case 'octowoo_run_chunk':
@@ -2675,6 +2680,87 @@ class AjaxHandler {
             'summary'    => $all_ok
                 ? 'Background Mode is ready. You can close the browser after clicking Start in Background.'
                 : 'Fix the issues above before using Background Mode. Use standard Start/Resume instead.',
+        ] );
+    }
+
+
+    // ── Action: fix ow-t-XXXX temp slugs on category/brand terms ──────────────
+    private function actionFixTermSlugs(): void {
+        global $wpdb;
+        $fixed = 0;
+
+        // Find all terms with temp slugs like ow-t-XXXXX-TIMESTAMP
+        $rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT t.term_id, t.slug, tt.taxonomy
+             FROM {$wpdb->terms} t
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+             WHERE t.slug LIKE 'ow-t-%'
+               AND tt.taxonomy IN ('product_cat', 'product_brand', 'product_tag')",
+            ARRAY_A
+        );
+
+        foreach ( $rows as $row ) {
+            $term_id = (int) $row['term_id'];
+            $tax     = $row['taxonomy'];
+
+            // Get the WPML primary term for this translation.
+            $trid = apply_filters( 'wpml_element_trid', null, $term_id, 'tax_' . $tax );
+            if ( ! $trid ) { continue; }
+
+            $translations = apply_filters( 'wpml_get_element_translations', [], $trid, 'tax_' . $tax );
+            $primary_term_id = 0;
+            foreach ( $translations as $lang => $t ) {
+                if ( $lang !== 'ar' && ! empty( $t->element_id ) ) {
+                    $primary_term_id = (int) $t->element_id;
+                    break;
+                }
+            }
+
+            if ( ! $primary_term_id ) { continue; }
+
+            $primary = get_term( $primary_term_id, $tax );
+            if ( ! $primary || is_wp_error( $primary ) ) { continue; }
+
+            // Use primary slug as base for secondary slug.
+            $new_slug = $primary->slug . '-ar';
+            // Ensure unique.
+            $existing = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT term_id FROM {$wpdb->terms} WHERE slug = %s AND term_id != %d LIMIT 1",
+                $new_slug, $term_id
+            ) );
+            if ( $existing ) { $new_slug = $new_slug . '-' . $term_id; }
+
+            $wpdb->update( $wpdb->terms, [ 'slug' => $new_slug ], [ 'term_id' => $term_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            clean_term_cache( $term_id, $tax );
+            $fixed++;
+        }
+
+        // Also fix English categories that have no WPML language assigned.
+        $unassigned = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT tt.term_id FROM {$wpdb->term_taxonomy} tt
+             LEFT JOIN {$wpdb->prefix}icl_translations tr
+               ON tr.element_id = tt.term_id
+               AND tr.element_type = CONCAT('tax_', tt.taxonomy)
+             WHERE tt.taxonomy IN ('product_cat','product_brand')
+               AND tr.element_id IS NULL",
+            ARRAY_A
+        );
+        $lang_fixed = 0;
+        foreach ( $unassigned as $row ) {
+            do_action( 'wpml_set_element_language_details', [
+                'element_id'    => (int) $row['term_id'],
+                'element_type'  => 'tax_product_cat',
+                'trid'          => null,
+                'language_code' => 'en',
+                'source_language_code' => null,
+            ] );
+            $lang_fixed++;
+        }
+
+        wp_send_json_success( [
+            'message' => "Fixed {$fixed} temp slugs. Assigned English language to {$lang_fixed} unlinked categories.",
+            'fixed_slugs' => $fixed,
+            'fixed_lang'  => $lang_fixed,
         ] );
     }
 

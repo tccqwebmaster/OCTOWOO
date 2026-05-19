@@ -200,6 +200,14 @@
             .fail(function() { showToast('Request failed.', 'error'); })
             .always(function() { $b.prop('disabled', false).text('Fix Arabic/Secondary Content'); });
         });
+        $('#ow-btn-fix-term-slugs').on('click', function() {
+            var $b = $(this);
+            $b.prop('disabled', true).text('Fixing...');
+            $.post(octoWoo.ajaxUrl, {action:'octowoo_fix_term_slugs', nonce:octoWoo.nonce})
+            .done(function(r){ if(r&&r.success){showToast(r.data.message,'success');}else{showToast('Fix failed','error');} })
+            .fail(function(){showToast('Request failed.','error');})
+            .always(function(){$b.prop('disabled',false).text('Fix Category Slugs');});
+        });
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
         $('#ow-btn-rerun-seo').on('click', rerunSeoMigrator);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
