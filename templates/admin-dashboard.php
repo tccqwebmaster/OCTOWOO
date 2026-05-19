@@ -486,9 +486,50 @@ if ( $_ow_show_wizard ) {
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td colspan="5" style="color:#888;"><?php esc_html_e( 'Start a migration to see progress.', 'octowoo' ); ?></td>
-                    </tr>
+<?php
+// Render checkpoint rows directly from PHP — no JS dependency for initial state.
+$_ow_run_id = \OctoWoo\Core\CheckpointManager::getActiveRunId()
+    ?? get_option( 'octowoo_last_run_id', '' );
+$_ow_migrator_labels = [
+    'tax' => 'Tax Classes', 'order_statuses' => 'Order Statuses',
+    'categories' => 'Categories', 'images' => 'Images',
+    'products' => 'Products', 'manufacturers' => 'Manufacturers / Brands',
+    'related' => 'Related Products', 'customers' => 'Customers',
+    'orders' => 'Orders', 'coupons' => 'Coupons', 'seo' => 'SEO URLs',
+    'information' => 'Information Pages', 'tags' => 'Tags',
+    'filters' => 'Product Filters', 'downloads' => 'Downloads',
+    'reviews' => 'Reviews', 'multilingual' => 'Multilingual (WPML/Polylang)',
+];
+if ( $_ow_run_id ) {
+    $cp = new \OctoWoo\Core\CheckpointManager( $_ow_run_id );
+    $cp_rows = $cp->getAll();
+    $cp_map  = [];
+    foreach ( $cp_rows as $r ) { $cp_map[ $r['migrator'] ] = $r; }
+    foreach ( $_ow_migrator_labels as $key => $label ) {
+        $r      = $cp_map[ $key ] ?? null;
+        $status = $r ? $r['status'] : 'pending';
+        $proc   = $r ? (int) $r['processed_count'] : 0;
+        $total  = $r ? (int) $r['total_count'] : 0;
+        $pct    = $total > 0 ? round( $proc / $total * 100 ) : ( $status === 'completed' ? 100 : 0 );
+        $icons  = [ 'completed' => '✔', 'running' => '⟳', 'failed' => '✘', 'aborted' => '⊘', 'pending' => '○' ];
+        $colors = [ 'completed' => '#2e7d32', 'running' => '#1565c0', 'failed' => '#c62828', 'aborted' => '#757575', 'pending' => '#9e9e9e' ];
+        $icon   = $icons[ $status ] ?? '·';
+        $color  = $colors[ $status ] ?? '#333';
+        $items  = $total > 0 ? $proc . ' / ' . $total : ( $proc > 0 ? $proc . ' / —' : '0 / —' );
+        $bar_w  = $status === 'failed' ? 100 : $pct;
+        $bar_cls = $status === 'completed' ? ' done' : ( $status === 'running' ? ' running' : ( $status === 'failed' ? ' failed' : '' ) );
+        echo '<tr data-migrator="' . esc_attr( $key ) . '">';
+        echo '<td><strong>' . esc_html( $label ) . '</strong></td>';
+        echo '<td><span style="color:' . esc_attr( $color ) . ';white-space:nowrap;">' . $icon . ' ' . strtoupper( $status ) . '</span></td>';
+        echo '<td>' . esc_html( $items ) . '</td>';
+        echo '<td><div class="ow-progress-bar-wrap"><div class="ow-progress-bar' . esc_attr( $bar_cls ) . '" style="width:' . $bar_w . '%"></div></div></td>';
+        echo '<td><strong>' . $pct . '%</strong></td>';
+        echo '</tr>';
+    }
+} else {
+    echo '<tr><td colspan="5" style="color:#888;">' . esc_html__( 'Start a migration to see progress.', 'octowoo' ) . '</td></tr>';
+}
+?>
                 </tbody>
             </table>
         </div>
