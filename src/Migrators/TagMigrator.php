@@ -51,9 +51,13 @@ class TagMigrator extends AbstractMigrator {
         $tag_name_map  = []; // lowercase name → term_taxonomy_id
         $tag_termid_map = []; // lowercase name → term_id
         foreach ( $existing_tags as $et ) {
-            $key = strtolower( $et['name'] );
-            $tag_name_map[ $key ]   = (int) $et['term_taxonomy_id'];
-            $tag_termid_map[ $key ] = (int) $et['term_id'];
+            // Index by both exact lowercase name AND sanitized slug for robust lookup.
+            $key_name = strtolower( $et['name'] );
+            $key_slug = strtolower( $et['slug'] );
+            $tag_name_map[ $key_name ]  = (int) $et['term_taxonomy_id'];
+            $tag_name_map[ $key_slug ]  = (int) $et['term_taxonomy_id'];
+            $tag_termid_map[ $key_name ] = (int) $et['term_id'];
+            $tag_termid_map[ $key_slug ] = (int) $et['term_id'];
         }
 
         $total_callback = function () use ( $pfx, $lang_id ): int {
@@ -131,27 +135,40 @@ class TagMigrator extends AbstractMigrator {
                 continue;
             }
 
-            // Create new tag directly via DB — faster than wp_insert_term().
-            $slug = sanitize_title( $tag_name );
-            $wpdb->insert( $wpdb->terms, [ 'name' => $tag_name, 'slug' => $slug, 'term_group' => 0 ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $term_id = (int) $wpdb->insert_id;
-            if ( ! $term_id ) {
-                // Slug conflict — fetch existing.
-                $term_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                    "SELECT term_id FROM {$wpdb->terms} WHERE slug = %s LIMIT 1", $slug
+            // Check if term exists by name (case-insensitive) before inserting.
+            $row_existing = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.term_id, tt.term_taxonomy_id
+                 FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE LOWER(t.name) = %s AND tt.taxonomy = 'product_tag' LIMIT 1",
+                $key
+            ), ARRAY_A );
+
+            if ( $row_existing ) {
+                // Term already exists — use it.
+                $tt_id   = (int) $row_existing['term_taxonomy_id'];
+                $term_id = (int) $row_existing['term_id'];
+            } else {
+                // Create new term — direct INSERT bypasses WPML hooks on wp_insert_term.
+                $slug = sanitize_title( $tag_name );
+                // Ensure unique slug.
+                $slug_count = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT COUNT(*) FROM {$wpdb->terms} WHERE slug = %s", $slug
                 ) );
+                if ( $slug_count > 0 ) { $slug = $slug . '-' . time(); }
+
+                $wpdb->insert( $wpdb->terms, [ 'name' => $tag_name, 'slug' => $slug, 'term_group' => 0 ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $term_id = (int) $wpdb->insert_id;
                 if ( ! $term_id ) { continue; }
+
+                $wpdb->insert( $wpdb->term_taxonomy, [ 'term_id' => $term_id, 'taxonomy' => 'product_tag', 'description' => '', 'parent' => 0, 'count' => 0 ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $tt_id = (int) $wpdb->insert_id;
+                if ( ! $tt_id ) { continue; }
             }
-            $wpdb->insert( $wpdb->term_taxonomy, [ 'term_id' => $term_id, 'taxonomy' => 'product_tag', 'description' => '', 'parent' => 0, 'count' => 0 ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $tt_id = (int) $wpdb->insert_id;
-            if ( ! $tt_id ) {
-                $tt_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                    "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = 'product_tag' LIMIT 1", $term_id
-                ) );
-            }
+
             // Cache for subsequent products.
-            $tag_name_map[ $key ]    = $tt_id;
-            $tag_termid_map[ $key ]  = $term_id;
+            $tag_name_map[ $key ]   = $tt_id;
+            $tag_termid_map[ $key ] = $term_id;
             $ttids[] = $tt_id;
         }
 
