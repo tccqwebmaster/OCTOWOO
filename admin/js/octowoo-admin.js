@@ -668,6 +668,8 @@
             { key: 'seo',            label: 'SEO URLs' },
             { key: 'information',    label: 'CMS Pages' },
             { key: 'tags',           label: 'Tags' },
+            { key: 'filters',        label: 'Product Filters' },
+            { key: 'downloads',      label: 'Downloads' },
             { key: 'reviews',        label: 'Reviews' },
             { key: 'multilingual',   label: 'Multilingual / Arabic' },
         ];
