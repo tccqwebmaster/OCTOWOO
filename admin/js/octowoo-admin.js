@@ -366,11 +366,12 @@
         $('#octowoo-settings-form').on('input change', 'input, select', validateSettingsForm);
 
         // Resume active run on page load — check server state to set correct button state.
-        if (currentRunId) { pollProgress(); }
-        // Show all migrators immediately on page load if there was a previous run.
-        // Don't wait for poll response — prevents blank table flash.
-        if ((octoWoo.lastRunId || octoWoo.activeRunId) && !$progressTable.find('tr[data-migrator]').length) {
-            renderProgressTable(null);
+        // Always show all canonical migrators immediately on page load.
+        renderProgressTable(null);
+
+        // Immediately fetch real checkpoint data if we have a run ID.
+        if (currentRunId || octoWoo.lastRunId) {
+            pollProgress();
         }
         if (octoWoo.activeRunId) {
             startPolling();
