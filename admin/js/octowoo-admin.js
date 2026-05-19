@@ -398,10 +398,15 @@
         $('#octowoo-settings-form').on('input change', 'input, select', validateSettingsForm);
 
         // Resume active run on page load — check server state to set correct button state.
-        // Always show all canonical migrators immediately on page load.
+        // Show canonical migrators immediately, then fetch real data from server.
         renderProgressTable(null);
 
-        // Immediately fetch real checkpoint data if we have a run ID.
+        // Safety: if table still empty after render (race condition), retry after 100ms.
+        if (!$progressTable.find('tr[data-migrator]').length) {
+            setTimeout(function() { renderProgressTable(null); }, 100);
+        }
+
+        // Fetch real checkpoint data from server.
         if (currentRunId || octoWoo.lastRunId) {
             pollProgress();
         }
@@ -448,6 +453,12 @@
         if (wz) { wz.style.display = 'none'; }
 
         if (tab === 'logs' && currentRunId) { refreshLogs(); }
+        if (tab === 'migration') {
+            // Re-render progress table when switching to migration tab.
+            // Ensures table is populated even if it was hidden during initial render.
+            renderProgressTable(null);
+            if (currentRunId || octoWoo.lastRunId) { pollProgress(); }
+        }
 
         var url = new URL(window.location.href);
         url.searchParams.set('tab', tab);
