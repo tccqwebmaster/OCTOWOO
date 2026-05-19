@@ -572,13 +572,15 @@ class ProductMigrator extends AbstractMigrator {
     ): bool {
         $oc_id = (int) $row['product_id'];
 
-        wp_update_post( [
-            'ID'           => $wc_post_id,
+        // Direct DB write for post fields — bypasses WC save_post hooks (~1-2s saving per product).
+        // MigrationManager::bootstrap() already suppresses WC hooks.
+        global $wpdb;
+        $wpdb->update( $wpdb->posts, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             'post_title'   => $this->sanitizeName( $desc['name'] ?? '' ),
             'post_content' => wp_kses_post( $this->cleanDescription( $desc['description'] ?? '' ) ),
-            // OC `tag` = SEO keywords, not a short description; clear any previously set value.
             'post_excerpt' => '',
-        ] );
+        ], [ 'ID' => $wc_post_id ] );
+        clean_post_cache( $wc_post_id );
 
         $price = (float) $row['price'];
         update_post_meta( $wc_post_id, '_regular_price', $price );

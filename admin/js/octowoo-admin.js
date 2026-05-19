@@ -2030,14 +2030,9 @@
                 '</div>';
         });
 
-        // Reverse: newest entries first so user always sees latest at top.
-        // Build rows in reverse order.
-        var reversedRows = '';
-        var $temp = $('<div>').html(rows);
-        var entries = $temp.find('.ow-log-entry').get().reverse();
-        entries.forEach(function(el) { reversedRows += el.outerHTML; });
-
-        $logContainer.html(header + reversedRows);
+        // Server returns entries ORDER BY id DESC (newest first already).
+        // Just render as-is — no reversal needed.
+        $logContainer.html(header + rows);
 
         // Scroll to TOP so newest entry is immediately visible.
         $logContainer.scrollTop(0);
