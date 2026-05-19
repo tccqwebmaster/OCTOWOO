@@ -367,6 +367,11 @@
 
         // Resume active run on page load — check server state to set correct button state.
         if (currentRunId) { pollProgress(); }
+        // Show all migrators immediately on page load if there was a previous run.
+        // Don't wait for poll response — prevents blank table flash.
+        if ((octoWoo.lastRunId || octoWoo.activeRunId) && !$progressTable.find('tr[data-migrator]').length) {
+            renderProgressTable(null);
+        }
         if (octoWoo.activeRunId) {
             startPolling();
             // Check if run is paused on server (persisted across page reload).
