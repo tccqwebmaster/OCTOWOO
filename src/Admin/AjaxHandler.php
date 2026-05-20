@@ -63,6 +63,7 @@ class AjaxHandler {
             'octowoo_check_background',
             'octowoo_repair_dimensions',
             'octowoo_fix_term_slugs',
+            'octowoo_dedup_terms',
             'octowoo_run_chunk',
             'octowoo_import_sql',
             'octowoo_import_images',
@@ -216,6 +217,10 @@ class AjaxHandler {
 
             case 'octowoo_fix_term_slugs':
                 $this->actionFixTermSlugs();
+                break;
+
+            case 'octowoo_dedup_terms':
+                $this->actionDedupTerms();
                 break;
 
             case 'octowoo_run_chunk':
@@ -2789,6 +2794,80 @@ class AjaxHandler {
             'fixed_slugs'  => $fixed,
             'fixed_terms'  => $lang_fixed,
             'fixed_products' => $prod_fixed,
+        ] );
+    }
+
+
+    // ── Action: remove duplicate brands/categories ─────────────────────────────
+    private function actionDedupTerms(): void {
+        global $wpdb;
+        $taxonomy = sanitize_key( $_POST['taxonomy'] ?? 'product_brand' ); // phpcs:ignore WordPress.Security.NonceVerification
+        $removed  = 0;
+
+        // Find names that appear more than once.
+        $dupes = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT t.name, COUNT(*) as cnt, MIN(t.term_id) as keep_id
+                 FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE tt.taxonomy = %s
+                 GROUP BY LOWER(t.name)
+                 HAVING COUNT(*) > 1",
+                $taxonomy
+            ),
+            ARRAY_A
+        );
+
+        foreach ( $dupes as $dupe ) {
+            // Keep the one with the most products (or lowest term_id as fallback).
+            $all_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.term_id FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE LOWER(t.name) = LOWER(%s) AND tt.taxonomy = %s
+                 ORDER BY tt.count DESC, t.term_id ASC",
+                $dupe['name'], $taxonomy
+            ) );
+
+            if ( count( $all_ids ) < 2 ) { continue; }
+
+            $keep_id  = (int) $all_ids[0]; // keep highest-count term
+            $delete_ids = array_slice( $all_ids, 1 );
+
+            foreach ( $delete_ids as $del_id ) {
+                // Re-assign products from duplicate to keeper.
+                $del_ttid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+                    $del_id, $taxonomy
+                ) );
+                $keep_ttid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+                    $keep_id, $taxonomy
+                ) );
+                if ( $del_ttid && $keep_ttid ) {
+                    // Move product relationships.
+                    $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                        "UPDATE IGNORE {$wpdb->term_relationships} SET term_taxonomy_id = %d WHERE term_taxonomy_id = %d",
+                        $keep_ttid, $del_ttid
+                    ) );
+                    $wpdb->delete( $wpdb->term_relationships, [ 'term_taxonomy_id' => $del_ttid ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                }
+                // Delete the duplicate term.
+                wp_delete_term( (int) $del_id, $taxonomy );
+                $removed++;
+            }
+        }
+
+        // Recount term usage.
+        wp_update_term_count_now(
+            array_column( $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy
+            ), ARRAY_A ), 'term_taxonomy_id' ),
+            $taxonomy
+        );
+
+        wp_send_json_success( [
+            'message' => "Removed {$removed} duplicate {$taxonomy} terms. Products re-assigned to kept terms.",
+            'removed' => $removed,
         ] );
     }
 
