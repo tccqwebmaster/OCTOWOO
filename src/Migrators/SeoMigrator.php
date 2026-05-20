@@ -83,6 +83,16 @@ class SeoMigrator extends AbstractMigrator {
             $this->checkpoint->start( self::KEY );
             $this->logger->info( "[seo] Starting SEO migration: total={$total}, chunk_mode=" . ( $chunk_mode ? 'yes' : 'no' ) );
 
+            // Auto-fix any 'ow-t-' temp slugs left on category terms before we
+            // start setting SEO slugs.  If multilingual ran before SEO and left
+            // temp slugs (e.g. due to an interrupted chunk), those broken slugs
+            // would be baked into the redirect map.  Fixing them here guarantees
+            // SEO slug-setting always operates on clean, correct slugs.
+            $slug_fixed = $this->autoFixTempSlugs( [ 'product_cat' ] );
+            if ( $slug_fixed > 0 ) {
+                $this->logger->info( "[seo] Auto-fixed {$slug_fixed} category temp slug(s) before SEO pass." );
+            }
+
             // Critical: warn if WordPress permalink structure is "Plain".
             // When Plain, get_permalink() / get_term_link() return ?post_type=product&p=ID
             // so redirect targets stored in wp_options and .htaccess will be wrong.

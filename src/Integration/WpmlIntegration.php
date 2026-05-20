@@ -304,6 +304,17 @@ class WpmlIntegration extends AbstractMigrator {
 
             $this->logger->info( "[multilingual] All done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
 
+            // Auto-fix any 'ow-t-' temp slugs left on Arabic/secondary terms.
+            // These can remain if the process was interrupted mid-chunk between
+            // the temp-slug write and fixTranslationTermSlug(). Running this here
+            // means no manual "Fix Category Slugs" button is ever needed.
+            $brand_tax  = $this->detectActiveBrandTaxonomy();
+            $fix_taxes  = array_filter( [ 'product_cat', $brand_tax !== '' ? $brand_tax : null ] );
+            $slug_fixed = $this->autoFixTempSlugs( $fix_taxes );
+            if ( $slug_fixed > 0 ) {
+                $this->logger->info( "[multilingual] Auto-fixed {$slug_fixed} temp slug(s)." );
+            }
+
             // Flush WordPress rewrite rules so newly created/updated term slugs
             // are immediately routable.
             flush_rewrite_rules( false );

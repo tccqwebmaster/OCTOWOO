@@ -345,4 +345,131 @@ abstract class AbstractMigrator {
         $cache[ $slug ] = $attribute_id;
         return $attribute_id;
     }
+
+    /**
+     * Scan one or more taxonomies for leftover 'ow-t-' temp slugs and replace
+     * them with the correct slug from the primary-language term in the same TRID.
+     *
+     * This is called automatically:
+     *  - At the END of the multilingual pass (WpmlIntegration) to ensure no temp
+     *    slug ever survives the run regardless of interruptions.
+     *  - At the START of SeoMigrator (first chunk) so SEO slug-setting always
+     *    operates on clean slugs, not broken 'ow-t-…' placeholders.
+     *
+     * @param  string[] $taxonomies  Taxonomy slugs to scan. Default: product_cat.
+     * @return int                   Number of slugs fixed.
+     */
+    protected function autoFixTempSlugs( array $taxonomies = [ 'product_cat' ] ): int {
+        global $wpdb;
+        $primary_locale = $this->primaryLocale();
+        $fixed          = 0;
+
+        foreach ( $taxonomies as $taxonomy ) {
+            // Find every term in this taxonomy whose slug starts with 'ow-t-'.
+            $broken = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "SELECT t.term_id, tt.term_taxonomy_id, t.slug
+                     FROM {$wpdb->terms} t
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                     WHERE tt.taxonomy = %s AND t.slug LIKE 'ow-t-%%'",
+                    $taxonomy
+                ),
+                ARRAY_A
+            );
+
+            if ( empty( $broken ) ) {
+                continue;
+            }
+
+            $this->logger->info( sprintf(
+                '[autofix] Found %d temp slug(s) in %s — fixing now.',
+                count( $broken ),
+                $taxonomy
+            ) );
+
+            $element_type = 'tax_' . $taxonomy;
+            $icl_table    = $wpdb->prefix . 'icl_translations';
+
+            foreach ( $broken as $row ) {
+                $tt_id = (int) $row['term_taxonomy_id'];
+
+                // Get the TRID for this translated term.
+                $trid = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "SELECT trid FROM `{$icl_table}`
+                         WHERE element_id = %d AND element_type = %s",
+                        $tt_id,
+                        $element_type
+                    )
+                );
+
+                if ( ! $trid ) {
+                    // No WPML row — term is orphaned; slug = clean version of current name.
+                    $name = (string) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->prepare(
+                            "SELECT name FROM {$wpdb->terms} WHERE term_id = %d",
+                            (int) $row['term_id']
+                        )
+                    );
+                    $safe_slug = $this->toSlug( $name );
+                    if ( $safe_slug && $safe_slug !== $row['slug'] ) {
+                        $wpdb->update( $wpdb->terms, [ 'slug' => $safe_slug ], [ 'term_id' => (int) $row['term_id'] ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        clean_term_cache( (int) $row['term_id'], $taxonomy );
+                        $fixed++;
+                        $this->logger->info( "[autofix] Orphan term #{$row['term_id']}: '{$row['slug']}' → '{$safe_slug}'" );
+                    }
+                    continue;
+                }
+
+                // Find the primary-language term in the same translation group.
+                $primary_tt_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "SELECT element_id FROM `{$icl_table}`
+                         WHERE trid = %d AND element_type = %s AND language_code = %s",
+                        $trid,
+                        $element_type,
+                        $primary_locale
+                    )
+                );
+
+                if ( ! $primary_tt_id ) {
+                    continue;
+                }
+
+                $primary_term_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "SELECT term_id FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id = %d",
+                        $primary_tt_id
+                    )
+                );
+
+                $primary_slug = (string) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->prepare(
+                        "SELECT slug FROM {$wpdb->terms} WHERE term_id = %d",
+                        $primary_term_id
+                    )
+                );
+
+                if ( ! $primary_slug || $primary_slug === $row['slug'] ) {
+                    continue;
+                }
+
+                $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    $wpdb->terms,
+                    [ 'slug' => $primary_slug ],
+                    [ 'term_id' => (int) $row['term_id'] ]
+                );
+                clean_term_cache( (int) $row['term_id'], $taxonomy );
+                $fixed++;
+                $this->logger->info( "[autofix] Term #{$row['term_id']}: '{$row['slug']}' → '{$primary_slug}'" );
+            }
+        }
+
+        if ( $fixed > 0 ) {
+            flush_rewrite_rules( false );
+            $this->logger->info( "[autofix] Fixed {$fixed} temp slug(s) across " . implode( ', ', $taxonomies ) . '.' );
+        }
+
+        return $fixed;
+    }
 }
