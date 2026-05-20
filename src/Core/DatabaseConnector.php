@@ -103,6 +103,9 @@ class DatabaseConnector {
             \PDO::ATTR_EMULATE_PREPARES   => false,
             // Force UTF-8mb4 so Arabic content is preserved.
             \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
+            // Ask MySQL driver to auto-reconnect on dropped connections.
+            // This is a best-effort hint; query() also has explicit retry logic.
+            \PDO::MYSQL_ATTR_RECONNECT    => true,
         ];
 
         try {
@@ -251,13 +254,33 @@ class DatabaseConnector {
     /**
      * Execute a prepared statement and return the PDOStatement.
      *
+     * Automatically reconnects and retries once on MySQL error 2006
+     * ("MySQL server has gone away") and 2013 ("Lost connection to MySQL
+     * server during query").  Both happen when the OC DB connection idles
+     * longer than the server's wait_timeout between batches.
+     *
      * @param string              $sql    SQL with ? or :named placeholders.
      * @param array<int|string, mixed> $params Bound parameters.
      */
     public function query( string $sql, array $params = [] ): \PDOStatement {
-        $stmt = $this->getPdo()->prepare( $sql );
-        $stmt->execute( $params );
-        return $stmt;
+        // MySQL gone-away error codes (SQLSTATE HY000, driver codes 2006 / 2013).
+        static $gone_away_codes = [ 2006, 2013 ];
+
+        try {
+            $stmt = $this->getPdo()->prepare( $sql );
+            $stmt->execute( $params );
+            return $stmt;
+        } catch ( \PDOException $e ) {
+            $code = (int) $e->errorInfo[1]; // driver-specific error code
+            if ( in_array( $code, $gone_away_codes, true ) ) {
+                // Force a fresh connection and retry exactly once.
+                $this->pdo = null;
+                $stmt = $this->getPdo()->prepare( $sql );
+                $stmt->execute( $params );
+                return $stmt;
+            }
+            throw $e; // any other error — re-throw as-is
+        }
     }
 
     /**
