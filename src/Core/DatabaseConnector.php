@@ -260,24 +260,44 @@ class DatabaseConnector {
      * @param array<int|string, mixed> $params Bound parameters.
      */
     public function query( string $sql, array $params = [] ): \PDOStatement {
-        // MySQL gone-away error codes (SQLSTATE HY000, driver codes 2006 / 2013).
-        static $gone_away_codes = [ 2006, 2013 ];
-
         try {
             $stmt = $this->getPdo()->prepare( $sql );
             $stmt->execute( $params );
             return $stmt;
-        } catch ( \PDOException $e ) {
-            $code = (int) $e->errorInfo[1]; // driver-specific error code
-            if ( in_array( $code, $gone_away_codes, true ) ) {
-                // Force a fresh connection and retry exactly once.
+        } catch ( \Throwable $e ) {
+            if ( $this->isGoneAway( $e ) ) {
+                // Drop the dead connection and open a fresh one, then retry once.
                 $this->pdo = null;
                 $stmt = $this->getPdo()->prepare( $sql );
                 $stmt->execute( $params );
                 return $stmt;
             }
-            throw $e; // any other error — re-throw as-is
+            throw $e;
         }
+    }
+
+    /**
+     * Detect MySQL "server has gone away" / "lost connection" errors.
+     *
+     * Checks both the numeric driver code (errorInfo[1]) AND the message string
+     * because when prepare() itself fails the errorInfo array may be empty/null,
+     * making a code-only check silently fail.
+     */
+    private function isGoneAway( \Throwable $e ): bool {
+        $msg = strtolower( $e->getMessage() );
+        if ( str_contains( $msg, 'server has gone away' )
+          || str_contains( $msg, 'lost connection' )
+          || str_contains( $msg, 'connection was lost' )
+          || str_contains( $msg, 'broken pipe' )
+        ) {
+            return true;
+        }
+        // PDOException carries errorInfo — check driver code as fallback.
+        if ( $e instanceof \PDOException ) {
+            $code = (int) ( $e->errorInfo[1] ?? 0 );
+            return in_array( $code, [ 2006, 2013 ], true );
+        }
+        return false;
     }
 
     /**
