@@ -38,6 +38,11 @@ class ProductMigrator extends AbstractMigrator {
             $this->oc, $this->logger, $this->checkpoint, $this->batch, $this->config
         );
 
+        // Bulk-load the entire product id_map into memory (1 query).
+        // On re-runs this turns 6,000+ per-product DB getWcId() calls into
+        // free in-memory lookups, cutting "skip" time from minutes to seconds.
+        $this->checkpoint->warmIdMapCache( self::MAP_KEY );
+
         $pfx = $this->pfx();
 
         $resume_id = $this->checkpoint->getLastId( self::KEY );

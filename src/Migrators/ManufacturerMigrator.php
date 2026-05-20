@@ -80,6 +80,11 @@ class ManufacturerMigrator extends AbstractMigrator {
         $this->taxonomy = $this->resolveTaxonomy();
         $this->logger->info( "[manufacturers] Using brand taxonomy: {$this->taxonomy}" );
 
+        // Bulk-load brand id_map into memory (1 query) so re-runs don't do
+        // a DB round-trip per brand when checking for existing terms.
+        $this->checkpoint->warmIdMapCache( self::MAP_KEY );
+        $this->checkpoint->warmIdMapCache( self::KEY );
+
         $pfx = $this->pfx();
 
         $total_callback = function () use ( $pfx ): int {
@@ -144,9 +149,59 @@ class ManufacturerMigrator extends AbstractMigrator {
             return false;
         }
 
-        // Duplicate check.
+        // Duplicate check — three layers in priority order:
+        //  1. id_map / alternative key (fastest — in-memory after warmIdMapCache).
+        //  2. _octowoo_oc_manufacturer_id term meta (survives id_map reset / TRUNCATE).
+        //  3. By name in taxonomy (last resort — catches externally-created terms).
         $existing_wc_id = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id )
             ?? $this->checkpoint->getWcId( self::KEY, $oc_id );
+
+        // Fallback 2: meta-based lookup filtered by WPML primary language so we
+        // never accidentally pick up an Arabic WPML stub that field-synced the meta.
+        if ( ! $existing_wc_id ) {
+            global $wpdb;
+            $primary_locale = $this->primaryLocale();
+            $by_meta        = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "SELECT tm.term_id
+                     FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     LEFT JOIN {$wpdb->prefix}icl_translations icl
+                          ON icl.element_id   = tt.term_taxonomy_id
+                         AND icl.element_type  = CONCAT('tax_', tt.taxonomy)
+                     WHERE tm.meta_key   = '_octowoo_oc_manufacturer_id'
+                       AND tm.meta_value = %s
+                       AND tt.taxonomy   = %s
+                       AND (icl.language_code IS NULL OR icl.language_code = %s)
+                     ORDER BY tm.term_id ASC LIMIT 1",
+                    (string) $oc_id,
+                    $this->taxonomy,
+                    $primary_locale
+                )
+            );
+            if ( $by_meta > 0 ) {
+                $existing_wc_id = $by_meta;
+                $this->saveManufacturerMap( $oc_id, $by_meta );
+                update_term_meta( $by_meta, '_octowoo_oc_manufacturer_id', $oc_id );
+                update_term_meta( $by_meta, '_octowoo_oc_id', $oc_id );
+                $this->logger->info( "[manufacturers] Found existing brand #{$by_meta} by _octowoo_oc_manufacturer_id meta for OC #{$oc_id} ('{$name}') – backfilled id_map." );
+            }
+        }
+
+        // Fallback 3: by name in taxonomy — prevents creating a duplicate when the
+        // term exists but never had OctoWoo meta (e.g. manually created brands or
+        // a prior run that set name but not meta).
+        if ( ! $existing_wc_id ) {
+            $by_name = get_term_by( 'name', $name, $this->taxonomy );
+            if ( $by_name && ! is_wp_error( $by_name ) ) {
+                $existing_wc_id = (int) $by_name->term_id;
+                $this->saveManufacturerMap( $oc_id, $existing_wc_id );
+                update_term_meta( $existing_wc_id, '_octowoo_oc_manufacturer_id', $oc_id );
+                update_term_meta( $existing_wc_id, '_octowoo_oc_id', $oc_id );
+                $this->logger->info( "[manufacturers] Found existing brand #{$existing_wc_id} by name '{$name}' for OC #{$oc_id} – backfilled id_map." );
+            }
+        }
+
         if ( $existing_wc_id ) {
             if ( $this->onDuplicate() === 'update' ) {
                 return $this->updateBrandTerm( (int) $existing_wc_id, $row );

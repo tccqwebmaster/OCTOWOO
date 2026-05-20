@@ -367,6 +367,10 @@ if ( $_ow_show_wizard ) {
                         title="<?php esc_attr_e( 'Re-runs Categories and Brands/Manufacturers. Use when categories were missing, had wrong hierarchy, or new categories were added in OpenCart.', 'octowoo' ); ?>">
                         🗂 <?php esc_html_e( 'Re-run Categories + Brands', 'octowoo' ); ?>
                     </button>
+                    <button type="button" id="ow-btn-ml-precheck" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Scans WooCommerce and shows exactly how many categories, brands, and products are missing their Arabic/secondary-language translation — before you run multilingual. Zero DB writes.', 'octowoo' ); ?>">
+                        🔍 <?php esc_html_e( 'Check Multilingual Readiness', 'octowoo' ); ?>
+                    </button>
                     <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary"
                         title="<?php esc_attr_e( 'Re-runs the Arabic / secondary language translation pass for all products, categories, and brands using WPML or Polylang. Use after entering Arabic descriptions in OpenCart, or if translations were missing.', 'octowoo' ); ?>">
                         🌐 <?php esc_html_e( 'Re-run Multilingual / Arabic', 'octowoo' ); ?>
@@ -376,6 +380,14 @@ if ( $_ow_show_wizard ) {
                         🔍 <?php esc_html_e( 'Re-run SEO + Redirects', 'octowoo' ); ?>
                     </button>
                 </div>
+            </div>
+
+            <!-- ── Multilingual Readiness Panel (shown after precheck) ──────── -->
+            <div id="ow-ml-precheck-panel" style="display:none;margin-bottom:10px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;">
+                <p style="margin:0 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;color:#0369a1;letter-spacing:.5px;">
+                    🔍 <?php esc_html_e( 'Multilingual Readiness — Scan Results', 'octowoo' ); ?>
+                </p>
+                <div id="ow-ml-precheck-body" style="font-size:12px;line-height:1.8;"></div>
             </div>
 
             <!-- ── GROUP C: Fix / Repair (targeted one-time fixes) ────────────── -->

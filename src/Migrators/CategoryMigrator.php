@@ -196,14 +196,30 @@ class CategoryMigrator extends AbstractMigrator {
         // 3. By name across ANY parent (catches moves/re-parents).
         if ( ! $existing_wc_id ) {
             global $wpdb;
-            // Check 1: term meta lookup — ignores parent so survives category re-parenting.
-            $by_meta = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT tm.term_id FROM {$wpdb->termmeta} tm
-                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
-                 WHERE tm.meta_key = '_octowoo_oc_id' AND tm.meta_value = %s
-                   AND tt.taxonomy = 'product_cat' LIMIT 1",
-                (string) $oc_id
-            ) );
+            // Check 1: term meta lookup filtered by WPML primary language.
+            // The JOIN on icl_translations ensures we pick the English primary term
+            // even when WPML field-sync has copied _octowoo_oc_id onto the Arabic stub.
+            // Without the language filter, LIMIT 1 could non-deterministically return
+            // the Arabic stub, causing the English category to be overwritten on re-run.
+            // The LEFT JOIN + IS NULL condition handles sites without WPML (no icl_ row).
+            $primary_locale = $this->primaryLocale();
+            $by_meta        = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "SELECT tm.term_id
+                     FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     LEFT JOIN {$wpdb->prefix}icl_translations icl
+                          ON icl.element_id   = tt.term_taxonomy_id
+                         AND icl.element_type  = 'tax_product_cat'
+                     WHERE tm.meta_key   = '_octowoo_oc_id'
+                       AND tm.meta_value = %s
+                       AND tt.taxonomy   = 'product_cat'
+                       AND (icl.language_code IS NULL OR icl.language_code = %s)
+                     ORDER BY tm.term_id ASC LIMIT 1",
+                    (string) $oc_id,
+                    $primary_locale
+                )
+            );
             if ( $by_meta > 0 ) {
                 $existing_wc_id = $by_meta;
                 $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );

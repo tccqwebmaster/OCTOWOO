@@ -613,6 +613,38 @@ class CheckpointManager {
         return $found;
     }
 
+    // ── Bulk cache warm-up ────────────────────────────────────────────────────
+
+    /**
+     * Bulk-load ALL id_map entries for one entity type into the in-memory cache
+     * in a single SQL query.  Call once at the top of a migrator's migrate() so
+     * every subsequent getWcId() for that entity is a free pass-0 (in-memory)
+     * lookup instead of a DB round-trip per item.
+     *
+     * Example: 6,035 products → 1 query instead of 6,035.
+     *
+     * @param string $entity Entity type, e.g. 'product', 'manufacturer', 'category'.
+     */
+    public function warmIdMapCache( string $entity ): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'octowoo_id_map';
+        $rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT oc_id, wc_id FROM `{$table}` WHERE entity_type = %s",
+                $entity
+            ),
+            ARRAY_A
+        );
+        foreach ( (array) $rows as $row ) {
+            $cache_key = $entity . ':' . (int) $row['oc_id'];
+            if ( ! array_key_exists( $cache_key, self::$id_map_cache ) ) {
+                // Only set entries not already in cache — a same-request saveIdMap()
+                // call takes precedence over the persisted value.
+                self::$id_map_cache[ $cache_key ] = (int) $row['wc_id'];
+            }
+        }
+    }
+
     // ── Internal ──────────────────────────────────────────────────────────────
 
     private function updateStatus( string $migrator, string $status ): void {

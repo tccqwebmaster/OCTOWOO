@@ -89,6 +89,8 @@ class AjaxHandler {
             'octowoo_run_cron_now',
             'octowoo_repair_categories',
             'octowoo_audit_purge',
+            // v2.5.43 additions.
+            'octowoo_multilingual_precheck',
         ];
 
         foreach ( $actions as $action ) {
@@ -309,6 +311,10 @@ class AjaxHandler {
 
             case 'octowoo_audit_purge':
                 $this->actionAuditPurge();
+                break;
+
+            case 'octowoo_multilingual_precheck':
+                $this->actionMultilingualPrecheck();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -2010,6 +2016,114 @@ class AjaxHandler {
 
         wp_send_json_success( [ 'audit' => $audit, 'force' => $force ] );
     }
+
+    // ── Action: multilingual pre-check ────────────────────────────────────────
+
+    /**
+     * Scan WooCommerce for missing secondary-language (Arabic) WPML translations
+     * and return counts per entity type — without touching any data.
+     *
+     * Returns:
+     *  { categories: {total,translated,missing},
+     *    brands:      {total,translated,missing},
+     *    products:    {total,translated,missing},
+     *    pages:       {total,translated,missing},
+     *    secondary_lang: string,
+     *    ready: bool }
+     */
+    private function actionMultilingualPrecheck(): void {
+        global $wpdb;
+        $config         = AdminPage::getConfig();
+        $primary_lang   = $config['multilingual']['primary_locale']  ?? 'en';
+        $secondary_lang = $config['multilingual']['secondary_locale'] ?? 'ar';
+
+        // Detect active brand taxonomy (same logic as WpmlIntegration).
+        $brand_taxonomies = [ 'pwb-brand', 'yith_product_brand', 'pa_brand', 'product_brand', 'brand' ];
+        $brand_tax        = '';
+        foreach ( $brand_taxonomies as $tax ) {
+            if ( taxonomy_exists( $tax ) ) { $brand_tax = $tax; break; }
+        }
+
+        // ── Helper: count terms with/without secondary translation ────────────
+        $term_counts = static function ( string $taxonomy, string $pri, string $sec ) use ( $wpdb ): array {
+            $et    = 'tax_' . $taxonomy;
+            $total = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} tt
+                 JOIN {$wpdb->prefix}icl_translations icl
+                      ON icl.element_id = tt.term_taxonomy_id AND icl.element_type = %s
+                 WHERE tt.taxonomy = %s AND icl.language_code = %s",
+                $et, $taxonomy, $pri
+            ) );
+            $translated = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT COUNT(DISTINCT p.trid)
+                 FROM {$wpdb->prefix}icl_translations p
+                 JOIN {$wpdb->prefix}icl_translations s
+                      ON s.trid = p.trid AND s.language_code = %s AND s.element_type = %s
+                 WHERE p.language_code = %s AND p.element_type = %s",
+                $sec, $et, $pri, $et
+            ) );
+            return [ 'total' => $total, 'translated' => $translated, 'missing' => max( 0, $total - $translated ) ];
+        };
+
+        // ── Products ──────────────────────────────────────────────────────────
+        // Primary products = no _octowoo_translation_of meta.
+        $prod_total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type = 'product' AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of')"
+        );
+        $prod_translated = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type = 'product' AND p.post_status IN ('publish','draft')
+               AND EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of')"
+        );
+        $prod_missing    = max( 0, $prod_total - $prod_translated );
+
+        // ── Pages ─────────────────────────────────────────────────────────────
+        $page_total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type = 'page' AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of')"
+        );
+        $page_translated = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type = 'page' AND p.post_status IN ('publish','draft')
+               AND EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of')"
+        );
+
+        $cat_data   = $term_counts( 'product_cat', $primary_lang, $secondary_lang );
+        $brand_data = $brand_tax !== '' ? $term_counts( $brand_tax, $primary_lang, $secondary_lang )
+                                        : [ 'total' => 0, 'translated' => 0, 'missing' => 0 ];
+
+        $total_missing = $cat_data['missing'] + $brand_data['missing']
+                       + $prod_missing + max( 0, $page_total - $page_translated );
+
+        wp_send_json_success( [
+            'secondary_lang' => $secondary_lang,
+            'categories'     => $cat_data,
+            'brands'         => $brand_data,
+            'products'       => [
+                'total'      => $prod_total,
+                'translated' => $prod_translated,
+                'missing'    => $prod_missing,
+            ],
+            'pages'          => [
+                'total'      => $page_total,
+                'translated' => $page_translated,
+                'missing'    => max( 0, $page_total - $page_translated ),
+            ],
+            'ready'          => ( $total_missing === 0 ),
+        ] );
+    }
+
 
 
     // ── Action: detect OpenCart languages ─────────────────────────────────────

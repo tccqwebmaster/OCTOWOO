@@ -2292,6 +2292,140 @@ class WpmlIntegration extends AbstractMigrator {
         return null;
     }
 
+    // ── Multilingual readiness pre-check ─────────────────────────────────────
+
+    /**
+     * Scan WooCommerce content and report how many items are missing their
+     * secondary-language (Arabic) WPML translation.
+     *
+     * Call this BEFORE running the multilingual migrator so the admin can see
+     * exactly what will happen.  Returns zero-cost data — no OC DB queries.
+     *
+     * @param array $config  Full resolved plugin config.
+     * @return array {
+     *   categories:   { total: int, translated: int, missing: int },
+     *   brands:       { total: int, translated: int, missing: int },
+     *   products:     { total: int, translated: int, missing: int },
+     *   pages:        { total: int, translated: int, missing: int },
+     *   secondary_lang: string,   // e.g. 'ar'
+     *   ready:        bool,       // true when missing across all types = 0
+     * }
+     */
+    public function multilingual_precheck( array $config ): array {
+        global $wpdb;
+
+        $primary_lang   = $config['multilingual']['primary_locale']   ?? 'en';
+        $secondary_lang = $config['multilingual']['secondary_locale']  ?? 'ar';
+        $brand_tax      = $this->detectActiveBrandTaxonomy();
+
+        $check_term_type = static function ( string $taxonomy, string $pri_lang, string $sec_lang ) use ( $wpdb ): array {
+            $element_type = 'tax_' . $taxonomy;
+
+            // Count primary-language terms.
+            $total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} tt
+                     JOIN {$wpdb->prefix}icl_translations icl
+                          ON icl.element_id  = tt.term_taxonomy_id
+                         AND icl.element_type = %s
+                     WHERE tt.taxonomy       = %s
+                       AND icl.language_code = %s",
+                    $element_type, $taxonomy, $pri_lang
+                )
+            );
+
+            // Count primary terms that HAVE a secondary-language translation.
+            $translated = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prepare(
+                    "SELECT COUNT(DISTINCT icl_pri.trid)
+                     FROM {$wpdb->prefix}icl_translations icl_pri
+                     JOIN {$wpdb->prefix}icl_translations icl_sec
+                          ON icl_sec.trid          = icl_pri.trid
+                         AND icl_sec.language_code  = %s
+                         AND icl_sec.element_type   = %s
+                     WHERE icl_pri.language_code    = %s
+                       AND icl_pri.element_type     = %s",
+                    $sec_lang, $element_type, $pri_lang, $element_type
+                )
+            );
+
+            return [
+                'total'      => $total,
+                'translated' => $translated,
+                'missing'    => max( 0, $total - $translated ),
+            ];
+        };
+
+        // Products: use _octowoo_translation_of meta to identify translated copies.
+        $prod_total = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'product'
+               AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id  = p.ID AND pm.meta_key = '_octowoo_translation_of'
+               )"
+        );
+
+        $prod_translated = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'product'
+               AND p.post_status IN ('publish','draft')
+               AND EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id  = p.ID AND pm.meta_key = '_octowoo_translation_of'
+               )"
+        );
+
+        // Pages.
+        $page_total = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'page'
+               AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of'
+               )"
+        );
+        $page_translated = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'page'
+               AND p.post_status IN ('publish','draft')
+               AND EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of'
+               )"
+        );
+
+        $cat_data   = $check_term_type( 'product_cat', $primary_lang, $secondary_lang );
+        $brand_data = ( $brand_tax !== '' )
+            ? $check_term_type( $brand_tax, $primary_lang, $secondary_lang )
+            : [ 'total' => 0, 'translated' => 0, 'missing' => 0 ];
+
+        $prod_data = [
+            'total'      => $prod_total,
+            'translated' => $prod_translated,
+            'missing'    => max( 0, $prod_total - $prod_translated ),
+        ];
+        $page_data = [
+            'total'      => $page_total,
+            'translated' => $page_translated,
+            'missing'    => max( 0, $page_total - $page_translated ),
+        ];
+
+        $total_missing = $cat_data['missing'] + $brand_data['missing']
+                       + $prod_data['missing'] + $page_data['missing'];
+
+        return [
+            'secondary_lang' => $secondary_lang,
+            'categories'     => $cat_data,
+            'brands'         => $brand_data,
+            'products'       => $prod_data,
+            'pages'          => $page_data,
+            'ready'          => ( $total_missing === 0 ),
+        ];
+    }
+
     // ── Static registration helper ────────────────────────────────────────────
 
     /**

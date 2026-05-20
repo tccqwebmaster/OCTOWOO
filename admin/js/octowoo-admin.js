@@ -192,6 +192,7 @@
         $('#ow-btn-products-images').on('click', startProductsImagesRecovery);
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
+        $('#ow-btn-ml-precheck').on('click', runMultilingualPrecheck);
         $('#ow-btn-fix-secondary-content').on('click', function() {
             var $b = $(this);
             $b.prop('disabled', true).text('Fixing...');
@@ -657,7 +658,70 @@
     function startCategoriesManufacturersRecovery() { startMigration(false, false, 'categories,manufacturers',      'Categories + Manufacturers',    true); }
     function startMultilingualRecovery()         { startMigration(false, false, 'multilingual',                     'Multilingual-only Recovery',    true); }
 
-    /* ── Abort ───────────────────────────────────────────────────────────── */
+    /* ── Multilingual pre-check ─────────────────────────────────────────── */
+    function runMultilingualPrecheck() {
+        var $btn   = $('#ow-btn-ml-precheck');
+        var $panel = $('#ow-ml-precheck-panel');
+        var $body  = $('#ow-ml-precheck-body');
+
+        $btn.prop('disabled', true).text('Scanning…');
+        $panel.hide();
+
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_multilingual_precheck', nonce: octoWoo.nonce })
+        .done(function(r) {
+            if (!r || !r.success) {
+                showToast((r && r.data && r.data.message) || 'Precheck failed.', 'error');
+                return;
+            }
+            var d = r.data;
+            var lang = (d.secondary_lang || 'ar').toUpperCase();
+
+            function row(label, counts) {
+                var ok   = counts.missing === 0;
+                var icon = ok ? '✅' : '⚠️';
+                var pct  = counts.total > 0
+                    ? Math.round((counts.translated / counts.total) * 100) + '%'
+                    : '—';
+                var missing = ok ? '<span style="color:#16a34a">All translated</span>'
+                    : '<span style="color:#dc2626"><strong>' + counts.missing + ' missing</strong></span>';
+                return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid #e0f2fe;">'
+                    + '<span style="min-width:20px;text-align:center">' + icon + '</span>'
+                    + '<span style="min-width:130px;font-weight:600">' + label + '</span>'
+                    + '<span style="min-width:90px;color:#555">' + counts.translated + ' / ' + counts.total + ' (' + pct + ')</span>'
+                    + '<span>' + missing + '</span>'
+                    + '</div>';
+            }
+
+            var html = '<div style="font-size:12px;margin-bottom:8px;color:#0369a1;">'
+                + 'Secondary language: <strong>' + lang + '</strong>'
+                + (d.ready ? ' &nbsp;|&nbsp; <span style="color:#16a34a;font-weight:700">✅ All items translated — ready!</span>' : '')
+                + '</div>';
+
+            html += row('Categories',  d.categories);
+            if (d.brands && d.brands.total > 0) {
+                html += row('Brands',  d.brands);
+            }
+            html += row('Products',   d.products);
+            if (d.pages && d.pages.total > 0) {
+                html += row('Pages',  d.pages);
+            }
+
+            if (!d.ready) {
+                var totalMissing = d.categories.missing + (d.brands ? d.brands.missing : 0)
+                    + d.products.missing + (d.pages ? d.pages.missing : 0);
+                html += '<div style="margin-top:8px;padding:6px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:4px;color:#dc2626;font-weight:600;">'
+                    + '⚠️ ' + totalMissing + ' items need translation. Click <strong>Re-run Multilingual / Arabic</strong> to translate them.'
+                    + '</div>';
+            }
+
+            $body.html(html);
+            $panel.slideDown(200);
+        })
+        .fail(function() { showToast('Precheck request failed.', 'error'); })
+        .always(function() { $btn.prop('disabled', false).text('🔍 Check Multilingual Readiness'); });
+    }
+
+
     function abortMigration() {
         var runId = currentRunId || octoWoo.activeRunId;
         if (!runId) { showToast('No active migration to abort.', 'warning'); return; }
@@ -1143,7 +1207,7 @@
     ════════════════════════════════════════════════════════════════════ */
     function setButtonState(state) {
         var $btnDemo     = $('#ow-btn-demo');
-        var $btnRecovery = $('#ow-btn-images-only,#ow-btn-products-images,#ow-btn-cats-manufacturers,#ow-btn-multilingual,#ow-btn-cleanup-ml-terms,#ow-btn-repair-order-items,#ow-btn-rerun-seo');
+        var $btnRecovery = $('#ow-btn-images-only,#ow-btn-products-images,#ow-btn-cats-manufacturers,#ow-btn-multilingual,#ow-btn-ml-precheck,#ow-btn-cleanup-ml-terms,#ow-btn-repair-order-items,#ow-btn-rerun-seo');
         var $btnBgStart  = $('#ow-btn-start-bg,#ow-btn-resume-bg');
 
         if (state === 'running') {
