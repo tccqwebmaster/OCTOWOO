@@ -58,6 +58,9 @@ class CustomerMigrator extends AbstractMigrator {
 		$existing_emails    = $this->buildExistingEmailMap();    // lower(email) → user_id
 		$existing_usernames = $this->buildExistingUsernameSet(); // username → true
 
+		// Warm customer id_map so re-run duplicate checks are free in-memory lookups.
+		$this->checkpoint->warmIdMapCache( self::MAP_KEY );
+
 		// Suspend per-row object-cache invalidation; flush once at the end.
 		wp_suspend_cache_invalidation( true );
 

@@ -97,6 +97,13 @@ class OrderMigrator extends AbstractMigrator {
 		remove_all_actions( 'woocommerce_payment_complete' );
 		remove_all_actions( 'woocommerce_thankyou' );
 
+		// Warm id_map caches in one query each so order line-item product lookups
+		// (getWcId('product', $oc_prod)) and customer lookups are free in-memory hits.
+		// Without this, every order item does a DB query → very slow for large stores.
+		$this->checkpoint->warmIdMapCache( 'product' );
+		$this->checkpoint->warmIdMapCache( 'customer' );
+		$this->checkpoint->warmIdMapCache( self::MAP_KEY );
+
 		$item_callback = function ( array $row ) use ( $currencies, $has_history, $has_options ): bool {
 			return $this->processOrder( $row, $currencies, $has_history, $has_options );
 		};
@@ -123,7 +130,43 @@ class OrderMigrator extends AbstractMigrator {
 	private function processOrder( array $row, array $currencies, bool $has_history, bool $has_options ): bool {
 		$oc_id = (int) $row['order_id'];
 
+		// Duplicate check — id_map first (in-memory after warmIdMapCache), then
+		// meta fallback so re-runs after id_map reset never create duplicate orders.
 		$existing = $this->checkpoint->getWcId( self::MAP_KEY, $oc_id );
+
+		if ( ! $existing ) {
+			// Meta fallback: find WC order that has _octowoo_oc_order_id = $oc_id.
+			// Covers HPOS and legacy post-table orders.
+			global $wpdb;
+			$by_meta = null;
+
+			// HPOS (wc_orders_meta table, WC 7.1+).
+			$hpos_table = $wpdb->prefix . 'wc_orders_meta';
+			if ( $wpdb->get_var( "SHOW TABLES LIKE '{$hpos_table}'" ) === $hpos_table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				$by_meta = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					"SELECT order_id FROM `{$hpos_table}` WHERE meta_key = '_octowoo_oc_order_id' AND meta_value = %s LIMIT 1",
+					(string) $oc_id
+				) );
+			}
+
+			// Legacy post-table fallback.
+			if ( ! $by_meta ) {
+				$by_meta = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					"SELECT pm.post_id FROM {$wpdb->postmeta} pm
+					 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+					 WHERE pm.meta_key = '_octowoo_oc_order_id' AND pm.meta_value = %s
+					   AND p.post_type = 'shop_order' LIMIT 1",
+					(string) $oc_id
+				) );
+			}
+
+			if ( $by_meta ) {
+				$existing = (int) $by_meta;
+				$this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing );
+				$this->logger->info( "[orders] Found existing WC order #{$existing} by meta for OC #{$oc_id} – backfilled id_map." );
+			}
+		}
+
 		if ( $existing ) {
 			if ( $this->onDuplicate() === 'update' ) {
 				$this->relinkOrderItems( $existing, $this->fetchOrderProductsFor( $oc_id, $has_options ) );
