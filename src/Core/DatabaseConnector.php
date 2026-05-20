@@ -103,9 +103,6 @@ class DatabaseConnector {
             \PDO::ATTR_EMULATE_PREPARES   => false,
             // Force UTF-8mb4 so Arabic content is preserved.
             \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
-            // Ask MySQL driver to auto-reconnect on dropped connections.
-            // This is a best-effort hint; query() also has explicit retry logic.
-            \PDO::MYSQL_ATTR_RECONNECT    => true,
         ];
 
         try {
