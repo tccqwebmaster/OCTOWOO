@@ -1,7 +1,7 @@
 <?php
 /**
- * Plugin Name:       OctoWoo – OpenCart to WooCommerce Migrator
- * Plugin URI:        https://octowoo.com
+ * Plugin Name:       CartShift – OpenCart to WooCommerce Migration
+ * Plugin URI:        https://woocommerce.com/products/cartshift-opencart-migration/
  * Description:       Production-ready migration tool: migrate OpenCart 1/2/3/4 data
  *                    (categories, products, images, attributes, filters, downloads, tags,
  *                    manufacturers/brands, customers (inc. password compat.), orders, coupons,
@@ -11,10 +11,10 @@
  *                    WP-CLI, settings export/import, email reports, and an add-on hook system.
  * Version:           2.5.50
  * Requires at least: 5.8
- * Requires PHP:      7.4
+ * Requires PHP:      8.0
  * Requires Plugins:  woocommerce
- * Author:            OctoWoo Team
- * Author URI:        https://octowoo.com
+ * Author:            CartShift
+ * Author URI:        https://woocommerce.com/products/cartshift-opencart-migration/
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       octowoo
@@ -92,7 +92,7 @@ add_action( 'plugins_loaded', function (): void {
 		add_action( 'admin_notices', function (): void {
 			printf(
 				'<div class="notice notice-error"><p>%s</p></div>',
-				esc_html__( 'OctoWoo requires WooCommerce to be installed and active.', 'octowoo' )
+				esc_html__( 'CartShift requires WooCommerce to be installed and active.', 'octowoo' )
 			);
 		} );
 		return;

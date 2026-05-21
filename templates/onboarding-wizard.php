@@ -1,6 +1,6 @@
 <?php
 /**
- * OctoWoo – First-run onboarding wizard.
+ * CartShift – First-run onboarding wizard.
  *
  * Shown on first activation (no octowoo_config saved yet).
  * Rendered as a fixed-position full-screen overlay from within admin-dashboard.php.
@@ -10,7 +10,7 @@
  *  2 — Database credentials + inline Test Connection
  *  3 — System Check + Finish
  *
- * @package OctoWoo
+ * @package CartShift
  */
 
 defined( 'ABSPATH' ) || exit;

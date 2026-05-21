@@ -40,8 +40,8 @@ class AdminPage {
 
     public function registerMenu(): void {
         add_menu_page(
-            __( 'OctoWoo Migration', 'octowoo' ),
-            __( 'OctoWoo', 'octowoo' ),
+            __( 'CartShift Migration', 'octowoo' ),
+            __( 'CartShift', 'octowoo' ),
             self::CAP,
             self::MENU_SLUG,
             [ $this, 'renderPage' ],
@@ -82,7 +82,7 @@ class AdminPage {
         } catch ( \Throwable $e ) {
             $cfg         = [];
             $cron_status = [ 'status' => 'error', 'error' => $e->getMessage() ];
-            error_log( '[OctoWoo] enqueueAssets error: ' . $e->getMessage() );
+            error_log( '[CartShift] enqueueAssets error: ' . $e->getMessage() );
         }
 
         wp_localize_script( 'octowoo-admin', 'octoWoo', [
@@ -102,8 +102,8 @@ class AdminPage {
                 'aborted'      => __( 'Migration aborted.', 'octowoo' ),
                 'confirmAbort' => __( 'Are you sure you want to abort the migration?', 'octowoo' ),
                 'confirmReset' => __( 'Delete all migration progress and ID map? This cannot be undone.', 'octowoo' ),
-                'confirmPurge' => __( 'Purge the selected entity types? Only OctoWoo-tagged items will be deleted.', 'octowoo' ),
-                'confirmForce' => __( 'FORCE PURGE will delete ALL WooCommerce data, including items not created by OctoWoo. Are you absolutely sure?', 'octowoo' ),
+                'confirmPurge' => __( 'Purge the selected entity types? Only CartShift-tagged items will be deleted.', 'octowoo' ),
+                'confirmForce' => __( 'FORCE PURGE will delete ALL WooCommerce data, including items not created by CartShift. Are you absolutely sure?', 'octowoo' ),
             ],
         ] );
     }
@@ -126,7 +126,7 @@ class AdminPage {
             ob_end_clean();
             printf(
                 '<div class="notice notice-error" style="margin:20px 0;padding:16px;">' .
-                '<h2>OctoWoo — Template Error (v%s)</h2>' .
+                '<h2>CartShift — Template Error (v%s)</h2>' .
                 '<p><strong>%s</strong></p>' .
                 '<p>File: %s line %d</p>' .
                 '<pre style="overflow:auto;font-size:11px;background:#f0f0f0;padding:10px;">%s</pre>' .
@@ -268,7 +268,7 @@ class AdminPage {
         } else {
             global $wpdb;
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-            error_log( 'OctoWoo: settings save failed. DB error: ' . $wpdb->last_error );
+            error_log( 'CartShift: settings save failed. DB error: ' . $wpdb->last_error );
             $redirect_params['save_error'] = '1';
         }
 

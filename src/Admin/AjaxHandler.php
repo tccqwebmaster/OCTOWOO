@@ -2,7 +2,7 @@
 /**
  * AJAX handler.
  *
- * Handles all admin-ajax.php requests for the OctoWoo dashboard.
+ * Handles all admin-ajax.php requests for the CartShift dashboard.
  *
  * Actions registered:
  *  octowoo_start_migration   – launch a new migration run (or resume).
@@ -463,7 +463,7 @@ class AjaxHandler {
                     }
                     // Checkpoint reset logged via error_log for debugging.
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions
-                    error_log( '[OctoWoo] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id );
+                    error_log( '[CartShift] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id );
                 }
             }
         }
@@ -753,7 +753,7 @@ class AjaxHandler {
                             $text = 'Fatal error (type: ' . gettype( $message ) . ') — check server error log.';
                         }
 
-                        // Persist the real error to the OctoWoo Logs tab.
+                        // Persist the real error to the CartShift Logs tab.
                         try {
                             $run    = \OctoWoo\Core\CheckpointManager::getActiveRunId()
                                     ?? (string) get_option( 'octowoo_last_run_id', 'fatal' );
@@ -790,7 +790,7 @@ class AjaxHandler {
                 if ( headers_sent() ) {
                     return;
                 }
-                // Log the fatal error to OctoWoo's own log table.
+                // Log the fatal error to CartShift's own log table.
                 try {
                     $run = \OctoWoo\Core\CheckpointManager::getActiveRunId() ?? get_option( 'octowoo_last_run_id', 'fatal' );
                     $logger = new \OctoWoo\Core\Logger( $run );
@@ -1024,7 +1024,7 @@ class AjaxHandler {
     }
 
     /**
-     * Repair order-item → product links for all OctoWoo-migrated orders.
+     * Repair order-item → product links for all CartShift-migrated orders.
      *
      * Processes orders in batches. Each AJAX call handles one batch and returns
      * done=false until the last batch, at which point done=true is returned and
@@ -1085,7 +1085,7 @@ class AjaxHandler {
                 $oc_model = trim( (string) $item->get_meta( '_octowoo_oc_product_model', true ) );
 
                 if ( $oc_prod <= 0 ) {
-                    continue; // Not tracked by OctoWoo.
+                    continue; // Not tracked by CartShift.
                 }
 
                 // Fast path: id_map lookup.
@@ -1804,7 +1804,7 @@ class AjaxHandler {
             }
         }
         foreach ( $entity_errors as $err ) {
-            $hints[] = '⚠ Entity error — ' . $err . ' (check OctoWoo log for details)';
+            $hints[] = '⚠ Entity error — ' . $err . ' (check CartShift log for details)';
         }
 
         wp_send_json_success( [
@@ -1904,7 +1904,7 @@ class AjaxHandler {
     // ── Action: repair product→category assignments ───────────────────────────
 
     /**
-     * Re-assigns WooCommerce product categories for ALL products imported by OctoWoo.
+     * Re-assigns WooCommerce product categories for ALL products imported by CartShift.
      *
      * This fixes the common problem where categories were migrated AFTER products
      * (wrong order), leaving products uncategorised. Safe to run multiple times.
@@ -2512,7 +2512,7 @@ class AjaxHandler {
 
         $oc_id = (int) get_post_meta( $wc_id, '_octowoo_oc_id', true );
         if ( ! $oc_id ) {
-            wp_send_json_error( [ 'message' => "WC product #{$wc_id} has no _octowoo_oc_id meta. Was it migrated by OctoWoo?" ] );
+            wp_send_json_error( [ 'message' => "WC product #{$wc_id} has no _octowoo_oc_id meta. Was it migrated by CartShift?" ] );
         }
 
         // Connect to OC.
@@ -2691,7 +2691,7 @@ class AjaxHandler {
     private function actionRepairDimensions(): void {
         global $wpdb;
 
-        // Find all OctoWoo-migrated products.
+        // Find all CartShift-migrated products.
         $product_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             "SELECT DISTINCT post_id FROM {$wpdb->postmeta}
              WHERE meta_key = '_octowoo_oc_id'"
@@ -2753,7 +2753,7 @@ class AjaxHandler {
                 : 'WP-Cron enabled ✔',
         ];
 
-        // 3. Any stuck/failed OctoWoo AS jobs?
+        // 3. Any stuck/failed CartShift AS jobs?
         $stuck = 0;
         $failed_jobs = 0;
         if ( $as_ok && class_exists( '\ActionScheduler_Store' ) ) {

@@ -1,4 +1,4 @@
-=== OctoWoo – OpenCart to WooCommerce Migrator ===
+=== CartShift – OpenCart to WooCommerce Migrator ===
 Contributors: octowoo
 Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
@@ -15,7 +15,7 @@ Move your entire OpenCart store to WooCommerce — products, customers, orders, 
 
 == Description ==
 
-**OctoWoo** is a production-ready migration plugin that transfers your complete OpenCart (v1/v2/v3/v4) store into WooCommerce. Every major entity is supported:
+**CartShift** is a production-ready migration plugin that transfers your complete OpenCart (v1/v2/v3/v4) store into WooCommerce. Every major entity is supported:
 
 * **Products** — simple and variable (attributes, variations, sale prices, stock).
 * **Categories** — full hierarchy, SEO slugs, category thumbnails.
@@ -81,7 +81,7 @@ Tested with OpenCart 1.x, 2.x, 3.x, and 4.x (auto-detected).
 
 1. Upload the `octowoo` folder to `/wp-content/plugins/`.
 2. Activate the plugin via **Plugins → Installed Plugins**.
-3. Go to **WooCommerce → OctoWoo Migration**.
+3. Go to **WooCommerce → CartShift Migration**.
 4. Click **Run System Check** to verify your server meets all requirements.
 5. Configure your OpenCart database connection in the **Settings** tab.
 6. Select the entities you want to migrate and click **Start Migration**.
@@ -106,7 +106,7 @@ Tested with OpenCart 1.x, 2.x, 3.x, and 4.x (auto-detected).
 
 = Does this work with OpenCart 4? =
 
-Yes. OctoWoo auto-detects the OpenCart version (1–4). OC4-specific features like product bundles are handled separately and require the WooCommerce Product Bundles plugin.
+Yes. CartShift auto-detects the OpenCart version (1–4). OC4-specific features like product bundles are handled separately and require the WooCommerce Product Bundles plugin.
 
 = Can I run the migration multiple times? =
 
@@ -114,19 +114,19 @@ Yes. The **on_duplicate** setting controls what happens when an entity already e
 
 = What if the migration stops halfway? =
 
-Click **Resume**. OctoWoo records the last successfully processed ID for every migrator. Resuming restarts each migrator from exactly that point — no data is processed twice.
+Click **Resume**. CartShift records the last successfully processed ID for every migrator. Resuming restarts each migrator from exactly that point — no data is processed twice.
 
 = Can I undo a migration? =
 
-Yes. Use the **Purge** section to delete migrated entities by type. By default only items created by OctoWoo (tagged with `_octowoo_oc_id`) are removed. A **Force** option removes all entities of that type.
+Yes. Use the **Purge** section to delete migrated entities by type. By default only items created by CartShift (tagged with `_octowoo_oc_id`) are removed. A **Force** option removes all entities of that type.
 
 = Does it migrate customer passwords? =
 
-Optionally. Enable **Try OC password hash on login** in Settings. OctoWoo stores the OpenCart password hash in user meta and validates it on the customer's first WP login. On successful validation the hash is automatically upgraded to WordPress's own format.
+Optionally. Enable **Try OC password hash on login** in Settings. CartShift stores the OpenCart password hash in user meta and validates it on the customer's first WP login. On successful validation the hash is automatically upgraded to WordPress's own format.
 
 = Will my Google rankings be affected? =
 
-No, if you run the SEO migrator. OctoWoo's `SeoMigrator` preserves product/category slugs and writes 301 redirects for old OpenCart URLs. Arabic, Persian, CJK, and all Unicode slugs are handled correctly.
+No, if you run the SEO migrator. CartShift's `SeoMigrator` preserves product/category slugs and writes 301 redirects for old OpenCart URLs. Arabic, Persian, CJK, and all Unicode slugs are handled correctly.
 
 = What if the migration is stuck? =
 
@@ -134,11 +134,11 @@ Check the **Logs** tab for error messages. Reduce **Batch Size** in Settings (tr
 
 = Does it support WPML? =
 
-Yes. When **Multilingual** is enabled and both WPML and a secondary language are configured, OctoWoo runs a translation pass after all entities are migrated.
+Yes. When **Multilingual** is enabled and both WPML and a secondary language are configured, CartShift runs a translation pass after all entities are migrated.
 
 = Will it work with WooCommerce HPOS? =
 
-Yes. OctoWoo uses the WooCommerce Orders API (`wc_create_order()`, `wc_get_orders()`) everywhere, which is HPOS-compatible. HPOS compatibility is declared in the plugin header.
+Yes. CartShift uses the WooCommerce Orders API (`wc_create_order()`, `wc_get_orders()`) everywhere, which is HPOS-compatible. HPOS compatibility is declared in the plugin header.
 
 = Do I need special server access? =
 
@@ -146,7 +146,7 @@ No. The migration can run entirely within the WordPress admin over AJAX. For lar
 
 = Is the source OpenCart store affected? =
 
-No. OctoWoo reads from your OpenCart database but never writes to it.
+No. CartShift reads from your OpenCart database but never writes to it.
 
 == Screenshots ==
 
@@ -220,7 +220,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Updated:** Upgrade notice updated for latest releases.
 
 = 2.5.7 =
-* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The OctoWoo completion summary email is still delivered.
+* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The CartShift completion summary email is still delivered.
 * **Added:** 🔕 "Suppress emails during migration" toggle in Migration Options (default: ON). Survives across background/chunked AJAX requests via a transient.
 
 = 2.5.6 =
@@ -248,7 +248,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Fixed:** `purgeProducts(force)` could delete media library images shared with theme builder posts. Added safety subquery excluding shared attachments.
 * **Fixed:** `purgeCategories()` config key typo (`oc_db` vs `db`) — category transient was never cleared after purge.
 * **Fixed:** `resetAutoIncrements()` now only runs in force mode and only on empty tables.
-* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-OctoWoo) item warnings, and safety notes.
+* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-CartShift) item warnings, and safety notes.
 
 = 2.5.3 =
 * **Fixed:** `PolylangIntegration` was reading wrong meta keys for product translations (was reading `_octowoo_title_ar` / `_octowoo_desc_ar` which are InformationMigrator keys that don't exist on products). All 4 passes now use correct keys.
@@ -296,7 +296,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Added:** Toast notification system — replaced all `window.alert()` and `window.confirm()` calls with styled in-page slide-in toast notifications. No more browser dialog popups.
 * **Added:** Real-time ETA display in the progress table — shows "~X min remaining" next to each migrator's progress bar during active migration.
 * **Added:** **Download Logs** button in the Logs tab — exports the current run's log entries as a `.txt` file without leaving the page.
-* **Added:** **Export Settings** button — downloads your full OctoWoo configuration as a JSON file.
+* **Added:** **Export Settings** button — downloads your full CartShift configuration as a JSON file.
 * **Added:** **Import Settings** button — restores configuration from a previously exported JSON file.
 * **Added:** Migration summary email sent to admin email address when a background migration completes successfully.
 * **Added:** `LICENSE.txt` at plugin root (GPL-2.0-or-later full text) — required by WP.org and WC.com submission guidelines.
@@ -330,7 +330,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Fixed:** ManufacturerMigrator was calling `assignManufacturersToProducts()` after every chunk, causing timeouts on large stores.
 
 = 2.4.9 =
-* **Fixed:** Purge now detects WooCommerce items with no OctoWoo tag and shows a clear warning.
+* **Fixed:** Purge now detects WooCommerce items with no CartShift tag and shows a clear warning.
 
 = 2.4.8 =
 * **Fixed:** Purge now backfills missing `_octowoo_oc_id` meta from the `octowoo_id_map` table before deleting.
@@ -406,7 +406,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Updated:** Upgrade notice updated for latest releases.
 
 = 2.5.7 =
-* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The OctoWoo completion summary email is still delivered.
+* **Added:** Email suppressor — all WordPress and WooCommerce emails (new account, new order, order status changes) are automatically blocked during migration. Prevents flooding customers with unsolicited emails when migrating thousands of orders and customers. The CartShift completion summary email is still delivered.
 * **Added:** 🔕 "Suppress emails during migration" toggle in Migration Options (default: ON). Survives across background/chunked AJAX requests via a transient.
 
 = 2.5.6 =
@@ -434,7 +434,7 @@ No. OctoWoo reads from your OpenCart database but never writes to it.
 * **Fixed:** `purgeProducts(force)` could delete media library images shared with theme builder posts. Added safety subquery excluding shared attachments.
 * **Fixed:** `purgeCategories()` config key typo (`oc_db` vs `db`) — category transient was never cleared after purge.
 * **Fixed:** `resetAutoIncrements()` now only runs in force mode and only on empty tables.
-* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-OctoWoo) item warnings, and safety notes.
+* **Added:** Pre-purge safety audit — "🔍 Audit Before Purge" button shows exactly what will be deleted before committing. Includes per-entity counts, extra (non-CartShift) item warnings, and safety notes.
 
 = 2.5.3 =
 * **Fixed:** `PolylangIntegration` was reading wrong meta keys for product translations (was reading `_octowoo_title_ar` / `_octowoo_desc_ar` which are InformationMigrator keys that don't exist on products). All 4 passes now use correct keys.

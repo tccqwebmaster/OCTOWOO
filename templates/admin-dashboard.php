@@ -44,7 +44,7 @@ if ( $_ow_show_wizard ) {
     <!-- Header -->
     <div class="ow-header">
         <div class="ow-logo">OW</div>
-        <h1><?php esc_html_e( 'OctoWoo – OpenCart → WooCommerce Migration', 'octowoo' ); ?></h1>
+        <h1><?php esc_html_e( 'CartShift – OpenCart → WooCommerce Migration', 'octowoo' ); ?></h1>
         <span style="margin-left:auto;font-size:12px;opacity:.65;align-self:center;">Version <?php echo esc_html( OCTOWOO_VERSION ); ?></span>
     </div>
 
@@ -565,7 +565,7 @@ if ( $_ow_run_id ) {
             <div class="ow-card">
                 <h2><?php esc_html_e( '📦 Data Source Mode', 'octowoo' ); ?></h2>
                 <p style="font-size:13px;color:#555;margin:0 0 14px;">
-                    <?php esc_html_e( 'Choose how OctoWoo reads your OpenCart data. Use "Remote" if WooCommerce can reach the OpenCart database directly. Use "Local Import" if your OpenCart database is on a different server (e.g. Cloudways) or behind a firewall — upload a SQL dump and/or a ZIP of the images folder instead.', 'octowoo' ); ?>
+                    <?php esc_html_e( 'Choose how CartShift reads your OpenCart data. Use "Remote" if WooCommerce can reach the OpenCart database directly. Use "Local Import" if your OpenCart database is on a different server (e.g. Cloudways) or behind a firewall — upload a SQL dump and/or a ZIP of the images folder instead.', 'octowoo' ); ?>
                 </p>
 
                 <?php $source = $config['source'] ?? 'remote'; ?>
@@ -780,7 +780,7 @@ if ( $_ow_run_id ) {
                         <!-- Diagnostic: check OC language content per product -->
                         <div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
                             <p style="margin:0 0 6px;font-size:12px;font-weight:600;">🔬 <?php esc_html_e( 'Diagnose: Why is Arabic description showing in English?', 'octowoo' ); ?></p>
-                            <p style="margin:0 0 8px;font-size:11px;color:#92400e;"><?php esc_html_e( 'IMPORTANT: Enter a WC product ID that was migrated by OctoWoo (has _octowoo_oc_id meta). Click "Show Migrated IDs" to see valid IDs.', 'octowoo' ); ?></p>
+                            <p style="margin:0 0 8px;font-size:11px;color:#92400e;"><?php esc_html_e( 'IMPORTANT: Enter a WC product ID that was migrated by CartShift (has _octowoo_oc_id meta). Click "Show Migrated IDs" to see valid IDs.', 'octowoo' ); ?></p>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                                 <input type="number" id="ow-diag-wc-id" placeholder="<?php esc_attr_e( 'WC Product ID', 'octowoo' ); ?>" style="padding:5px 10px;border:1px solid #ddd;border-radius:4px;font-size:12px;width:140px;">
                                 <button type="button" id="ow-btn-check-product-langs" class="ow-btn ow-btn-secondary" style="font-size:12px;padding:5px 14px;">
@@ -849,7 +849,7 @@ if ( $_ow_run_id ) {
                     <div style="display:flex;flex-direction:column;gap:8px;">
 
                         <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;"
-                               title="<?php esc_attr_e( 'Recommended: ON. Prevents WP and WooCommerce from sending new-account welcome emails, new-order notifications, and order-status emails to your customers and admin while migration runs. The OctoWoo completion-summary report is still delivered to the admin.', 'octowoo' ); ?>">
+                               title="<?php esc_attr_e( 'Recommended: ON. Prevents WP and WooCommerce from sending new-account welcome emails, new-order notifications, and order-status emails to your customers and admin while migration runs. The CartShift completion-summary report is still delivered to the admin.', 'octowoo' ); ?>">
                             <input type="checkbox" name="octowoo[migration][suppress_emails]" value="1"
                                    style="margin-top:2px;flex-shrink:0;"
                                 <?php checked( $config['migration']['suppress_emails'] ?? true ); ?>>
@@ -1268,5 +1268,5 @@ if ( $_ow_run_id ) {
 
 </div><!-- #octowoo-app -->
 <p style="color:#999;font-size:11px;text-align:right;margin-top:4px;">
-    <?php printf( esc_html__( 'OctoWoo v%s', 'octowoo' ), esc_html( OCTOWOO_VERSION ) ); ?>
+    <?php printf( esc_html__( 'CartShift v%s', 'octowoo' ), esc_html( OCTOWOO_VERSION ) ); ?>
 </p>

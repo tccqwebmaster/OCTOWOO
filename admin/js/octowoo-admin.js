@@ -1,5 +1,5 @@
 /**
- * OctoWoo – Admin Dashboard JavaScript  v2.4.70
+ * CartShift – Admin Dashboard JavaScript  v2.4.70
  *
  * Fixes in this version:
  *  - Replaced ALL window.alert() / window.confirm() with in-page toast notifications
@@ -16,7 +16,7 @@
     /* ── Guard: bail if octoWoo config object not injected by PHP ───────── */
     if ( typeof octoWoo === 'undefined' || ! octoWoo.ajaxUrl ) {
         // eslint-disable-next-line no-console
-        console.error( '[OctoWoo] octoWoo config object not found. wp_localize_script may have failed. Check WP admin errors.' );
+        console.error( '[CartShift] octoWoo config object not found. wp_localize_script may have failed. Check WP admin errors.' );
         return;
     }
 
@@ -223,7 +223,7 @@
             $.post(octoWoo.ajaxUrl, { action: 'octowoo_get_migrated_products', nonce: octoWoo.nonce })
             .done(function(res) {
                 if (!res || !res.success || !res.data.products.length) {
-                    $div.html('<span style="color:#c62828;">No OctoWoo-migrated products found. Run a migration first.</span>');
+                    $div.html('<span style="color:#c62828;">No CartShift-migrated products found. Run a migration first.</span>');
                     return;
                 }
                 var html = '<p style="margin:0 0 4px;font-size:11px;color:#555;">Recently migrated WC product IDs (click to check):</p>';
@@ -280,7 +280,7 @@
                     html += '<div style="margin-top:8px;padding:10px;background:#fef2f2;border:2px solid #c62828;border-radius:4px;">' +
                         '<strong style="color:#c62828;">⚠ ROOT CAUSE FOUND: Arabic description in OpenCart is the SAME LENGTH as English (' + arLang.desc_len + ' chars).</strong><br>' +
                         '<span style="font-size:11px;">This almost always means the Arabic language tab in OpenCart was populated by COPYING the English text, not translating it. ' +
-                        'OctoWoo correctly migrated the Arabic content from OC — but that content IS English text.<br>' +
+                        'CartShift correctly migrated the Arabic content from OC — but that content IS English text.<br>' +
                         '<strong>Fix: OpenCart Admin → Catalog → Products → Edit → click the Arabic tab → replace the English text with real Arabic content → Save → then run Multilingual Recovery.</strong></span>' +
                         '</div>';
                 } else if (arLang && (!arLang.desc_len || arLang.desc_len === 0)) {
@@ -1670,7 +1670,7 @@
 
     /* ════════════════════════════════════════════════════════════════════
        REPAIR PRODUCT CATEGORIES (v2.5.1)
-       Re-assigns category terms for all OctoWoo products.
+       Re-assigns category terms for all CartShift products.
        Fixes silent failures when ProductMigrator ran before CategoryMigrator.
     ════════════════════════════════════════════════════════════════════ */
     function repairCategories() {
@@ -2229,10 +2229,10 @@
             var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">';
             html += '<thead><tr style="background:#f5f5f5;">';
             html += '<th style="text-align:left;padding:5px 8px;border:1px solid #ddd;">Entity</th>';
-            html += '<th style="padding:5px 8px;border:1px solid #ddd;">OctoWoo items</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">CartShift items</th>';
             html += '<th style="padding:5px 8px;border:1px solid #ddd;">Total in WC</th>';
             html += '<th style="padding:5px 8px;border:1px solid #ddd;">Will delete</th>';
-            html += '<th style="padding:5px 8px;border:1px solid #ddd;">Extra (non-OctoWoo)</th>';
+            html += '<th style="padding:5px 8px;border:1px solid #ddd;">Extra (non-CartShift)</th>';
             html += '</tr></thead><tbody>';
 
             var totalWillDelete = 0;
@@ -2247,7 +2247,7 @@
                 var safeIcon = info.safe ? '✔' : '⚠';
                 var safeColor = info.safe ? '#2e7d32' : '#e65100';
                 var extraCell = extra > 0
-                    ? '<span style="color:#c62828;font-weight:700;">+' + extra + ' (non-OctoWoo!)</span>'
+                    ? '<span style="color:#c62828;font-weight:700;">+' + extra + ' (non-CartShift!)</span>'
                     : '<span style="color:#2e7d32;">0</span>';
 
                 html += '<tr>';
@@ -2269,8 +2269,8 @@
 
             var summaryColor = hasWarnings ? '#c62828' : '#2e7d32';
             var summaryText = hasWarnings
-                ? '⚠ ' + totalWillDelete.toLocaleString() + ' items will be deleted — some are NOT OctoWoo items. Review the Extra column carefully before proceeding.'
-                : '✔ ' + totalWillDelete.toLocaleString() + ' OctoWoo item(s) will be deleted. No non-OctoWoo data will be affected.';
+                ? '⚠ ' + totalWillDelete.toLocaleString() + ' items will be deleted — some are NOT CartShift items. Review the Extra column carefully before proceeding.'
+                : '✔ ' + totalWillDelete.toLocaleString() + ' CartShift item(s) will be deleted. No non-CartShift data will be affected.';
 
             html += '<div style="padding:8px 10px;border-radius:4px;background:' + (hasWarnings ? '#fef2f2' : '#edf7ed') + ';border:1px solid ' + summaryColor + ';color:' + summaryColor + ';font-size:12px;font-weight:600;">' + summaryText + '</div>';
 
@@ -2290,8 +2290,8 @@
 
         var forcePurge = forceTagged || $('#ow-purge-force').is(':checked');
         var confirmMsg = forcePurge
-            ? '⚠ Force purge: deletes ALL ' + entities.join(', ') + ' in WooCommerce, including items NOT created by OctoWoo. Continue?'
-            : 'Delete ' + entities.join(', ') + ' created by OctoWoo? Continue?';
+            ? '⚠ Force purge: deletes ALL ' + entities.join(', ') + ' in WooCommerce, including items NOT created by CartShift. Continue?'
+            : 'Delete ' + entities.join(', ') + ' created by CartShift? Continue?';
 
         owConfirm(confirmMsg, 'Yes, purge', 'Cancel')
         .then(function (confirmed) {
@@ -2301,7 +2301,7 @@
     }
 
     function runPurgeEverything() {
-        owConfirm('☢ FORCE PURGE: Delete ALL products, categories, customers, orders and other WooCommerce data — including items NOT created by OctoWoo. This is irreversible. Are you absolutely sure?', 'Yes, purge EVERYTHING', 'Cancel')
+        owConfirm('☢ FORCE PURGE: Delete ALL products, categories, customers, orders and other WooCommerce data — including items NOT created by CartShift. This is irreversible. Are you absolutely sure?', 'Yes, purge EVERYTHING', 'Cancel')
         .then(function (confirmed) {
             if (!confirmed) { return; }
             var all = ['products', 'categories', 'manufacturers', 'customers', 'orders', 'coupons', 'tags', 'filters', 'downloads', 'reviews', 'information'];
