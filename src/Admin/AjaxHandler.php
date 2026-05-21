@@ -1322,7 +1322,7 @@ class AjaxHandler {
         }
 
         $dest = SqlImporter::getImagesDir();
-        if ( ! wp_mkdir_p( $dest ) ) {
+        if ( ! @wp_mkdir_p( $dest ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
             wp_send_json_error( [ 'message' => 'Could not create images directory: ' . $dest ] );
         }
 
@@ -1357,7 +1357,7 @@ class AjaxHandler {
 
             $out_path = $dest . $entry;
             $out_dir  = dirname( $out_path );
-            wp_mkdir_p( $out_dir );
+            @wp_mkdir_p( $out_dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 
             if ( $entry_ext !== '' ) {
                 $content = $zip->getFromIndex( $i );
@@ -1429,7 +1429,7 @@ class AjaxHandler {
             $db_config['username'] = sanitize_text_field( $raw['username'] ?? '' );
             $db_config['prefix']   = sanitize_text_field( $raw['prefix']   ?? 'oc_' );
             $db_config['socket']   = sanitize_text_field( $raw['socket']   ?? '' );
-            $posted_pass = $raw['password'] ?? '';
+            $posted_pass = sanitize_text_field( wp_unslash( $raw['password'] ?? '' ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
             if ( $posted_pass !== '' && $posted_pass !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' ) {
                 $db_config['password'] = $posted_pass;
             }

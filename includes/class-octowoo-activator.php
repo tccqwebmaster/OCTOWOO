@@ -115,7 +115,7 @@ class OctoWoo_Activator {
         // plugin activates cleanly even when the logs/ directory cannot be created.
         if ( ! is_dir( $log_dir ) ) {
             // wp_mkdir_p returns false on failure — no exception thrown.
-            if ( ! wp_mkdir_p( $log_dir ) ) {
+            if ( ! @wp_mkdir_p( $log_dir ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
                 // Filesystem is read-only or permissions denied. Log to PHP error log
                 // but do not surface a PHP warning to the end user.
                 return;

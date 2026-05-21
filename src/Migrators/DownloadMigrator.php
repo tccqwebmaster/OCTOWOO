@@ -109,7 +109,7 @@ class DownloadMigrator extends AbstractMigrator {
 
 		// Create the sub-directory if it does not exist.
 		if ( ! is_dir( $dest_dir ) ) {
-			if ( ! wp_mkdir_p( $dest_dir ) ) {
+			if ( ! @wp_mkdir_p( $dest_dir ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				$this->logger->error(
 					"[downloads] Cannot create upload directory: {$dest_dir} — "
 					. 'Check that wp-content/uploads/ is writable by the web server user (e.g. run: chmod -R 755 wp-content/uploads/).'
