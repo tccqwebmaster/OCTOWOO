@@ -8,6 +8,8 @@
 
 namespace OctoWoo\Migrators;
 
+// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names from $wpdb->prefix are safe; %i identifier escaping requires WP 6.2+ above our minimum target.
+
 use OctoWoo\Core\DatabaseConnector;
 use OctoWoo\Core\Logger;
 use OctoWoo\Core\CheckpointManager;
@@ -369,8 +371,8 @@ abstract class AbstractMigrator {
             $broken = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT t.term_id, tt.term_taxonomy_id, t.slug
-                     FROM {$wpdb->terms} t // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     FROM {$wpdb->terms} t
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                      WHERE tt.taxonomy = %s AND t.slug LIKE %s",
                     $taxonomy,
                     $wpdb->esc_like( 'ow-t-' ) . '%'
@@ -397,7 +399,7 @@ abstract class AbstractMigrator {
                 // Get the TRID for this translated term.
                 $trid = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     $wpdb->prepare(
-                        "SELECT trid FROM `{$icl_table}` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        "SELECT trid FROM `{$icl_table}`
                          WHERE element_id = %d AND element_type = %s",
                         $tt_id,
                         $element_type
@@ -408,7 +410,7 @@ abstract class AbstractMigrator {
                     // No WPML row — term is orphaned; slug = clean version of current name.
                     $name = (string) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                         $wpdb->prepare(
-                            "SELECT name FROM {$wpdb->terms} WHERE term_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                            "SELECT name FROM {$wpdb->terms} WHERE term_id = %d",
                             (int) $row['term_id']
                         )
                     );
@@ -425,7 +427,7 @@ abstract class AbstractMigrator {
                 // Find the primary-language term in the same translation group.
                 $primary_tt_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     $wpdb->prepare(
-                        "SELECT element_id FROM `{$icl_table}` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        "SELECT element_id FROM `{$icl_table}`
                          WHERE trid = %d AND element_type = %s AND language_code = %s",
                         $trid,
                         $element_type,
@@ -439,14 +441,14 @@ abstract class AbstractMigrator {
 
                 $primary_term_id = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     $wpdb->prepare(
-                        "SELECT term_id FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        "SELECT term_id FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id = %d",
                         $primary_tt_id
                     )
                 );
 
                 $primary_slug = (string) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     $wpdb->prepare(
-                        "SELECT slug FROM {$wpdb->terms} WHERE term_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        "SELECT slug FROM {$wpdb->terms} WHERE term_id = %d",
                         $primary_term_id
                     )
                 );

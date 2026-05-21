@@ -26,6 +26,8 @@
 
 namespace OctoWoo\Migrators;
 
+// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names from $wpdb->prefix are safe; %i identifier escaping requires WP 6.2+ above our minimum target.
+
 defined( 'ABSPATH' ) || exit;
 
 class OrderMigrator extends AbstractMigrator {
@@ -68,7 +70,7 @@ class OrderMigrator extends AbstractMigrator {
 			        o.total, o.order_status_id, o.currency_code, {$currency_val},
 			        o.date_added, o.date_modified, {$ip_col},
 			        {$tracking_col}, {$affiliate_col}, {$ua_cols}
-			 FROM `{$pfx}order` o ORDER BY o.order_id ASC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			 FROM `{$pfx}order` o ORDER BY o.order_id ASC",
 			[], $limit, $offset
 		);
 
@@ -142,9 +144,9 @@ class OrderMigrator extends AbstractMigrator {
 
 			// HPOS (wc_orders_meta table, WC 7.1+).
 			$hpos_table = $wpdb->prefix . 'wc_orders_meta';
-			if ( $wpdb->get_var( "SHOW TABLES LIKE '{$hpos_table}'" ) === $hpos_table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			if ( $wpdb->get_var( "SHOW TABLES LIKE '{$hpos_table}'" ) === $hpos_table ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				$by_meta = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-					"SELECT order_id FROM `{$hpos_table}` WHERE meta_key = '_octowoo_oc_order_id' AND meta_value = %s LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+					"SELECT order_id FROM `{$hpos_table}` WHERE meta_key = '_octowoo_oc_order_id' AND meta_value = %s LIMIT 1",
 					(string) $oc_id
 				) );
 			}
@@ -152,8 +154,8 @@ class OrderMigrator extends AbstractMigrator {
 			// Legacy post-table fallback.
 			if ( ! $by_meta ) {
 				$by_meta = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-					"SELECT pm.post_id FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-					 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+					"SELECT pm.post_id FROM {$wpdb->postmeta} pm
+					 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 					 WHERE pm.meta_key = '_octowoo_oc_order_id' AND pm.meta_value = %s
 					   AND p.post_type = 'shop_order' LIMIT 1",
 					(string) $oc_id
@@ -461,8 +463,8 @@ class OrderMigrator extends AbstractMigrator {
 	private function findProductBySku( string $sku ): ?\WC_Product {
 		global $wpdb;
 		$id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			"SELECT pm.post_id FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			"SELECT pm.post_id FROM {$wpdb->postmeta} pm
+			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 			 WHERE pm.meta_key = '_sku' AND pm.meta_value = %s
 			   AND p.post_type IN ('product','product_variation') AND p.post_status != 'trash'
 			 LIMIT 1",
@@ -514,7 +516,7 @@ class OrderMigrator extends AbstractMigrator {
 		$pfx  = $this->pfx();
 		$rows = $this->oc->fetchAll(
 			"SELECT order_product_id, product_id, name, model, quantity, price, total, tax
-			 FROM `{$pfx}order_product` WHERE order_id = ?", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			 FROM `{$pfx}order_product` WHERE order_id = ?",
 			[ $oc_id ]
 		);
 		if ( ! $rows ) { return []; }
@@ -522,7 +524,7 @@ class OrderMigrator extends AbstractMigrator {
 		if ( $has_options ) {
 			foreach ( $rows as &$item ) {
 				$item['options'] = $this->oc->fetchAll(
-					"SELECT name, value FROM `{$pfx}order_product_option` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+					"SELECT name, value FROM `{$pfx}order_product_option`
 					 WHERE order_id = ? AND order_product_id = ?",
 					[ $oc_id, (int) $item['order_product_id'] ]
 				);
@@ -537,7 +539,7 @@ class OrderMigrator extends AbstractMigrator {
 
 	private function fetchOrderTotalsFor( int $oc_id ): array {
 		return $this->oc->fetchAll(
-			"SELECT code, title, value, sort_order FROM `{$this->pfx()}order_total` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			"SELECT code, title, value, sort_order FROM `{$this->pfx()}order_total`
 			 WHERE order_id = ? ORDER BY sort_order ASC",
 			[ $oc_id ]
 		);
@@ -547,7 +549,7 @@ class OrderMigrator extends AbstractMigrator {
 		$pfx = $this->pfx();
 		return $this->oc->fetchAll(
 			"SELECT oh.comment, os.name AS status, oh.date_added
-			 FROM `{$pfx}order_history` oh // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			 FROM `{$pfx}order_history` oh
 			 LEFT JOIN `{$pfx}order_status` os ON os.order_status_id = oh.order_status_id
 			                                   AND os.language_id = ?
 			 WHERE oh.order_id = ? ORDER BY oh.date_added ASC",
@@ -556,7 +558,7 @@ class OrderMigrator extends AbstractMigrator {
 	}
 
 	private function fetchCurrencies(): array {
-		$rows = $this->oc->fetchAll( "SELECT code, value FROM `{$this->pfx()}currency`" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+		$rows = $this->oc->fetchAll( "SELECT code, value FROM `{$this->pfx()}currency`" );
 		$map  = [];
 		foreach ( $rows as $r ) { $map[ $r['code'] ] = (float) $r['value']; }
 		return $map;

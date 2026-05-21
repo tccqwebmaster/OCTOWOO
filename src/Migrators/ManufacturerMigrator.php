@@ -40,6 +40,8 @@
 
 namespace OctoWoo\Migrators;
 
+// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names from $wpdb->prefix are safe; %i identifier escaping requires WP 6.2+ above our minimum target.
+
 defined( 'ABSPATH' ) || exit;
 
 class ManufacturerMigrator extends AbstractMigrator {
@@ -94,7 +96,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         $batch_callback = function ( int $offset, int $limit ) use ( $pfx ): array {
             return $this->oc->fetchBatch(
                 "SELECT manufacturer_id, name, image, sort_order
-                 FROM `{$pfx}manufacturer` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                 FROM `{$pfx}manufacturer`
                  ORDER BY manufacturer_id ASC, sort_order ASC",
                 [],
                 $limit,
@@ -164,9 +166,9 @@ class ManufacturerMigrator extends AbstractMigrator {
             $by_meta        = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT tm.term_id
-                     FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                     LEFT JOIN {$wpdb->prefix}icl_translations icl // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     LEFT JOIN {$wpdb->prefix}icl_translations icl
                           ON icl.element_id   = tt.term_taxonomy_id
                          AND icl.element_type  = CONCAT('tax_', tt.taxonomy)
                      WHERE tm.meta_key   = '_octowoo_oc_manufacturer_id'
@@ -322,7 +324,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $tt_id = (int) $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
                 $term_id,
                 $this->taxonomy
             )
@@ -347,7 +349,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         // Without this row the English admin "Brands" list shows "No Brands Found".
         $icl_table = $wpdb->prefix . 'icl_translations';
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$icl_table}'" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$icl_table}'" );
         if ( ! $table_exists ) {
             return;
         }
@@ -355,7 +357,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $existing_lang = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT language_code FROM {$icl_table} WHERE element_type = %s AND element_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                "SELECT language_code FROM {$icl_table} WHERE element_type = %s AND element_id = %d",
                 'tax_' . $this->taxonomy,
                 $tt_id
             )
@@ -364,7 +366,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         if ( $existing_lang === null ) {
             // No row at all — insert one with a new trid.
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $max_trid = (int) $wpdb->get_var( "SELECT MAX(trid) FROM {$icl_table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $max_trid = (int) $wpdb->get_var( "SELECT MAX(trid) FROM {$icl_table}" );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->insert(
                 $icl_table,
@@ -399,7 +401,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         $pfx = $this->pfx();
 
         $rows = $this->oc->fetchAll(
-            "SELECT product_id, manufacturer_id FROM `{$pfx}product` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            "SELECT product_id, manufacturer_id FROM `{$pfx}product`
              WHERE manufacturer_id > 0 ORDER BY product_id ASC",
             []
         );
@@ -519,7 +521,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         $pfx = $this->pfx();
         try {
             $row = $this->oc->fetchRow(
-                "SELECT keyword FROM `{$pfx}seo_url` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                "SELECT keyword FROM `{$pfx}seo_url`
                  WHERE query = ? AND store_id = 0 LIMIT 1",
                 [ "manufacturer_id={$oc_id}" ]
             );
@@ -574,7 +576,7 @@ class ManufacturerMigrator extends AbstractMigrator {
         // Check if the WC attribute already exists in the DB (not yet registered as taxonomy).
         global $wpdb;
         $existing = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            "SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
             $slug
         ) );
 

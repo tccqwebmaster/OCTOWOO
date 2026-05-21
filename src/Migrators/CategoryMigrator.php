@@ -23,6 +23,8 @@
 
 namespace OctoWoo\Migrators;
 
+// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names from $wpdb->prefix are safe; %i identifier escaping requires WP 6.2+ above our minimum target.
+
 defined( 'ABSPATH' ) || exit;
 
 class CategoryMigrator extends AbstractMigrator {
@@ -206,9 +208,9 @@ class CategoryMigrator extends AbstractMigrator {
             $by_meta        = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT tm.term_id
-                     FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
-                     LEFT JOIN {$wpdb->prefix}icl_translations icl // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     FROM {$wpdb->termmeta} tm
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                     LEFT JOIN {$wpdb->prefix}icl_translations icl
                           ON icl.element_id   = tt.term_taxonomy_id
                          AND icl.element_type  = 'tax_product_cat'
                      WHERE tm.meta_key   = '_octowoo_oc_id'
@@ -472,7 +474,7 @@ class CategoryMigrator extends AbstractMigrator {
         $term_ids = $wpdb->get_col(
             $wpdb->prepare(
                 "SELECT tm.term_id
-                 FROM `{$termmeta_table}` tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                 FROM `{$termmeta_table}` tm
                  INNER JOIN `{$term_taxonomy_table}` tt ON tt.term_id = tm.term_id
                  WHERE tm.meta_key = %s
                    AND tm.meta_value = %s
@@ -525,7 +527,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         if ( $configured > 0 ) {
             $exists = $this->oc->fetchColumn(
-                "SELECT COUNT(*) FROM `{$pfx}category_description` WHERE language_id = ? LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                "SELECT COUNT(*) FROM `{$pfx}category_description` WHERE language_id = ? LIMIT 1",
                 [ $configured ]
             );
             if ( $exists > 0 ) { return $configured; }
@@ -533,7 +535,7 @@ class CategoryMigrator extends AbstractMigrator {
         }
 
         $detected = $this->oc->fetchColumn(
-            "SELECT DISTINCT language_id FROM `{$pfx}category_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            "SELECT DISTINCT language_id FROM `{$pfx}category_description`
              WHERE language_id != ? ORDER BY language_id ASC LIMIT 1",
             [ $primary ]
         );
@@ -556,7 +558,7 @@ class CategoryMigrator extends AbstractMigrator {
         $pfx  = $this->pfx();
         $rows = $this->oc->fetchAll(
             "SELECT category_id, language_id, name, description, meta_title, meta_description, meta_keyword
-             FROM `{$pfx}category_description`" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             FROM `{$pfx}category_description`"
         );
 
         $indexed = [];
@@ -596,7 +598,7 @@ class CategoryMigrator extends AbstractMigrator {
         // hidden WooCommerce terms; the store owner can manage visibility after.
         $rows = $this->oc->fetchAll(
             "SELECT category_id, parent_id, sort_order, image
-             FROM `{$pfx}category`" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             FROM `{$pfx}category`"
         );
 
         // Index rows and build a parent→children map.
@@ -671,7 +673,7 @@ class CategoryMigrator extends AbstractMigrator {
         $has_seo = $this->oc->fetchColumn(
             "SELECT COUNT(*) FROM information_schema.tables
              WHERE table_schema = DATABASE()
-               AND table_name = '{$pfx}seo_url'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               AND table_name = '{$pfx}seo_url'"
         );
 
         if ( ! $has_seo ) {
@@ -680,7 +682,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         $rows = $this->oc->fetchAll(
             "SELECT keyword, query
-             FROM `{$pfx}seo_url` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             FROM `{$pfx}seo_url`
              WHERE query LIKE 'category_id=%'
                AND store_id = 0
                AND language_id = ?",
