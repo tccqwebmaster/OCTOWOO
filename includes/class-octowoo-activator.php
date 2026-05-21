@@ -109,19 +109,35 @@ class OctoWoo_Activator {
 
     private static function create_log_dir(): void {
         $log_dir = OCTOWOO_PLUGIN_DIR . 'logs/';
+
+        // QIT and some hosting environments mount the plugin directory read-only.
+        // All filesystem operations are best-effort — failures are silent so the
+        // plugin activates cleanly even when the logs/ directory cannot be created.
         if ( ! is_dir( $log_dir ) ) {
-            wp_mkdir_p( $log_dir );
+            // wp_mkdir_p returns false on failure — no exception thrown.
+            if ( ! wp_mkdir_p( $log_dir ) ) {
+                // Filesystem is read-only or permissions denied. Log to PHP error log
+                // but do not surface a PHP warning to the end user.
+                return;
+            }
+        }
+
+        // Only attempt to write protection files if the directory is writable.
+        if ( ! is_writable( $log_dir ) ) {
+            return;
         }
 
         // Prevent direct browsing.
         $htaccess = $log_dir . '.htaccess';
         if ( ! file_exists( $htaccess ) ) {
-            file_put_contents( $htaccess, "Options -Indexes\nDeny from all\n" );
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents( $htaccess, "Options -Indexes\nDeny from all\n" ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
         }
 
         $index = $log_dir . 'index.html';
         if ( ! file_exists( $index ) ) {
-            file_put_contents( $index, '' );
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+            @file_put_contents( $index, '' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
         }
     }
 

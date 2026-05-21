@@ -158,7 +158,10 @@ class Logger {
             $context_str
         );
 
-        file_put_contents( $file, $line, FILE_APPEND | LOCK_EX );
+        // File logging is best-effort — DB logging is the primary store.
+        // Suppress errors on read-only filesystems (e.g. QIT sandbox, some hosts).
+        // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents,WordPress.PHP.NoSilencedErrors.Discouraged
+        @file_put_contents( $file, $line, FILE_APPEND | LOCK_EX );
     }
 
     /**
