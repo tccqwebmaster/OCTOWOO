@@ -461,7 +461,7 @@
         var wz = document.getElementById('ow-wizard-overlay');
         if (wz) { wz.style.display = 'none'; }
 
-        if (tab === 'logs' && currentRunId) { refreshLogs(); }
+        if (tab === 'logs') { refreshLogs(); }
         if (tab === 'migration') {
             // Re-render progress table when switching to migration tab.
             // Ensures table is populated even if it was hidden during initial render.
@@ -1910,13 +1910,11 @@
        LOGS
     ════════════════════════════════════════════════════════════════════ */
     function refreshLogs() {
-        var runId    = currentRunId || octoWoo.lastRunId || '';
+        var runId    = currentRunId || octoWoo.lastRunId || 'latest';
         var level    = $('#ow-log-level-filter').val()    || '';
         var migrator = $('#ow-log-migrator-filter').val() || '';
         var search   = $('#ow-log-search').val()          || '';
         var limit    = 500;
-
-        if (!runId) { return; }
 
         $.get(octoWoo.ajaxUrl, {
             action:   'octowoo_get_logs',

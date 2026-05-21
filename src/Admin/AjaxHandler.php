@@ -680,6 +680,17 @@ class AjaxHandler {
             filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) ?? ''
         );
 
+        // 'latest' is sent by the JS when no currentRunId/lastRunId is known
+        // (e.g. after a background run that completed while the browser was closed).
+        // Resolve it to the most recent run_id from the checkpoints table.
+        if ( ! $run_id || $run_id === 'latest' ) {
+            global $wpdb;
+            $table  = $wpdb->prefix . 'octowoo_checkpoints';
+            $run_id = (string) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT run_id FROM `{$table}` ORDER BY updated_at DESC LIMIT 1"
+            );
+        }
+
         if ( ! $run_id ) {
             $run_id = CheckpointManager::getActiveRunId()
                 ?? get_option( 'octowoo_last_run_id', '' );
