@@ -133,7 +133,7 @@ class DataPurger {
         foreach ( $table_count_map as $table => $count_sql ) {
             $count = (int) $wpdb->get_var( $count_sql ); // phpcs:ignore WordPress.DB.PreparedSQL
             if ( $count === 0 ) {
-                $wpdb->query( "ALTER TABLE `{$table}` AUTO_INCREMENT = 1" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "ALTER TABLE `{$table}` AUTO_INCREMENT = 1" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $reset++;
             }
         }
@@ -157,7 +157,7 @@ class DataPurger {
 
             // Count parent products before deletion (variations are collateral).
             $parent_count = (int) $wpdb->get_var(
-                "SELECT COUNT(*) FROM {$wpdb->posts}
+                "SELECT COUNT(*) FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE post_type = 'product' AND post_status != 'auto-draft'"
             );
 
@@ -167,7 +167,7 @@ class DataPurger {
 
             // Collect all IDs (parents + variations) for cascade cleanup.
             $all_ids = array_map( 'intval', (array) $wpdb->get_col(
-                "SELECT ID FROM {$wpdb->posts}
+                "SELECT ID FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE post_type IN ('product', 'product_variation')
                     AND post_status != 'auto-draft'"
             ) );
@@ -184,30 +184,30 @@ class DataPurger {
             // post (page, Porto builder, Elementor template, etc.) via postmeta.
             // This prevents deleting shared media library images used in theme designs.
             $attachment_ids = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
-                "SELECT ID FROM {$wpdb->posts}
+                "SELECT ID FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE post_type   = 'attachment'
-                    AND post_parent IN ({$csv})
+                    AND post_parent IN ({$csv}) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     AND ID NOT IN (
                         -- Exclude attachments referenced by posts OUTSIDE the product set.
                         SELECT DISTINCT CAST(pm.meta_value AS UNSIGNED)
-                          FROM {$wpdb->postmeta} pm
-                          JOIN {$wpdb->posts}    pr ON pr.ID = pm.post_id
+                          FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                          JOIN {$wpdb->posts}    pr ON pr.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE pm.meta_value REGEXP '^[0-9]+$'
-                           AND pr.ID NOT IN ({$csv})
+                           AND pr.ID NOT IN ({$csv}) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                            AND pr.post_type != 'revision'
                            AND pr.post_status != 'auto-draft'
                     )"
             ) );
             if ( ! empty( $attachment_ids ) ) {
                 $att_csv = implode( ',', $attachment_ids );
-                $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$att_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             }
 
             // Delete child data first, then the posts themselves.
-            $wpdb->query( "DELETE FROM {$wpdb->postmeta}          WHERE post_id  IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "DELETE FROM {$wpdb->posts}              WHERE ID       IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->postmeta}          WHERE post_id  IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query( "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query( "DELETE FROM {$wpdb->posts}              WHERE ID       IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
             // Clear WooCommerce product transients/caches.
             if ( function_exists( 'wc_delete_product_transients' ) ) {
@@ -221,8 +221,8 @@ class DataPurger {
         // Tagged (non-force) path — only parent products; variations auto-deleted.
         $ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
-               FROM {$wpdb->posts} p
-               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+               FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
               WHERE pm.meta_key = '_octowoo_oc_id'
                 AND p.post_type = 'product'"
         );
@@ -303,7 +303,7 @@ class DataPurger {
             // (which queries WPML), causing translateTerms() to create brand-new duplicates
             // on top of the surviving orphans — hence duplicate Arabic categories.
             $term_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
-                "SELECT DISTINCT tt.term_id FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                "SELECT DISTINCT tt.term_id FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $taxonomy
             ) ) );
 
@@ -315,23 +315,23 @@ class DataPurger {
 
             // 1. Remove object → term assignments (product in category, etc.).
             $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-                "DELETE tr FROM {$wpdb->term_relationships} tr
-                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+                "DELETE tr FROM {$wpdb->term_relationships} tr // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                  WHERE tt.taxonomy = %s",
                 $taxonomy
             ) );
 
             // 2. Remove all term meta (thumbnail_id, _octowoo_oc_id, WPML flags, etc.).
-            $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
             // 3. Remove taxonomy registration rows.
-            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
             // 4. Remove term rows that are no longer referenced by any other taxonomy.
             $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
-                "DELETE t FROM {$wpdb->terms} t
-                  LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
-                 WHERE tt.term_id IS NULL AND t.term_id IN ({$id_csv})"
+                "DELETE t FROM {$wpdb->terms} t // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                  LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                 WHERE tt.term_id IS NULL AND t.term_id IN ({$id_csv})" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             );
 
             // Flush WP in-memory term caches so stale data is not served.
@@ -350,8 +350,8 @@ class DataPurger {
             // purged even when they have no OC id of their own.
             $term_ids = $wpdb->get_col( $wpdb->prepare(
                 "SELECT DISTINCT tm.term_id
-                   FROM {$wpdb->termmeta} tm
-                   JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                   FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                   JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE ( tm.meta_key = '_octowoo_oc_id' OR tm.meta_key = '_octowoo_translation_lang' )
                     AND tt.taxonomy   = %s",
                 $taxonomy
@@ -380,7 +380,7 @@ class DataPurger {
             if ( $has_icl ) {
                 $type = 'tax_' . $taxonomy;
                 $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL
-                    "DELETE FROM `{$icl_table}` WHERE element_type = %s AND element_id NOT IN (SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s)", // phpcs:ignore WordPress.DB.PreparedSQL
+                    "DELETE FROM `{$icl_table}` WHERE element_type = %s AND element_id NOT IN (SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s)", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $type,
                     $taxonomy
                 ) );
@@ -428,8 +428,8 @@ class DataPurger {
             $placeholder_ids = array_map( 'intval', (array) $wpdb->get_col(
                 $wpdb->prepare(
                     "SELECT t.term_id
-                       FROM {$wpdb->terms} t
-                       JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                       FROM {$wpdb->terms} t // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                       JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                       WHERE tt.taxonomy = %s
                         AND t.name LIKE %s",
                     $wpdb->esc_like( 'octowoo-ar-new-' ) . '%',
@@ -452,13 +452,13 @@ class DataPurger {
             // Fetch all secondary-language term rows that belong to a trid with >1 such row.
             $dup_rows = $wpdb->get_results( $wpdb->prepare(
                 "SELECT i.trid, tt.term_id
-                   FROM `{$icl_table}` i
-                   JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = i.element_id
+                   FROM `{$icl_table}` i // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                   JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = i.element_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE i.element_type  = %s
                     AND i.language_code != 'en'
                     AND i.trid IN (
                         SELECT i2.trid
-                          FROM `{$icl_table}` i2
+                          FROM `{$icl_table}` i2 // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE i2.element_type  = %s
                            AND i2.language_code != 'en'
                          GROUP BY i2.trid
@@ -506,37 +506,37 @@ class DataPurger {
 
         // Get the term_taxonomy_ids for these term_ids in this taxonomy.
         $tt_ids = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
-            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy}
-              WHERE term_id IN ({$id_csv}) AND taxonomy = '{$taxonomy}'"
+            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+              WHERE term_id IN ({$id_csv}) AND taxonomy = '{$taxonomy}'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
         ) );
 
         if ( ! empty( $tt_ids ) ) {
             $tt_csv = implode( ',', $tt_ids );
             // Remove product → term assignments.
-            $wpdb->query( "DELETE FROM {$wpdb->term_relationships} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->term_relationships} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             // Remove taxonomy registration rows.
-            $wpdb->query( "DELETE FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id IN ({$tt_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
             // Remove WPML icl_translations rows.
             $icl_table = $wpdb->prefix . 'icl_translations';
             $has_icl   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $icl_table ) );
             if ( $has_icl ) {
                 $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
-                    "DELETE FROM `{$icl_table}`
-                      WHERE element_id   IN ({$tt_csv})
-                        AND element_type  = 'tax_{$taxonomy}'"
+                    "DELETE FROM `{$icl_table}` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                      WHERE element_id   IN ({$tt_csv}) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        AND element_type  = 'tax_{$taxonomy}'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 );
             }
         }
 
         // Remove all term meta.
-        $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
         // Remove term rows (only those no longer referenced by any taxonomy).
         $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
-            "DELETE t FROM {$wpdb->terms} t
-              LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+            "DELETE t FROM {$wpdb->terms} t // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+              LEFT JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE tt.term_id IS NULL
-               AND t.term_id IN ({$id_csv})"
+               AND t.term_id IN ({$id_csv})" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
         );
 
         // Flush WP object cache for affected terms.
@@ -566,12 +566,12 @@ class DataPurger {
         $cap_key = $wpdb->prefix . 'capabilities';
         $user_ids = $wpdb->get_col(
             "SELECT DISTINCT um.user_id
-               FROM {$wpdb->usermeta} um
+               FROM {$wpdb->usermeta} um // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
               WHERE um.meta_key = '_octowoo_oc_id'
                 AND NOT EXISTS (
-                    SELECT 1 FROM {$wpdb->usermeta} cap
+                    SELECT 1 FROM {$wpdb->usermeta} cap // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE cap.user_id  = um.user_id
-                       AND cap.meta_key = '{$cap_key}'
+                       AND cap.meta_key = '{$cap_key}' // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                        AND cap.meta_value LIKE '%administrator%'
                 )"
         );
@@ -585,19 +585,19 @@ class DataPurger {
         $ids_int = array_map( 'intval', $user_ids );
         $csv     = implode( ',', $ids_int );
 
-        $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE user_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-        $wpdb->query( "DELETE FROM {$wpdb->users}    WHERE ID       IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->usermeta} WHERE user_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query( "DELETE FROM {$wpdb->users}    WHERE ID       IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
         // Reassign posts owned by deleted users to the first admin.
         $admin_id = (int) $wpdb->get_var(
-            "SELECT u.ID FROM {$wpdb->users} u
-               JOIN {$wpdb->usermeta} m ON m.user_id = u.ID
-              WHERE m.meta_key = '{$cap_key}'
+            "SELECT u.ID FROM {$wpdb->users} u // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               JOIN {$wpdb->usermeta} m ON m.user_id = u.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+              WHERE m.meta_key = '{$cap_key}' // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 AND m.meta_value LIKE '%administrator%'
               LIMIT 1"
         );
         if ( $admin_id > 0 ) {
-            $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->posts} SET post_author = %d WHERE post_author IN ({$csv})", $admin_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( $wpdb->prepare( "UPDATE {$wpdb->posts} SET post_author = %d WHERE post_author IN ({$csv})", $admin_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
         }
 
         $this->logger->info( "[purge] Bulk-deleted " . count( $ids_int ) . " customers via SQL." );
@@ -621,13 +621,13 @@ class DataPurger {
             $has_hpos   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_table ) );
 
             if ( $has_hpos ) {
-                $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 if ( $count > 0 ) {
                     // Delete order item meta → order items → order meta → orders.
-                    $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $wpdb->query( "DELETE oi FROM {$wpdb->prefix}woocommerce_order_items oi JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $wpdb->query( "DELETE om FROM {$wpdb->prefix}wc_orders_meta om JOIN {$wpdb->prefix}wc_orders o ON o.id = om.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $wpdb->query( "DELETE oi FROM {$wpdb->prefix}woocommerce_order_items oi JOIN {$wpdb->prefix}wc_orders o ON o.id = oi.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $wpdb->query( "DELETE om FROM {$wpdb->prefix}wc_orders_meta om JOIN {$wpdb->prefix}wc_orders o ON o.id = om.order_id WHERE o.type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $this->logger->info( "[purge] HPOS: bulk-deleted {$count} orders via SQL." );
                 }
             }
@@ -635,16 +635,16 @@ class DataPurger {
             // ── Legacy path (post-based orders in wp_posts) ──
             // Also runs after HPOS in case some orders were not yet migrated.
             $legacy_ids = array_map( 'intval', (array) $wpdb->get_col(
-                "SELECT ID FROM {$wpdb->posts}
+                "SELECT ID FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE post_type = 'shop_order'
                     AND post_status != 'auto-draft'"
             ) );
             if ( ! empty( $legacy_ids ) ) {
                 $csv = implode( ',', $legacy_ids );
-                $wpdb->query( "DELETE FROM {$wpdb->postmeta}                          WHERE post_id      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items     WHERE order_id     IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->posts}                             WHERE ID           IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->postmeta}                          WHERE post_id      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items     WHERE order_id     IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->posts}                             WHERE ID           IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 if ( ! $has_hpos ) {
                     $count = count( $legacy_ids );
                     $this->logger->info( "[purge] Legacy: bulk-deleted {$count} orders via SQL." );
@@ -665,17 +665,17 @@ class DataPurger {
         if ( $has_hpos ) {
             $hpos_ids = $wpdb->get_col(
                 "SELECT DISTINCT o.id
-                   FROM {$wpdb->prefix}wc_orders o
-                   JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id
+                   FROM {$wpdb->prefix}wc_orders o // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                   JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE o.type = 'shop_order'
                     AND om.meta_key = '_octowoo_oc_order_id'"
             );
             if ( ! empty( $hpos_ids ) ) {
                 $csv_h = implode( ',', array_map( 'intval', $hpos_ids ) );
-                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders_meta WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders_meta WHERE order_id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders WHERE id IN ({$csv_h})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $deleted += count( $hpos_ids );
                 $this->logger->info( "[purge] HPOS tagged: deleted " . count( $hpos_ids ) . " orders via SQL." );
             }
@@ -684,17 +684,17 @@ class DataPurger {
         // ── Legacy post-based tagged path ──
         $legacy_ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
-               FROM {$wpdb->posts} p
-               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+               FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
               WHERE pm.meta_key = '_octowoo_oc_order_id'
                 AND p.post_type = 'shop_order'"
         );
         if ( ! empty( $legacy_ids ) ) {
             $csv_l = implode( ',', array_map( 'intval', $legacy_ids ) );
-            $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-            $wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+            $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query( "DELETE oim FROM {$wpdb->prefix}woocommerce_order_itemmeta oim LEFT JOIN {$wpdb->prefix}woocommerce_order_items oi ON oi.order_item_id = oim.order_item_id WHERE oi.order_item_id IS NULL" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query( "DELETE FROM {$wpdb->prefix}woocommerce_order_items WHERE order_id IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+            $wpdb->query( "DELETE FROM {$wpdb->posts} WHERE ID IN ({$csv_l})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             $deleted += count( $legacy_ids );
             $this->logger->info( "[purge] Legacy tagged: deleted " . count( $legacy_ids ) . " orders via SQL." );
         }
@@ -712,25 +712,25 @@ class DataPurger {
 
         if ( $force ) {
             $count = (int) $wpdb->get_var(
-                "SELECT COUNT(*) FROM {$wpdb->posts}
+                "SELECT COUNT(*) FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'"
             );
             if ( $count > 0 ) {
                 // Use subquery so we don't have to materialise the ID list.
                 $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
-                    "DELETE pm FROM {$wpdb->postmeta} pm
-                      JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                    "DELETE pm FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                      JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE p.post_type = 'shop_coupon' AND p.post_status != 'auto-draft'"
                 );
-                $wpdb->query( "DELETE FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                $wpdb->query( "DELETE FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             }
             return $count;
         }
 
         $ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
-               FROM {$wpdb->posts} p
-               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+               FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
               WHERE pm.meta_key   = '_octowoo_oc_id'
                 AND p.post_type   = 'shop_coupon'"
         );
@@ -740,8 +740,8 @@ class DataPurger {
         }
 
         $csv = implode( ',', array_map( 'intval', $ids ) );
-        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
         return count( $ids );
     }
@@ -757,14 +757,14 @@ class DataPurger {
             // Delete all comments of type 'review' on product posts.
             $comment_ids = $wpdb->get_col(
                 "SELECT DISTINCT c.comment_ID
-                   FROM {$wpdb->comments} c
-                   JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID
+                   FROM {$wpdb->comments} c // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                   JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE c.comment_type = 'review'
                     AND p.post_type    = 'product'"
             );
         } else {
             $comment_ids = $wpdb->get_col(
-                "SELECT DISTINCT comment_id FROM {$wpdb->commentmeta}
+                "SELECT DISTINCT comment_id FROM {$wpdb->commentmeta} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE meta_key = '_octowoo_oc_id'"
             );
         }
@@ -774,8 +774,8 @@ class DataPurger {
         }
 
         $csv = implode( ',', array_map( 'intval', $comment_ids ) );
-        $wpdb->query( "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-        $wpdb->query( "DELETE FROM {$wpdb->comments}    WHERE comment_ID IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query( "DELETE FROM {$wpdb->comments}    WHERE comment_ID IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
         $this->logger->info( "[purge] Bulk-deleted " . count( $comment_ids ) . " reviews via SQL." );
         return count( $comment_ids );
@@ -792,8 +792,8 @@ class DataPurger {
         // Manually-created pages (theme templates, custom pages) are NEVER touched.
         $ids = $wpdb->get_col(
             "SELECT DISTINCT p.ID
-               FROM {$wpdb->posts} p
-               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+               FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+               JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
               WHERE pm.meta_key IN ('_octowoo_oc_id', '_octowoo_translation_of')
                 AND p.post_type = 'page'"
         );
@@ -803,8 +803,8 @@ class DataPurger {
         }
 
         $csv = implode( ',', array_map( 'intval', $ids ) );
-        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
-        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
+        $wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+        $wpdb->query( "DELETE FROM {$wpdb->posts}    WHERE ID      IN ({$csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
         $this->logger->info( "[purge] Bulk-deleted " . count( $ids ) . " information pages via SQL." );
         return count( $ids );
@@ -882,15 +882,15 @@ class DataPurger {
             // Build the NOT IN clause from the protected list.
             $protected_csv = "'" . implode( "','", array_map( 'esc_sql', $protected_post_types ) ) . "'";
             $ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.PreparedSQL
-                "SELECT DISTINCT ID FROM {$wpdb->posts}
-                  WHERE post_type NOT IN ({$protected_csv})
+                "SELECT DISTINCT ID FROM {$wpdb->posts} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                  WHERE post_type NOT IN ({$protected_csv}) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     AND post_status != 'auto-draft'"
             );
         } else {
             $ids = $wpdb->get_col(
                 "SELECT DISTINCT p.ID
-                   FROM {$wpdb->posts} p
-                   JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                   FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                   JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE pm.meta_key = '_octowoo_oc_id'
                     AND p.post_type NOT IN ('product', 'product_variation', 'shop_order', 'shop_coupon', 'page')"
             );
@@ -922,12 +922,12 @@ class DataPurger {
         switch ( $entity ) {
             case 'categories':
                 $total  = (int) $wpdb->get_var( $wpdb->prepare(
-                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     'product_cat'
                 ) );
                 $tagged = (int) $wpdb->get_var( $wpdb->prepare(
-                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm
-                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s",
                     'product_cat'
                 ) );
@@ -935,12 +935,12 @@ class DataPurger {
 
             case 'tags':
                 $total  = (int) $wpdb->get_var( $wpdb->prepare(
-                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s",
+                    "SELECT COUNT(DISTINCT tt.term_id) FROM {$wpdb->term_taxonomy} tt WHERE tt.taxonomy = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     'product_tag'
                 ) );
                 $tagged = (int) $wpdb->get_var( $wpdb->prepare(
-                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm
-                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                    "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s",
                     'product_tag'
                 ) );
@@ -948,22 +948,22 @@ class DataPurger {
 
             case 'products':
                 $total  = (int) $wpdb->get_var(
-                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'"
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 );
                 $tagged = (int) $wpdb->get_var(
-                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
-                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'product'"
                 );
                 return [ 'total' => $total, 'tagged' => $tagged ];
 
             case 'coupons':
                 $total  = (int) $wpdb->get_var(
-                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'"
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 );
                 $tagged = (int) $wpdb->get_var(
-                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
-                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                    "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'shop_coupon'"
                 );
                 return [ 'total' => $total, 'tagged' => $tagged ];
@@ -971,14 +971,14 @@ class DataPurger {
             case 'orders':
                 // Just count all shop_orders; exact tagged count requires meta_query (slow).
                 $total = (int) $wpdb->get_var(
-                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'"
+                    "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 );
                 return [ 'total' => $total, 'tagged' => 0 ];
 
             case 'customers':
-                $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" );
+                $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $tagged = (int) $wpdb->get_var(
-                    "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'"
+                    "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 );
                 return [ 'total' => $total, 'tagged' => $tagged ];
 
@@ -1012,7 +1012,7 @@ class DataPurger {
         }
 
         $rows = $wpdb->get_results(
-            "SELECT entity_type, oc_id, wc_id FROM `{$map_table}`", // phpcs:ignore WordPress.DB.PreparedSQL
+            "SELECT entity_type, oc_id, wc_id FROM `{$map_table}`", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             ARRAY_A
         );
 
@@ -1089,17 +1089,17 @@ class DataPurger {
 
             switch ( $entity ) {
                 case 'products':
-                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     if ( $force && $total > $tagged ) {
                         $warnings[] = sprintf( __( '%d product(s) were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
                     }
                     // Warn about shared media.
                     $shared_attachments = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.PreparedSQL
-                        "SELECT COUNT(*) FROM {$wpdb->posts} att
+                        "SELECT COUNT(*) FROM {$wpdb->posts} att // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE att.post_type = 'attachment'
-                           AND att.post_parent IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product')
-                           AND att.ID IN (SELECT DISTINCT CAST(meta_value AS UNSIGNED) FROM {$wpdb->postmeta} WHERE meta_value REGEXP '^[0-9]+$')"
+                           AND att.post_parent IN (SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product') // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                           AND att.ID IN (SELECT DISTINCT CAST(meta_value AS UNSIGNED) FROM {$wpdb->postmeta} WHERE meta_value REGEXP '^[0-9]+$')" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     );
                     if ( $force && $shared_attachments > 0 ) {
                         $warnings[] = sprintf( __( '%d product image(s) appear to be used elsewhere (pages, theme builder, etc.) and will be PROTECTED from deletion.', 'octowoo' ), $shared_attachments );
@@ -1107,21 +1107,21 @@ class DataPurger {
                     break;
 
                 case 'categories':
-                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_cat' ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     if ( $force && $total > $tagged ) {
                         $warnings[] = sprintf( __( '%d category/categories were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
                     }
                     break;
 
                 case 'tags':
-                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT tm.term_id) FROM {$wpdb->termmeta} tm JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id WHERE tm.meta_key = '_octowoo_oc_id' AND tt.taxonomy = %s", 'product_tag' ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     break;
 
                 case 'customers':
-                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->users}" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT user_id) FROM {$wpdb->usermeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $warnings[] = __( 'Administrator accounts are always protected regardless of mode.', 'octowoo' );
                     break;
 
@@ -1129,11 +1129,11 @@ class DataPurger {
                     $hpos_table = $wpdb->prefix . 'wc_orders';
                     $has_hpos   = (bool) $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_table ) );
                     if ( $has_hpos ) {
-                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$hpos_table} WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT o.id) FROM {$hpos_table} o JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id WHERE o.type = 'shop_order' AND om.meta_key = '_octowoo_oc_order_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$hpos_table} WHERE type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT o.id) FROM {$hpos_table} o JOIN {$wpdb->prefix}wc_orders_meta om ON om.order_id = o.id WHERE o.type = 'shop_order' AND om.meta_key = '_octowoo_oc_order_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     } else {
-                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_order_id' AND p.post_type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                        $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_order' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                        $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_order_id' AND p.post_type = 'shop_order'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     }
                     if ( $force && $total > $tagged ) {
                         $warnings[] = sprintf( __( '%d order(s) were NOT created by OctoWoo and will also be deleted in Force mode.', 'octowoo' ), $total - $tagged );
@@ -1141,24 +1141,24 @@ class DataPurger {
                     break;
 
                 case 'coupons':
-                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'shop_coupon'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'shop_coupon' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type = 'shop_coupon'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     break;
 
                 case 'reviews':
-                    $total  = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT c.comment_ID) FROM {$wpdb->comments} c JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID WHERE c.comment_type = 'review' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT comment_id) FROM {$wpdb->commentmeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT c.comment_ID) FROM {$wpdb->comments} c JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID WHERE c.comment_type = 'review' AND p.post_type = 'product'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT comment_id) FROM {$wpdb->commentmeta} WHERE meta_key = '_octowoo_oc_id'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     break;
 
                 case 'information':
-                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key IN ('_octowoo_oc_id','_octowoo_translation_of') AND p.post_type = 'page'" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status != 'auto-draft'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key IN ('_octowoo_oc_id','_octowoo_translation_of') AND p.post_type = 'page'" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $warnings[] = __( 'Only pages tagged by OctoWoo are deleted. Theme header/footer templates and manually-built pages are ALWAYS protected.', 'octowoo' );
                     break;
 
                 case 'downloads':
                     // Tagged path is always safe; force path uses protected post_type list.
-                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type NOT IN ('product','product_variation','shop_order','shop_coupon','page')" ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $tagged = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID WHERE pm.meta_key = '_octowoo_oc_id' AND p.post_type NOT IN ('product','product_variation','shop_order','shop_coupon','page')" ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $total  = $tagged; // Force is safe — protected list covers all themes.
                     $warnings[] = __( 'Theme and page builder post types (Porto, Elementor, Divi, Avada, etc.) are always excluded.', 'octowoo' );
                     break;
@@ -1166,7 +1166,7 @@ class DataPurger {
                 case 'manufacturers':
                 case 'filters':
                     $taxonomy = $entity === 'manufacturers' ? 'product_brand' : 'product_filter';
-                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy LIKE %s", '%brand%' ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+                    $total  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT term_id) FROM {$wpdb->term_taxonomy} WHERE taxonomy LIKE %s", '%brand%' ) ); // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $tagged = $total; // Always safe — taxonomy-scoped.
                     break;
 

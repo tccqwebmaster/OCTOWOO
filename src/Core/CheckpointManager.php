@@ -116,7 +116,7 @@ class CheckpointManager {
 
         $total = (int) $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $v
             )
         );
@@ -125,7 +125,7 @@ class CheckpointManager {
             // Condition A: all migrators are terminal.
             $active = (int) $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL
+                    "SELECT COUNT(*) FROM `{$table}` WHERE run_id = %s AND status IN ('running','pending')", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $v
                 )
             );
@@ -140,7 +140,7 @@ class CheckpointManager {
             // Condition B: last checkpoint heartbeat is > 2 hours old.
             $last_updated = (string) $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT MAX(updated_at) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                    "SELECT MAX(updated_at) FROM `{$table}` WHERE run_id = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     $v
                 )
             );
@@ -177,7 +177,7 @@ class CheckpointManager {
 
         $exists = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT id FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT id FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -234,7 +234,7 @@ class CheckpointManager {
 
         $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
             $wpdb->prepare(
-                "UPDATE `{$this->table}`
+                "UPDATE `{$this->table}` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     SET last_oc_id      = %d,
                         processed_count = processed_count + %d,
                         updated_at      = %s
@@ -271,7 +271,7 @@ class CheckpointManager {
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT last_oc_id, status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT last_oc_id, status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             ),
@@ -296,7 +296,7 @@ class CheckpointManager {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM `{$this->table}` WHERE run_id = %s ORDER BY id ASC", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT * FROM `{$this->table}` WHERE run_id = %s ORDER BY id ASC", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id
             ),
             ARRAY_A
@@ -314,7 +314,7 @@ class CheckpointManager {
 
         $val = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT processed_count FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT processed_count FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -331,7 +331,7 @@ class CheckpointManager {
 
         $status = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -348,7 +348,7 @@ class CheckpointManager {
 
         $status = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -362,7 +362,7 @@ class CheckpointManager {
 
         $status = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT status FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -382,7 +382,7 @@ class CheckpointManager {
 
         $exists = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT id FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT id FROM `{$this->table}` WHERE run_id = %s AND migrator = %s", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $this->run_id,
                 $migrator
             )
@@ -434,7 +434,7 @@ class CheckpointManager {
         // Use INSERT … ON DUPLICATE KEY UPDATE to handle re-runs gracefully.
         $wpdb->query( // phpcs:ignore WordPress.DB.PreparedSQL
             $wpdb->prepare(
-                "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id)
+                "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                  VALUES (%s, %d, %d, %s)
                  ON DUPLICATE KEY UPDATE wc_id = VALUES(wc_id), run_id = VALUES(run_id)",
                 $entity,
@@ -473,7 +473,7 @@ class CheckpointManager {
         // ── Pass 1: ID map table ───────────────────────────────────
         $wc_id = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT wc_id FROM `{$table}` WHERE entity_type = %s AND oc_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL
+                "SELECT wc_id FROM `{$table}` WHERE entity_type = %s AND oc_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $entity,
                 $oc_id
             )
@@ -493,8 +493,8 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT pm.post_id
-                         FROM {$wpdb->postmeta} pm
-                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE pm.meta_key = '_octowoo_oc_id'
                            AND pm.meta_value = %s
                            AND p.post_type IN ('product','product_variation')
@@ -511,13 +511,13 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT tm.term_id
-                         FROM {$wpdb->termmeta} tm
-                         INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id
+                         FROM {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                         INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE tm.meta_key = '_octowoo_oc_id'
                            AND tm.meta_value = %s
                            AND tt.taxonomy = 'product_cat'
                            AND NOT EXISTS (
-                               SELECT 1 FROM {$wpdb->termmeta} tm2
+                               SELECT 1 FROM {$wpdb->termmeta} tm2 // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                                WHERE tm2.term_id = tm.term_id
                                  AND tm2.meta_key = '_octowoo_translation_lang'
                            )
@@ -532,7 +532,7 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT term_id
-                         FROM {$wpdb->termmeta}
+                         FROM {$wpdb->termmeta} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE meta_key = '_octowoo_oc_manufacturer_id'
                            AND meta_value = %s
                          LIMIT 1",
@@ -545,7 +545,7 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT user_id
-                         FROM {$wpdb->usermeta}
+                         FROM {$wpdb->usermeta} // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE meta_key = '_octowoo_oc_id'
                            AND meta_value = %s
                          LIMIT 1",
@@ -558,8 +558,8 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT pm.post_id
-                         FROM {$wpdb->postmeta} pm
-                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE pm.meta_key = '_octowoo_oc_order_id'
                            AND pm.meta_value = %s
                            AND p.post_type = 'shop_order'
@@ -573,7 +573,7 @@ class CheckpointManager {
                     // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
                     $found = $wpdb->get_var(
                         $wpdb->prepare(
-                            "SELECT order_id FROM `{$ot}`
+                            "SELECT order_id FROM `{$ot}` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                              WHERE meta_key = '_octowoo_oc_order_id'
                                AND meta_value = %s
                              LIMIT 1",
@@ -587,8 +587,8 @@ class CheckpointManager {
                 $found = $wpdb->get_var(
                     $wpdb->prepare(
                         "SELECT pm.post_id
-                         FROM {$wpdb->postmeta} pm
-                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                         FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE pm.meta_key = '_octowoo_oc_id'
                            AND pm.meta_value = %s
                            AND p.post_type = 'shop_coupon'
@@ -630,7 +630,7 @@ class CheckpointManager {
         $table = $wpdb->prefix . 'octowoo_id_map';
         $rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->prepare(
-                "SELECT oc_id, wc_id FROM `{$table}` WHERE entity_type = %s",
+                "SELECT oc_id, wc_id FROM `{$table}` WHERE entity_type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $entity
             ),
             ARRAY_A

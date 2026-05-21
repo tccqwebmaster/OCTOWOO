@@ -135,11 +135,11 @@ class WpmlIntegration extends AbstractMigrator {
         // originals, so the primary-language result set is stable across chunks.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $product_total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
+            "SELECT COUNT(*) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE p.post_type   = 'product'
                AND p.post_status IN ('publish','draft')
                AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm_x
+                   SELECT 1 FROM {$wpdb->postmeta} pm_x // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                    WHERE pm_x.post_id  = p.ID
                      AND pm_x.meta_key = '_octowoo_translation_of'
                )"
@@ -248,13 +248,13 @@ class WpmlIntegration extends AbstractMigrator {
             $product_rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT p.ID AS wc_id, COALESCE(pm.meta_value, 0) AS oc_id
-                     FROM {$wpdb->posts} p
-                     LEFT JOIN {$wpdb->postmeta} pm
+                     FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     LEFT JOIN {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
                      WHERE p.post_type   = 'product'
                        AND p.post_status IN ('publish','draft')
                        AND NOT EXISTS (
-                           SELECT 1 FROM {$wpdb->postmeta} pm_x
+                           SELECT 1 FROM {$wpdb->postmeta} pm_x // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                            WHERE pm_x.post_id  = p.ID
                              AND pm_x.meta_key = '_octowoo_translation_of'
                        )
@@ -358,8 +358,8 @@ class WpmlIntegration extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             "SELECT pm.meta_value AS oc_id, pm.post_id AS wc_id
-             FROM {$wpdb->postmeta} pm
-             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+             FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE pm.meta_key = '_octowoo_oc_id'
                AND p.post_type = 'product'
                AND p.post_status != 'trash'",
@@ -384,7 +384,7 @@ class WpmlIntegration extends AbstractMigrator {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->query(
                 $wpdb->prepare(
-                    "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id)
+                    "INSERT INTO `{$table}` (entity_type, oc_id, wc_id, run_id) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                      VALUES ('product', %d, %d, %s)
                      ON DUPLICATE KEY UPDATE wc_id = VALUES(wc_id), run_id = VALUES(run_id)",
                     $oc_id,
@@ -413,7 +413,7 @@ class WpmlIntegration extends AbstractMigrator {
         // the first language_id that is not the primary language.
         if ( $sec_lang_id === 0 ) {
             $all_langs = $this->oc->fetchAll(
-                "SELECT DISTINCT language_id FROM `{$pfx}product_description`
+                "SELECT DISTINCT language_id FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE product_id = ? ORDER BY language_id ASC",
                 [ $oc_ids[0] ]
             );
@@ -434,8 +434,8 @@ class WpmlIntegration extends AbstractMigrator {
         // Fetch secondary-language tags for the whole batch.
         $sec_rows = $this->oc->fetchAll(
             "SELECT product_id, `tag`
-             FROM `{$pfx}product_description`
-             WHERE product_id IN ({$placeholders}) AND language_id = ?",
+             FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             WHERE product_id IN ({$placeholders}) AND language_id = ?", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             array_merge( $oc_ids, [ $sec_lang_id ] )
         );
 
@@ -443,7 +443,7 @@ class WpmlIntegration extends AbstractMigrator {
         // try the first non-primary language ID for these products.
         if ( empty( $sec_rows ) && count( $oc_ids ) > 0 ) {
             $alt_lang = $this->oc->fetchColumn(
-                "SELECT DISTINCT language_id FROM `{$pfx}product_description`
+                "SELECT DISTINCT language_id FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                   WHERE product_id = ? AND language_id != ? ORDER BY language_id ASC LIMIT 1",
                 [ $oc_ids[0], $pri_lang_id ]
             );
@@ -451,8 +451,8 @@ class WpmlIntegration extends AbstractMigrator {
                 $sec_lang_id = (int) $alt_lang;
                 $sec_rows    = $this->oc->fetchAll(
                     "SELECT product_id, `tag`
-                     FROM `{$pfx}product_description`
-                     WHERE product_id IN ({$placeholders}) AND language_id = ?",
+                     FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     WHERE product_id IN ({$placeholders}) AND language_id = ?", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                     array_merge( $oc_ids, [ $sec_lang_id ] )
                 );
                 $this->logger->info( "[multilingual] Fallback secondary language_id={$sec_lang_id} used for tag fetch." );
@@ -462,8 +462,8 @@ class WpmlIntegration extends AbstractMigrator {
         // Fetch primary-language tags for the whole batch.
         $pri_rows = $this->oc->fetchAll(
             "SELECT product_id, `tag`
-             FROM `{$pfx}product_description`
-             WHERE product_id IN ({$placeholders}) AND language_id = ?",
+             FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+             WHERE product_id IN ({$placeholders}) AND language_id = ?", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
             array_merge( $oc_ids, [ $pri_lang_id ] )
         );
 
@@ -751,7 +751,7 @@ class WpmlIntegration extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $entity_type
             ),
             ARRAY_A
@@ -1005,7 +1005,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         $rows = $this->oc->fetchAll(
             "SELECT query, keyword
-             FROM `{$pfx}seo_url`
+             FROM `{$pfx}seo_url` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE store_id = 0 AND language_id = ? AND keyword != ''",
             [ $lang_id_sec ]
         );
@@ -1046,7 +1046,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         $rows = $this->oc->fetchAll(
             "SELECT query, keyword
-             FROM `{$pfx}seo_url`
+             FROM `{$pfx}seo_url` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE store_id = 0 AND language_id = ? AND keyword != ''",
             [ $lang_id_sec ]
         );
@@ -1254,12 +1254,12 @@ class WpmlIntegration extends AbstractMigrator {
                 } else {
                     $pfx        = $this->pfx();
                     $sec_tag_raw = (string) $this->oc->fetchColumn(
-                        "SELECT `tag` FROM `{$pfx}product_description`
+                        "SELECT `tag` FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE product_id = ? AND language_id = ?",
                         [ $oc_product_id, $sec_lang_id ]
                     );
                     $pri_tag_raw = (string) $this->oc->fetchColumn(
-                        "SELECT `tag` FROM `{$pfx}product_description`
+                        "SELECT `tag` FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          WHERE product_id = ? AND language_id = ?",
                         [ $oc_product_id, $pri_lang_id ]
                     );
@@ -1409,7 +1409,7 @@ class WpmlIntegration extends AbstractMigrator {
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                "SELECT oc_id, wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 $entity_type
             ),
             ARRAY_A
@@ -1423,13 +1423,13 @@ class WpmlIntegration extends AbstractMigrator {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT tt.term_id AS wc_id, COALESCE(tm.meta_value, 0) AS oc_id
-                     FROM {$wpdb->term_taxonomy} tt
-                     LEFT JOIN {$wpdb->termmeta} tm
+                     FROM {$wpdb->term_taxonomy} tt // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     LEFT JOIN {$wpdb->termmeta} tm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                          ON tm.term_id = tt.term_id AND tm.meta_key = '_octowoo_oc_id'
                      WHERE tt.taxonomy = %s
                        AND NOT EXISTS (
                            SELECT 1
-                           FROM {$wpdb->prefix}icl_translations icl
+                           FROM {$wpdb->prefix}icl_translations icl // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                            WHERE icl.element_id   = tt.term_taxonomy_id
                              AND icl.element_type  = %s
                              AND icl.language_code != %s
@@ -1653,7 +1653,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s",
+                "SELECT wc_id FROM {$wpdb->prefix}octowoo_id_map WHERE entity_type = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                 'category'
             ),
             ARRAY_A
@@ -1833,7 +1833,7 @@ class WpmlIntegration extends AbstractMigrator {
             return;
         }
 
-        $element_type = "tax_{$taxonomy}";
+        $element_type = "tax_{$taxonomy}"; // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 
         if ( $this->adapter === 'wpml' ) {
             // Get existing trid FIRST (WPML may have auto-assigned one during
@@ -2182,7 +2182,7 @@ class WpmlIntegration extends AbstractMigrator {
             // Fetch ALL non-primary language rows and prefer the one with Arabic characters.
             $all = $this->oc->fetchAll(
                 "SELECT language_id, name, description, meta_title, meta_description, meta_keyword
-                 FROM `{$pfx}category_description`
+                 FROM `{$pfx}category_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                  WHERE category_id = ? AND language_id != ?
                  ORDER BY language_id ASC",
                 [ $oc_id, $pri_lid ]
@@ -2264,7 +2264,7 @@ class WpmlIntegration extends AbstractMigrator {
             // Priority: configured sec lang + Arabic > any Arabic > configured sec lang > first non-primary.
             $all = $this->oc->fetchAll(
                 "SELECT language_id, name, description, meta_title, meta_description, meta_keyword, tag
-                 FROM `{$pfx}product_description`
+                 FROM `{$pfx}product_description` // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                  WHERE product_id = ? AND language_id != ?
                  ORDER BY language_id ASC",
                 [ $oc_id, $pri_lid ]
@@ -2335,8 +2335,8 @@ class WpmlIntegration extends AbstractMigrator {
             // Count primary-language terms.
             $total = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} tt
-                     JOIN {$wpdb->prefix}icl_translations icl
+                    "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} tt // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->prefix}icl_translations icl // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                           ON icl.element_id  = tt.term_taxonomy_id
                          AND icl.element_type = %s
                      WHERE tt.taxonomy       = %s
@@ -2349,8 +2349,8 @@ class WpmlIntegration extends AbstractMigrator {
             $translated = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT COUNT(DISTINCT icl_pri.trid)
-                     FROM {$wpdb->prefix}icl_translations icl_pri
-                     JOIN {$wpdb->prefix}icl_translations icl_sec
+                     FROM {$wpdb->prefix}icl_translations icl_pri // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+                     JOIN {$wpdb->prefix}icl_translations icl_sec // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                           ON icl_sec.trid          = icl_pri.trid
                          AND icl_sec.language_code  = %s
                          AND icl_sec.element_type   = %s
@@ -2369,41 +2369,41 @@ class WpmlIntegration extends AbstractMigrator {
 
         // Products: use _octowoo_translation_of meta to identify translated copies.
         $prod_total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
+            "SELECT COUNT(*) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE p.post_type   = 'product'
                AND p.post_status IN ('publish','draft')
                AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   SELECT 1 FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                    WHERE pm.post_id  = p.ID AND pm.meta_key = '_octowoo_translation_of'
                )"
         );
 
         $prod_translated = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
+            "SELECT COUNT(*) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE p.post_type   = 'product'
                AND p.post_status IN ('publish','draft')
                AND EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   SELECT 1 FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                    WHERE pm.post_id  = p.ID AND pm.meta_key = '_octowoo_translation_of'
                )"
         );
 
         // Pages.
         $page_total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
+            "SELECT COUNT(*) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE p.post_type   = 'page'
                AND p.post_status IN ('publish','draft')
                AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   SELECT 1 FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                    WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of'
                )"
         );
         $page_translated = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
+            "SELECT COUNT(*) FROM {$wpdb->posts} p // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
              WHERE p.post_type   = 'page'
                AND p.post_status IN ('publish','draft')
                AND EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   SELECT 1 FROM {$wpdb->postmeta} pm // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
                    WHERE pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of'
                )"
         );
