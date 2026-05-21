@@ -374,11 +374,11 @@ class AjaxHandler {
         $run_id = $resume && $active_run ? $active_run : null;
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $dry_run_raw = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
+        $dry_run_raw = filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN );
         // phpcs:ignore WordPress.Security.NonceVerification
         $demo_limit_raw = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
+        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_VALIDATE_BOOLEAN );
 
         // Build runtime overrides: dry-run flag + demo limit + per-migrator run flags.
         $overrides = [];
@@ -441,7 +441,7 @@ class AjaxHandler {
         }
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) );
         if ( $migrators_raw !== '' ) {
             $allowed  = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
             $selected = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
@@ -495,7 +495,7 @@ class AjaxHandler {
 
     private function actionAbortMigration(): void {
         // Accept run_id from POST, fall back to the active one in DB.
-        $raw_run_id = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS );
+        $raw_run_id = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS );
         $run_id = sanitize_text_field(
             ( $raw_run_id !== null && $raw_run_id !== '' )
                 ? $raw_run_id
@@ -539,7 +539,7 @@ class AjaxHandler {
 
     private function actionPauseMigration(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS )
                 ?? CheckpointManager::getActiveRunId()
                 ?? ''
         );
@@ -560,7 +560,7 @@ class AjaxHandler {
     private function actionResumeMigration(): void {
         // Accept explicit run_id from POST; fall back to active → last run so
         // an accidentally aborted migration can always be resumed.
-        $raw = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS );
+        $raw = filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS );
         $run_id = sanitize_text_field(
             ( $raw !== null && $raw !== '' )
                 ? $raw
@@ -609,7 +609,7 @@ class AjaxHandler {
 
     private function actionSkipMigrator(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS )
                 ?? CheckpointManager::getActiveRunId()
                 ?? ''
         );
@@ -618,7 +618,7 @@ class AjaxHandler {
             wp_send_json_error( [ 'message' => __( 'No active migration found.', 'octowoo' ) ] );
         }
 
-        $migrator = sanitize_key( (string) filter_input( INPUT_POST, 'migrator', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        $migrator = sanitize_key( (string) filter_input( INPUT_POST, 'migrator', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) );
 
         if ( $migrator === '' ) {
             global $wpdb;
@@ -648,7 +648,7 @@ class AjaxHandler {
 
     private function actionGetProgress(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) ?? ''
+            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) ?? ''
         );
 
         // Fall back to the active run, then the last finished run.
@@ -677,7 +677,7 @@ class AjaxHandler {
 
     private function actionGetLogs(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) ?? ''
+            filter_input( INPUT_GET, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) ?? ''
         );
 
         // 'latest' is sent by the JS when no currentRunId/lastRunId is known
@@ -696,8 +696,8 @@ class AjaxHandler {
                 ?? get_option( 'octowoo_last_run_id', '' );
         }
 
-        $level    = sanitize_key( filter_input( INPUT_GET, 'level', FILTER_SANITIZE_SPECIAL_CHARS ) ?? '' );
-        $migrator = sanitize_key( filter_input( INPUT_GET, 'migrator', FILTER_SANITIZE_SPECIAL_CHARS ) ?? '' );
+        $level    = sanitize_key( filter_input( INPUT_GET, 'level', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) ?? '' );
+        $migrator = sanitize_key( filter_input( INPUT_GET, 'migrator', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) ?? '' );
         $limit    = min( 500, max( 10, (int) filter_input( INPUT_GET, 'limit', FILTER_VALIDATE_INT ) ?: 100 ) );
 
         if ( ! $run_id ) {
@@ -817,15 +817,15 @@ class AjaxHandler {
         } );
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $run_id   = sanitize_text_field( (string) filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        $run_id   = sanitize_text_field( (string) filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) );
         // phpcs:ignore WordPress.Security.NonceVerification
         $resume   = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $dry_run_raw  = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
+        $dry_run_raw  = filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
+        $clear_orders_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_VALIDATE_BOOLEAN );
 
         // ── Stale-lock guard (same logic as actionStartMigration) ────────────
         $active_run = CheckpointManager::getActiveRunId();
@@ -882,7 +882,7 @@ class AjaxHandler {
         $demo_limit_chunk = filter_input( INPUT_POST, 'demo_limit', FILTER_VALIDATE_INT );
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $on_duplicate_raw = filter_input( INPUT_POST, 'on_duplicate', FILTER_SANITIZE_SPECIAL_CHARS );
+        $on_duplicate_raw = filter_input( INPUT_POST, 'on_duplicate', FILTER_SANITIZE_FULL_SPECIAL_CHARS );
 
         $overrides = [];
         if ( $dry_run_raw !== null ) {
@@ -1581,7 +1581,7 @@ class AjaxHandler {
 
         $overrides = [];
         // phpcs:ignore WordPress.Security.NonceVerification
-        $dry_run_bg_raw = filter_input( INPUT_POST, 'dry_run', FILTER_UNSAFE_RAW );
+        $dry_run_bg_raw = filter_input( INPUT_POST, 'dry_run', FILTER_VALIDATE_BOOLEAN );
         if ( $dry_run_bg_raw !== null ) {
             $overrides['migration']['dry_run'] = filter_var( $dry_run_bg_raw, FILTER_VALIDATE_BOOLEAN );
         }
@@ -1591,9 +1591,9 @@ class AjaxHandler {
             $overrides['migration']['demo_limit'] = max( 0, (int) $demo_limit );
         }
         // phpcs:ignore WordPress.Security.NonceVerification
-        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_SPECIAL_CHARS ) );
+        $migrators_raw = sanitize_text_field( (string) filter_input( INPUT_POST, 'migrators', FILTER_SANITIZE_FULL_SPECIAL_CHARS ) );
         // phpcs:ignore WordPress.Security.NonceVerification
-        $clear_orders_bg_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_UNSAFE_RAW );
+        $clear_orders_bg_raw = filter_input( INPUT_POST, 'clear_orders', FILTER_VALIDATE_BOOLEAN );
         if ( $migrators_raw !== '' ) {
             $allowed    = [ 'tax', 'order_statuses', 'categories', 'manufacturers', 'images', 'products', 'related', 'bundles', 'customers', 'orders', 'coupons', 'seo', 'information', 'tags', 'filters', 'downloads', 'reviews', 'multilingual' ];
             $selected   = array_filter( explode( ',', $migrators_raw ), fn( $k ) => in_array( $k, $allowed, true ) );
@@ -1633,7 +1633,7 @@ class AjaxHandler {
 
     private function actionCancelBackground(): void {
         $run_id = sanitize_text_field(
-            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_SPECIAL_CHARS )
+            filter_input( INPUT_POST, 'run_id', FILTER_SANITIZE_FULL_SPECIAL_CHARS )
                 ?? CheckpointManager::getActiveRunId()
                 ?? ''
         );
