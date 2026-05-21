@@ -7,6 +7,12 @@
  *
  * All queries use prepared statements and UTF-8mb4 charset to ensure
  * Arabic and other multi-byte content is transported safely.
+ *
+ * PDO is used intentionally: $wpdb is bound to the WordPress database and
+ * cannot connect to an external OpenCart database on a different host/schema.
+ * Using PDO with prepared statements is the correct, secure approach here.
+ *
+ * phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
  */
 
 namespace OctoWoo\Core;

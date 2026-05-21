@@ -82,7 +82,7 @@ class AdminPage {
         } catch ( \Throwable $e ) {
             $cfg         = [];
             $cron_status = [ 'status' => 'error', 'error' => $e->getMessage() ];
-            error_log( '[CartShift] enqueueAssets error: ' . $e->getMessage() );
+            error_log( '[CartShift] enqueueAssets error: ' . $e->getMessage() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
         }
 
         wp_localize_script( 'octowoo-admin', 'octoWoo', [
@@ -153,7 +153,8 @@ class AdminPage {
         check_admin_referer( 'octowoo_save_settings' );
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $posted = $_POST['octowoo'] ?? [];
+        $raw    = $_POST['octowoo'] ?? []; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        $posted = is_array( $raw ) ? $this->deepSanitize( $raw ) : [];
 
         $existing = get_option( self::SETTINGS_KEY, [] );
 
@@ -267,7 +268,7 @@ class AdminPage {
             $redirect_params['updated'] = '1';
         } else {
             global $wpdb;
-            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
             error_log( 'CartShift: settings save failed. DB error: ' . $wpdb->last_error );
             $redirect_params['save_error'] = '1';
         }
@@ -343,5 +344,28 @@ class AdminPage {
 
     public static function getMenuSlug(): string {
         return self::MENU_SLUG;
+    }
+
+    /**
+     * Recursively sanitize an array of POST values.
+     * Strings are sanitized with sanitize_textarea_field (preserves newlines for
+     * textarea inputs such as DB passwords, paths, and descriptions).
+     * Non-scalar values that are arrays are recursed; others are cast to string.
+     *
+     * @param  array<string|int, mixed> $data Raw POST array.
+     * @return array<string|int, mixed>       Sanitized array.
+     */
+    private function deepSanitize( array $data ): array {
+        $clean = [];
+        foreach ( $data as $key => $value ) {
+            $clean_key = sanitize_key( (string) $key );
+            if ( is_array( $value ) ) {
+                $clean[ $clean_key ] = $this->deepSanitize( $value );
+            } else {
+                // sanitize_textarea_field keeps newlines (needed for textarea settings).
+                $clean[ $clean_key ] = sanitize_textarea_field( (string) $value );
+            }
+        }
+        return $clean;
     }
 }

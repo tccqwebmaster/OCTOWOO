@@ -20,8 +20,8 @@
  * Text Domain:       octowoo
  * Domain Path:       /languages
  * WC requires at least: 6.0
- * WC tested up to:   9.8
- * Tested up to:      6.8
+ * WC tested up to:   10.0
+ * Tested up to:      7.0
  */
 
 defined( 'ABSPATH' ) || exit;
