@@ -587,11 +587,13 @@ class ImageMigrator extends AbstractMigrator {
 
         // Only allow http/https shop URLs (block SSRF to internal networks).
         if ( ! preg_match( '/^https?:\/\//i', $shop_url ) ) {
-            $this->logger->warning( "[images] shop_url must use http/https; skipping remote fetch: {$oc_path}" );
             return null;
         }
 
-        $remote_url = $shop_url . '/image/' . $safe;
+        // URL-encode each path segment so filenames with spaces, parentheses,
+        // or special chars (e.g. 'iPhone (8).jpg') produce a valid HTTP URL.
+        $encoded_path = implode( '/', array_map( 'rawurlencode', explode( '/', $safe ) ) );
+        $remote_url = $shop_url . '/image/' . $encoded_path;
 
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
