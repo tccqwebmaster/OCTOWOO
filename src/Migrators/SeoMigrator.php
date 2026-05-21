@@ -304,6 +304,8 @@ class SeoMigrator extends AbstractMigrator {
     }
 
     private function handleCategorySeo( int $oc_id, string $slug ): ?bool {
+        global $wpdb;
+
         $wc_term_id = $this->checkpoint->getWcId( 'category', $oc_id );
 
         if ( ! $wc_term_id ) {
