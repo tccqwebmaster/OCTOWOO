@@ -2925,11 +2925,59 @@ class AjaxHandler {
             $prod_fixed++;
         }
 
+        // ── Fix terms wrongly registered as Arabic when no English exists in same TRID ──
+        // This happens when CategoryMigrator ran while WPML's active language was Arabic,
+        // causing all 291 primary category entries to be stored as 'ar' instead of 'en'.
+        $wrong_lang = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT tr.element_id, tr.trid, tt.taxonomy
+             FROM {$wpdb->prefix}icl_translations tr
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.element_id
+             WHERE tr.language_code = 'ar'
+               AND tt.taxonomy IN ('product_cat','product_brand','pwb-brand','yith_product_brand')
+               AND tr.trid NOT IN (
+                   SELECT trid FROM {$wpdb->prefix}icl_translations
+                   WHERE language_code = 'en'
+               )",
+            ARRAY_A
+        );
+
+        $primary_fixed = 0;
+        foreach ( (array) $wrong_lang as $row ) {
+            $element_type = 'tax_' . $row['taxonomy'];
+            // Re-register as English primary with no source language.
+            $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->prefix . 'icl_translations',
+                [ 'language_code' => 'en', 'source_language_code' => null ],
+                [ 'element_id' => (int) $row['element_id'], 'element_type' => $element_type ]
+            );
+            // Fix ow-t- slug if present.
+            $term_id_row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT term_id FROM {$wpdb->term_taxonomy} WHERE term_taxonomy_id = %d",
+                (int) $row['element_id']
+            ) );
+            if ( $term_id_row ) {
+                $term = get_term( (int) $term_id_row->term_id );
+                if ( $term && ! is_wp_error( $term ) && str_starts_with( $term->slug, 'ow-t-' ) ) {
+                    $clean = sanitize_title( $term->name );
+                    if ( $clean ) {
+                        $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => $term->term_id ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        clean_term_cache( $term->term_id, $row['taxonomy'] );
+                    }
+                }
+            }
+            $primary_fixed++;
+        }
+
+        if ( $primary_fixed > 0 ) {
+            flush_rewrite_rules( false );
+        }
+
         wp_send_json_success( [
-            'message'      => "Fixed {$fixed} temp slugs. Assigned English to {$lang_fixed} categories/brands + {$prod_fixed} products.",
-            'fixed_slugs'  => $fixed,
-            'fixed_terms'  => $lang_fixed,
+            'message'        => "Fixed {$fixed} temp slugs. Assigned English to {$lang_fixed} categories/brands + {$prod_fixed} products. Reassigned {$primary_fixed} wrongly-Arabic primary terms to English.",
+            'fixed_slugs'    => $fixed,
+            'fixed_terms'    => $lang_fixed,
             'fixed_products' => $prod_fixed,
+            'primary_fixed'  => $primary_fixed,
         ] );
     }
 
