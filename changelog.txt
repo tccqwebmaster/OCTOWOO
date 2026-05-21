@@ -19,7 +19,7 @@
 * Fixed - PDO usage in AjaxHandler annotated with phpcs:ignore — required for external OpenCart DB connection ($wpdb is WP-only)
 * Fixed - scripts/bump_version.php marked with phpcs:disable — CLI tool, not web-facing
 * Fixed - SqlImporter error_log rebranded from OctoWoo to CartShift
-* Update - Plugin header: Tested up to WordPress 7.0, WC tested up to 10.0, Requires PHP 8.0
+* Update - Plugin header: Tested up to WordPress 7.0, WC tested up to 10.7.0, Requires PHP 8.0
 
 2026-05-21 - version 2.5.49
 * Fixed - Logs tab now loads most recent run entries automatically after a background migration completes, even when the browser was closed during the run
