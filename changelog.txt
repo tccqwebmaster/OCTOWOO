@@ -1,86 +1,88 @@
-= 2.5.50 - 2026-05-21 =
-* Fix: Image HTTP fallback now URL-encodes path segments so filenames with spaces and parentheses (e.g. "iPhone (8).jpg") download correctly instead of returning 404.
+*** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
-= 2.5.49 - 2026-05-21 =
-* Fix: Logs tab now loads most recent run entries automatically after a background migration completes, even when the browser was closed during the run.
-* Fix: refreshLogs() resolves to the latest run_id from checkpoints when no currentRunId is present in the browser session.
+2026-05-21 - version 2.5.50
+* Fixed - Image HTTP fallback now URL-encodes path segments so filenames with spaces and parentheses (e.g. "iPhone (8).jpg") download correctly instead of returning 404
 
-= 2.5.48 - 2026-05-21 =
-* Fix: OrderMigrator now warm-loads product, customer and order id_maps in 3 queries instead of 1 DB query per order line item — significant speed improvement for large order sets.
-* Fix: Orders now have a meta-based duplicate fallback (_octowoo_oc_order_id) checked in both HPOS and legacy post-table, preventing duplicate orders on re-run after id_map reset.
-* Fix: CustomerMigrator warm-loads customer id_map for safe in-memory duplicate detection on re-runs.
+2026-05-21 - version 2.5.49
+* Fixed - Logs tab now loads most recent run entries automatically after a background migration completes, even when the browser was closed during the run
+* Fixed - refreshLogs() resolves to the latest run_id from checkpoints when no currentRunId is present in the browser session
 
-= 2.5.47 - 2026-05-21 =
-* New: AbstractMigrator::autoFixTempSlugs() — scans taxonomies for leftover ow-t-XXXX temp slugs and replaces them with the correct primary-language slug automatically.
-* Fix: autoFixTempSlugs() is now called at multilingual pass completion — no manual Fix Category Slugs button needed on a fresh migration.
-* Fix: autoFixTempSlugs() is called at SeoMigrator first-chunk start — SEO slug-setting always operates on clean slugs even if multilingual was interrupted.
+2026-05-21 - version 2.5.48
+* Fixed - OrderMigrator now warm-loads product, customer and order id_maps in 3 queries instead of 1 DB query per order line item — significant speed improvement for large order sets
+* Fixed - Orders now have a meta-based duplicate fallback checked in both HPOS and legacy post-table, preventing duplicate orders on re-run after id_map reset
+* Fixed - CustomerMigrator warm-loads customer id_map for safe in-memory duplicate detection on re-runs
 
-= 2.5.46 - 2026-05-20 =
-* Fix: MySQL gone-away detection now checks exception message string ("server has gone away", "lost connection", "broken pipe") before errorInfo[1] code. errorInfo[1] is null when prepare() itself fails, causing the previous retry to silently never fire.
+2026-05-21 - version 2.5.47
+* Added - AbstractMigrator::autoFixTempSlugs() scans taxonomies for leftover ow-t-XXXX temp slugs and replaces them with the correct primary-language slug automatically
+* Fixed - autoFixTempSlugs() is now called at multilingual pass completion — no manual fix button needed on a fresh migration
+* Fixed - autoFixTempSlugs() is called at SeoMigrator first-chunk start — SEO slug-setting always operates on clean slugs even if multilingual was interrupted
 
-= 2.5.45 - 2026-05-20 =
-* Fix: Removed PDO::MYSQL_ATTR_RECONNECT constant which is undefined on some PHP/mysqlnd builds and caused a fatal connection error. Auto-reconnect logic in query() is sufficient.
+2026-05-20 - version 2.5.46
+* Fixed - MySQL gone-away detection now checks exception message string before errorInfo[1] code — errorInfo[1] is null when prepare() itself fails, causing the previous retry to silently never fire
 
-= 2.5.44 - 2026-05-20 =
-* Fix: DatabaseConnector::query() now automatically reconnects and retries once on MySQL error 2006 (server has gone away) and 2013 (lost connection). Background migrations no longer crash when the DB connection idles past wait_timeout between batches.
+2026-05-20 - version 2.5.45
+* Fixed - Removed PDO::MYSQL_ATTR_RECONNECT constant which is undefined on some PHP/mysqlnd builds and caused a fatal connection error on activation
 
-= 2.5.43 - 2026-05-20 =
-* New: CheckpointManager::warmIdMapCache(entity) bulk-loads entire id_map for one entity type in 1 SQL query. Re-runs of 6,000+ products now use O(1) in-memory lookups instead of 6,000 DB round-trips.
-* New: Multilingual readiness pre-check — new button scans WooCommerce and reports exact count of missing secondary-language translations per entity type before running the multilingual pass.
-* Fix: ManufacturerMigrator now has 3-layer duplicate guard (id_map → _octowoo_oc_manufacturer_id meta with WPML lang filter → get_term_by name). Brands no longer duplicate on re-runs after id_map reset.
-* Fix: CategoryMigrator by_meta SQL now JOINs icl_translations and filters by primary language code. Prevents Arabic WPML stub terms from being returned instead of the English primary category.
-* Fix: warmIdMapCache called at start of ProductMigrator and ManufacturerMigrator for fast re-runs.
+2026-05-20 - version 2.5.44
+* Fixed - DatabaseConnector::query() now automatically reconnects and retries once on MySQL error 2006 (server has gone away) and 2013 (lost connection). Background migrations no longer crash when the DB connection idles past wait_timeout between batches
 
-= 2.5.42 - 2026-05-19 =
-* Fix: Multilingual pass no longer drops English items from WPML language filter. Fixed by checking current language before re-registering — prevents 290-to-42 category count regression.
-* Fix: Category temp slugs (ow-t-XXXX) now correctly replaced with final slugs using direct $wpdb->update instead of wp_update_term (which triggered WPML slug conflict errors).
-* Fix: Same English drop bug fixed for products and brands.
-* New: Remove Duplicate Brands button — merges duplicate brand terms and re-assigns products.
+2026-05-20 - version 2.5.43
+* Added - CheckpointManager::warmIdMapCache(entity) bulk-loads entire id_map for one entity type in 1 SQL query. Re-runs of 6,000+ products now use O(1) in-memory lookups instead of 6,000 DB round-trips
+* Added - Multilingual readiness pre-check button scans WooCommerce and reports exact count of missing secondary-language translations per entity type before running the multilingual pass
+* Fixed - ManufacturerMigrator now has 3-layer duplicate guard (id_map, term meta with WPML lang filter, name lookup). Brands no longer duplicate on re-runs after id_map reset
+* Fixed - CategoryMigrator by_meta SQL now JOINs icl_translations and filters by primary language code. Prevents Arabic WPML stub terms from being returned instead of the English primary category
 
-= 2.5.41 - 2026-05-18 =
-* Performance: updateProduct uses direct $wpdb->update + clean_post_cache instead of wp_update_post, eliminating ~15 WC hooks per product. Migration speed increased significantly.
-* Fix: Log viewer now shows entries newest-first consistently.
+2026-05-19 - version 2.5.42
+* Fixed - Multilingual pass no longer drops English items from WPML language filter. Fixed by checking current language before re-registering — prevents category count regression
+* Fixed - Category temp slugs (ow-t-XXXX) now correctly replaced using direct DB update instead of wp_update_term which triggered WPML slug conflict errors
+* Added - Remove Duplicate Brands button merges duplicate brand terms and re-assigns products
 
-= 2.5.40 - 2026-05-17 =
-* Fix: Progress table now rendered in PHP on page load (not client-side JS) — resolves race condition where table appeared empty on first load.
-* Fix: All 17 migrators always shown in progress table immediately, even before migration starts.
-* New: Background Mode checker validates Action Scheduler / WP-Cron availability before starting background migration.
+2026-05-18 - version 2.5.41
+* Update - updateProduct uses direct DB update instead of wp_update_post, eliminating WC hooks per product and significantly increasing migration speed
+* Fixed - Log viewer now shows entries newest-first consistently
 
-= 2.5.39 - 2026-05-16 =
-* Performance: TagMigrator rewritten with direct INSERT IGNORE into wp_term_relationships — 20x faster than wp_set_object_terms. Pre-loads full term cache in one query.
-* Fix: Tag duplicate term error caused by WPML hooks firing on direct DB inserts — resolved with check-before-insert guard.
-* Fix: Reset Specific popup now appears correctly. Product Filters and Downloads included in reset list.
+2026-05-17 - version 2.5.40
+* Fixed - Progress table now rendered in PHP on page load, resolving race condition where table appeared empty on first load
+* Fixed - All 17 migrators always shown in progress table immediately, even before migration starts
+* Added - Background Mode checker validates Action Scheduler and WP-Cron availability before starting background migration
 
-= 2.5.38 - 2026-05-15 =
-* Fix: 873 missing products caused by stale id_map entries pointing to deleted WooCommerce posts. Now validates get_post_status() before treating id_map entry as valid.
-* Performance: SeoMigrator slug updates use direct $wpdb->update — 10x faster than wp_update_post.
+2026-05-16 - version 2.5.39
+* Update - TagMigrator rewritten with direct INSERT IGNORE into wp_term_relationships — 20x faster than wp_set_object_terms
+* Fixed - Tag duplicate term error caused by WPML hooks firing on direct DB inserts — resolved with check-before-insert guard
+* Fixed - Reset Specific popup now appears correctly. Product Filters and Downloads included in reset list
 
-= 2.5.37 - 2026-05-14 =
-* Performance: ImageMigrator warmPathCache() loads all existing attachment paths in 1 query. Previous version did 1 DB query per image resulting in 37-minute delays for 4,000+ products.
-* Fix: Smart Reset — Reset Specific keeps Categories and Images marked as COMPLETED when resetting Products or later migrators.
-* Fix: Log viewer order (newest first) and skipped count in progress table.
+2026-05-15 - version 2.5.38
+* Fixed - 873 missing products caused by stale id_map entries pointing to deleted WooCommerce posts. Now validates post status before treating id_map entry as valid
+* Update - SeoMigrator slug updates use direct DB update — 10x faster than wp_update_post
 
-= 2.5.36 - 2026-05-13 =
-* Performance: 5–10x overall migration speed increase. Direct DB writes for products, orders, and images. Suppressed WC hooks, transients, and intermediate image sizes during migration.
-* Fix: Progress table flickering every 3 seconds — rows now updated in-place, not replaced.
-* Fix: Pause/Abort/Skip buttons stay enabled after page refresh during active run.
-* Fix: Duplicate progress rows from old aborted runs no longer shown.
+2026-05-14 - version 2.5.37
+* Update - ImageMigrator warmPathCache() loads all existing attachment paths in 1 query. Previous version caused 37-minute delays for 4,000+ products
+* Fixed - Smart Reset keeps Categories and Images marked as COMPLETED when resetting Products or later migrators
+* Fixed - Log viewer order (newest first) and skipped count in progress table
 
-= 2.5.35 - 2026-05-12 =
-* Fix: Completed migrators no longer restarted when resuming an interrupted migration. Checkpoint status correctly preserved across resume.
+2026-05-13 - version 2.5.36
+* Update - 5-10x overall migration speed increase. Direct DB writes for products, orders, and images. Suppressed WC hooks, transients, and intermediate image sizes during migration
+* Fixed - Progress table flickering every 3 seconds — rows now updated in-place, not replaced
+* Fixed - Pause, Abort and Skip buttons stay enabled after page refresh during active run
+* Fixed - Duplicate progress rows from old aborted runs no longer shown
 
-= 2.5.34 - 2026-05-11 =
-* Fix: Category, brand, and tag slug conflicts ("already in use by another term") — all slug updates now use direct $wpdb->update instead of wp_update_term to bypass WPML uniqueness checks.
+2026-05-12 - version 2.5.35
+* Fixed - Completed migrators no longer restarted when resuming an interrupted migration. Checkpoint status correctly preserved across resume
 
-= 2.5.33 - 2026-05-10 =
-* New: Source store summary cards displayed after Pre-Migration Scan — shows product count, category count, image size, and DB stats before starting.
+2026-05-11 - version 2.5.34
+* Fixed - Category, brand, and tag slug conflicts (already in use by another term) — all slug updates now use direct DB update to bypass WPML uniqueness checks
 
-= 2.4.0 - 2026-04-20 =
-* Major: Complete end-to-end migration flow overhaul. Chunked batch processing with checkpoint resume. Action Scheduler background mode. Live progress polling. DB-backed log viewer.
-* New: WPML multilingual integration — translates all products, categories, brands, and tags to a secondary language using WPML's icl_translations API.
-* New: SEO URL migrator — migrates OpenCart SEO slugs to WooCommerce and generates .htaccess 301 redirects.
-* New: Pre-migration scanner — validates OC DB connection, image path, and estimates migration scope before starting.
-* New: HPOS compatibility for orders.
+2026-05-10 - version 2.5.33
+* Added - Source store summary cards displayed after Pre-Migration Scan showing product count, category count, image size, and DB stats before starting
 
-= 2.3.2 - 2026-03-01 =
-* Initial public release. Migrates products, categories, images, customers, orders, coupons, reviews, and CMS pages from OpenCart to WooCommerce.
+2026-04-20 - version 2.4.0
+* Added - Complete end-to-end migration flow overhaul with chunked batch processing and checkpoint resume
+* Added - Action Scheduler background mode — browser can be closed, migration runs on server
+* Added - Live progress polling with real-time dashboard and DB-backed log viewer
+* Added - WPML multilingual integration — translates all products, categories, brands, and tags to a secondary language
+* Added - SEO URL migrator — migrates OpenCart SEO slugs and generates .htaccess 301 redirects
+* Added - Pre-migration scanner validates OC DB connection, image path, and estimates migration scope
+* Added - HPOS compatibility for orders
+
+2026-03-01 - version 2.3.2
+* Added - Initial release. Migrates products, categories, images, customers, orders, coupons, reviews, and CMS pages from OpenCart to WooCommerce
