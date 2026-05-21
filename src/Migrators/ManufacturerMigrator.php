@@ -110,8 +110,11 @@ class ManufacturerMigrator extends AbstractMigrator {
 
         // If WPML is active, switch to the primary language so that wp_insert_term()
         // calls during this batch are auto-assigned to the correct language by WPML.
-        // Without this, brand terms are created without any WPML language metadata and
-        // the English admin shows "No Brands Found" even though the terms exist in DB.
+        // Switch WPML to primary language for every chunk.
+        // In background (Action Scheduler) mode each chunk is a separate PHP process.
+        // WPML re-initialises per-process and may default to Arabic if the site was
+        // last browsed in Arabic. Without this, brand terms get registered as Arabic
+        // primary instead of English, causing English (0) in the admin.
         $this->wpmlSwitchToPrimary();
 
         $result = $this->batch->run(
