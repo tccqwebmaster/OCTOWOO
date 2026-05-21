@@ -463,7 +463,7 @@ class AjaxHandler {
                     }
                     // Checkpoint reset logged via error_log for debugging.
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions
-                    error_log( '[CartShift] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id );
+                    error_log( '[CartShift] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
                 }
             }
         }
@@ -1229,11 +1229,11 @@ class AjaxHandler {
 
     private function actionImportSql(): void {
         // Validate upload.
-        if ( empty( $_FILES['sql_file']['tmp_name'] ) || ! is_uploaded_file( $_FILES['sql_file']['tmp_name'] ) ) {
+        if ( empty( $_FILES['sql_file']['tmp_name'] ) || ! is_uploaded_file( $_FILES['sql_file']['tmp_name'] ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized ) {
             wp_send_json_error( [ 'message' => 'No SQL file uploaded.' ] );
         }
 
-        $file     = $_FILES['sql_file'];
+        $file     = $_FILES['sql_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
         $tmp_path = $file['tmp_name'];
         $name     = sanitize_file_name( $file['name'] );
         $ext      = strtolower( pathinfo( $name, PATHINFO_EXTENSION ) );
@@ -1306,7 +1306,7 @@ class AjaxHandler {
     // ── Action: import images ZIP ─────────────────────────────────────────────
 
     private function actionImportImages(): void {
-        if ( empty( $_FILES['images_zip']['tmp_name'] ) || ! is_uploaded_file( $_FILES['images_zip']['tmp_name'] ) ) {
+        if ( empty( $_FILES['images_zip']['tmp_name'] ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized || ! is_uploaded_file( $_FILES['images_zip']['tmp_name'] ) ) {
             wp_send_json_error( [ 'message' => 'No ZIP file uploaded.' ] );
         }
 
@@ -1410,13 +1410,13 @@ class AjaxHandler {
             $db_config['source']   = sanitize_key( $_POST['source'] ?? 'remote' ); // phpcs:ignore WordPress.Security.NonceVerification
 
             // Password: use posted value; if blank keep saved encrypted value.
-            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = sanitize_text_field( wp_unslash( $_POST['db_pass'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification
             if ( $posted_pass !== '' && $posted_pass !== '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' ) {
                 $db_config['password'] = $posted_pass;
             }
         } elseif ( $has_nested ) {
             // Nested-key format — direct form submission (Settings page).
-            $raw = $_POST['octowoo']['db']; // phpcs:ignore WordPress.Security.NonceVerification
+            $raw = array_map( 'sanitize_text_field', wp_unslash( (array) ( $_POST['octowoo']['db'] ?? [] ) ) ); // phpcs:ignore WordPress.Security.NonceVerification
             $db_config['host']     = sanitize_text_field( $raw['host']     ?? '' );
             $db_config['port']     = (int) ( $raw['port']     ?? 3306 );
             $db_config['database'] = sanitize_text_field( $raw['database'] ?? '' );
@@ -1536,7 +1536,7 @@ class AjaxHandler {
             $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['socket']   = sanitize_text_field( $_POST['db_socket'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
-            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = sanitize_text_field( wp_unslash( $_POST['db_pass'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification
             if ( $posted_pass !== '' ) {
                 $config['db']['password'] = $posted_pass;
             }
@@ -1743,7 +1743,7 @@ class AjaxHandler {
         } );
 
         // phpcs:ignore WordPress.Security.NonceVerification
-        $raw_entities = (array) ( $_POST['entities'] ?? [] );
+        $raw_entities = array_map( 'sanitize_key', (array) ( $_POST['entities'] ?? [] ) );
         $allowed      = [ 'products', 'categories', 'tags', 'customers', 'orders', 'coupons', 'reviews', 'manufacturers', 'information', 'downloads', 'filters' ];
         $entities     = array_values( array_filter( $raw_entities, fn( $e ) => in_array( sanitize_key( $e ), $allowed, true ) ) );
         $entities     = array_map( 'sanitize_key', $entities );
@@ -1839,7 +1839,7 @@ class AjaxHandler {
     // ── Action: import settings from JSON ─────────────────────────────────────
 
     private function actionImportSettings(): void {
-        $raw = isset( $_POST['config'] ) ? wp_unslash( $_POST['config'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
+        $raw = isset( $_POST['config'] ) ? sanitize_textarea_field( wp_unslash( (string) $_POST['config'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
         if ( ! $raw ) {
             wp_send_json_error( [ 'message' => __( 'No config data received.', 'octowoo' ) ] );
         }
@@ -2158,7 +2158,7 @@ class AjaxHandler {
             $config['db']['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
-            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = sanitize_text_field( wp_unslash( $_POST['db_pass'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification
             if ( $posted_pass !== '' ) { $config['db']['password'] = $posted_pass; }
         }
 
@@ -2280,7 +2280,7 @@ class AjaxHandler {
             $config['db']['database'] = sanitize_text_field( $_POST['db_name']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['username'] = sanitize_text_field( $_POST['db_user']   ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification
             $config['db']['prefix']   = sanitize_text_field( $_POST['db_prefix'] ?? 'oc_' ); // phpcs:ignore WordPress.Security.NonceVerification
-            $posted_pass = $_POST['db_pass'] ?? ''; // phpcs:ignore WordPress.Security.NonceVerification
+            $posted_pass = sanitize_text_field( wp_unslash( $_POST['db_pass'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification
             if ( $posted_pass !== '' ) { $config['db']['password'] = $posted_pass; }
         }
 
@@ -2824,8 +2824,10 @@ class AjaxHandler {
             "SELECT t.term_id, t.slug, tt.taxonomy
              FROM {$wpdb->terms} t
              JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
-             WHERE t.slug LIKE 'ow-t-%'
+             WHERE t.slug LIKE %s
                AND tt.taxonomy IN ('product_cat', 'product_brand', 'product_tag')",
+            $wpdb->esc_like( 'ow-t-' ) . '%'
+        ),
             ARRAY_A
         );
 

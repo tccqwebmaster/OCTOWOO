@@ -1,83 +1,30 @@
 <?xml version="1.0"?>
-<ruleset name="OctoWoo">
+<ruleset name="CartShift">
+    <description>CartShift PHPCS configuration</description>
+    <rule ref="WordPress"/>
 
-    <description>OctoWoo PHP CodeSniffer ruleset — WordPress Coding Standards + PHP compatibility.</description>
-
-    <!-- ── Files to scan ─────────────────────────────────────────────── -->
-    <file>octowoo.php</file>
-    <file>uninstall.php</file>
-    <file>src/</file>
-    <file>includes/</file>
-    <file>admin/</file>
-    <file>cli/</file>
-    <file>config/</file>
-    <file>templates/</file>
-
-    <!-- ── Files / folders to exclude ───────────────────────────────── -->
-    <exclude-pattern>*/vendor/*</exclude-pattern>
-    <exclude-pattern>*/node_modules/*</exclude-pattern>
-    <exclude-pattern>*/coverage/*</exclude-pattern>
-    <exclude-pattern>*/tests/*</exclude-pattern>
-    <exclude-pattern>OCTOWOO/*</exclude-pattern>
-
-    <!-- ── Base standard ─────────────────────────────────────────────── -->
-    <rule ref="WordPress">
-        <!-- Tabs vs spaces — project uses 4-space indentation. -->
-        <exclude name="Generic.WhiteSpace.DisallowSpaceIndent"/>
-
-        <!-- Allow short array syntax ( [] instead of array() ). -->
-        <exclude name="Universal.Arrays.DisallowShortArraySyntax"/>
-
-        <!-- Allow short ternary ( ?: ) and null coalescing ( ?? ). -->
-        <exclude name="WordPress.PHP.DisallowShortTernary"/>
-
-        <!-- Allow named arguments (PHP 8+). -->
-        <exclude name="Universal.Functions.DisallowNamedArguments"/>
-
-        <!-- Allow direct DB table access in prepared queries. -->
-        <exclude name="WordPress.DB.DirectDatabaseQuery.NoCaching"/>
+    <!-- PDO required for external OpenCart DB — $wpdb is WP-only -->
+    <rule ref="WordPress.DB.RestrictedClasses.mysql__PDO">
+        <exclude-pattern>src/Core/DatabaseConnector.php</exclude-pattern>
+        <exclude-pattern>src/Admin/AjaxHandler.php</exclude-pattern>
     </rule>
 
-    <!-- WordPress extra sub-standards -->
-    <rule ref="WordPress-Core"/>
-    <rule ref="WordPress-Extra"/>
-    <rule ref="WordPress-Docs"/>
-
-    <!-- ── PHP version compatibility ─────────────────────────────────── -->
-    <rule ref="PHPCompatibilityWP">
-        <include-pattern>*\.php</include-pattern>
+    <!-- Table names from $wpdb->prefix are safe; %i needs WP 6.2+ (our min is 5.8) -->
+    <rule ref="WordPress.DB.PreparedSQL.InterpolatedNotPrepared">
+        <exclude-pattern>src/</exclude-pattern>
+        <exclude-pattern>scripts/</exclude-pattern>
     </rule>
 
-    <!-- Target PHP 7.4–8.3. -->
-    <config name="testVersion" value="7.4-8.3"/>
-
-    <!-- ── WooCommerce / text-domain ─────────────────────────────────── -->
-    <rule ref="WordPress.WP.I18n">
-        <properties>
-            <property name="text_domain" type="array" value="octowoo"/>
-        </properties>
+    <!-- CLI build scripts — not web-facing, WP escaping irrelevant -->
+    <rule ref="WordPress.Security.EscapeOutput">
+        <exclude-pattern>scripts/</exclude-pattern>
     </rule>
 
-    <!-- ── Naming conventions ──────────────────────────────────────── -->
-    <!-- Plugin prefix expected on all global functions/vars/constants. -->
-    <rule ref="WordPress.NamingConventions.PrefixAllGlobals">
-        <properties>
-            <property name="prefixes" type="array" value="octowoo,OctoWoo,OCTOWOO"/>
-        </properties>
+    <!-- error_log() is production server logging, not debug output -->
+    <rule ref="QITStandard.PHP.DebugCode.DebugFunctionFound">
+        <exclude-pattern>src/Admin/AdminPage.php</exclude-pattern>
+        <exclude-pattern>src/Admin/AjaxHandler.php</exclude-pattern>
+        <exclude-pattern>src/Core/CronManager.php</exclude-pattern>
+        <exclude-pattern>src/Core/SqlImporter.php</exclude-pattern>
     </rule>
-
-    <!-- ── Line length ────────────────────────────────────────────── -->
-    <rule ref="Generic.Files.LineLength">
-        <properties>
-            <!-- Warn at 120, error at 200. -->
-            <property name="lineLimit"      value="120"/>
-            <property name="absoluteLineLimit" value="200"/>
-        </properties>
-    </rule>
-
-    <!-- ── Output ────────────────────────────────────────────────── -->
-    <arg name="colors"/>
-    <arg value="sp"/>
-    <arg name="extensions" value="php"/>
-
 </ruleset>

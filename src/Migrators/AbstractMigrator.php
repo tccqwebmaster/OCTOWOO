@@ -371,8 +371,9 @@ abstract class AbstractMigrator {
                     "SELECT t.term_id, tt.term_taxonomy_id, t.slug
                      FROM {$wpdb->terms} t
                      JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
-                     WHERE tt.taxonomy = %s AND t.slug LIKE 'ow-t-%%'",
-                    $taxonomy
+                     WHERE tt.taxonomy = %s AND t.slug LIKE %s",
+                    $taxonomy,
+                    $wpdb->esc_like( 'ow-t-' ) . '%'
                 ),
                 ARRAY_A
             );

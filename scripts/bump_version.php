@@ -1,6 +1,10 @@
 <?php
+// phpcs:disable WordPress.Security.EscapeOutput,WordPress.Security.ValidatedSanitizedInput,WordPress.DB
 /**
- * OctoWoo version bump script.
+ * CartShift version bump script.
+ *
+ * CLI-only tool — runs on developer machine, not on a web server.
+ * WordPress coding standards for output escaping do not apply here.
  *
  * Updates ALL version references in one pass:
  *   1. octowoo.php  → plugin header  "* Version: X.Y.Z"

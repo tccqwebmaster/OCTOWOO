@@ -188,7 +188,7 @@ if ( $_ow_show_wizard ) {
                         printf(
                             '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;">' .
                             '<input type="checkbox" class="ow-entity-chk" value="%s"%s> %s%s</label>',
-                            esc_attr( $ow_ent['value'] ), $ow_chk, esc_html( $ow_ent['label'] ), $ow_badge
+                            esc_attr( $ow_ent['value'] ), esc_attr( $ow_chk ), esc_html( $ow_ent['label'] ), wp_kses_post( $ow_badge )
                         );
                         foreach ( $ow_ent['children'] as $ow_ch ) {
                             $ow_ch_badge = $ow_ch['scan_key']
@@ -198,7 +198,7 @@ if ( $_ow_show_wizard ) {
                             printf(
                                 '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#555;margin:6px 0 0 26px;">' .
                                 '<input type="checkbox" class="ow-entity-chk" value="%s"%s> %s%s</label>',
-                                esc_attr( $ow_ch['value'] ), $ow_ch_chk, esc_html( $ow_ch['label'] ), $ow_ch_badge
+                                esc_attr( $ow_ch['value'] ), esc_attr( $ow_ch_chk ), esc_html( $ow_ch['label'] ), wp_kses_post( $ow_ch_badge )
                             );
                         }
                         echo '</div>';
@@ -312,7 +312,7 @@ if ( $_ow_show_wizard ) {
                     <input type="checkbox" id="<?php echo esc_attr( $ow_o['id'] ); ?>" class="ow-step2-opt"
                            <?php checked( $ow_o['checked'] ); ?> style="margin-top:3px;flex-shrink:0;">
                     <span>
-                        <span style="font-weight:600;"><?php echo $ow_o['icon']; ?> <?php echo $ow_o['label']; ?></span><br>
+                        <span style="font-weight:600;"><?php echo esc_html( $ow_o['icon'] ); ?> <?php echo esc_html( $ow_o['label'] ); ?></span><br>
                         <span style="font-size:11px;color:#666;line-height:1.5;"><?php echo esc_html( $ow_o['hint'] ); ?></span>
                     </span>
                 </label>
@@ -532,10 +532,10 @@ if ( $_ow_run_id ) {
         $bar_cls = $status === 'completed' ? ' done' : ( $status === 'running' ? ' running' : ( $status === 'failed' ? ' failed' : '' ) );
         echo '<tr data-migrator="' . esc_attr( $key ) . '">';
         echo '<td><strong>' . esc_html( $label ) . '</strong></td>';
-        echo '<td><span style="color:' . esc_attr( $color ) . ';white-space:nowrap;">' . $icon . ' ' . strtoupper( $status ) . '</span></td>';
+        echo '<td><span style="color:' . esc_attr( $color ) . ';white-space:nowrap;">' . esc_html( $icon ) . ' ' . esc_html( strtoupper( $status ) ) . '</span></td>';
         echo '<td>' . esc_html( $items ) . '</td>';
-        echo '<td><div class="ow-progress-bar-wrap"><div class="ow-progress-bar' . esc_attr( $bar_cls ) . '" style="width:' . $bar_w . '%"></div></div></td>';
-        echo '<td><strong>' . $pct . '%</strong></td>';
+        echo '<td><div class="ow-progress-bar-wrap"><div class="ow-progress-bar' . esc_attr( $bar_cls ) . '" style="width:' . (int) $bar_w . '%"></div></div></td>';
+        echo '<td><strong>' . (int) $pct . '%</strong></td>';
         echo '</tr>';
     }
 } else {
