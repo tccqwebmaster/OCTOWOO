@@ -434,8 +434,8 @@ class DataPurger {
                        JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                       WHERE tt.taxonomy = %s
                         AND t.name LIKE %s",
-                    $wpdb->esc_like( 'octowoo-ar-new-' ) . '%',
-                    $taxonomy
+                    $taxonomy,
+                    $wpdb->esc_like( 'octowoo-ar-new-' ) . '%'
                 )
             ) );
 
