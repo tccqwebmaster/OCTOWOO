@@ -1,14 +1,33 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
 2026-05-21 - version 2.5.50
-* Fixed - Image HTTP fallback now URL-encodes path segments so filenames with spaces and parentheses (e.g. "iPhone (8).jpg") download correctly instead of returning 404
+* Added - phpcs.xml configuration to document architectural exceptions (PDO for external DB, table name interpolation, CLI scripts)
+* Added - CartShift branding — plugin renamed from OctoWoo to CartShift for WooCommerce Marketplace submission
+* Added - changelog.txt in WooCommerce Marketplace required format
+* Fixed - Activation warnings on read-only filesystem (QIT sandbox): activator now checks is_writable() before file operations, wp_mkdir_p() return value checked, all file writes are best-effort with silent failure
+* Fixed - Logger file writes now use silent @file_put_contents() — DB table is primary log store, file logging is best-effort
+* Fixed - Image HTTP fallback URL-encodes path segments so filenames with spaces and parentheses (e.g. "iPhone (8).jpg") download correctly
+* Fixed - filter_input() calls replaced FILTER_UNSAFE_RAW with FILTER_VALIDATE_BOOLEAN for boolean flags (dry_run, clear_orders)
+* Fixed - filter_input() calls replaced FILTER_SANITIZE_SPECIAL_CHARS with FILTER_SANITIZE_FULL_SPECIAL_CHARS throughout AjaxHandler
+* Fixed - $_POST['octowoo'] input sanitized via new deepSanitize() recursive helper (sanitize_textarea_field per value, sanitize_key per key)
+* Fixed - $_POST['db_port'] sanitized with absint(), $_POST['db_pass'] with sanitize_text_field + wp_unslash
+* Fixed - $_POST['entities'] sanitized with array_map('sanitize_key'), $_POST['config'] with sanitize_textarea_field
+* Fixed - $_FILES upload handlers — phpcs:ignore added for PHP-controlled tmp_name paths
+* Fixed - Template output escaping: $ow_chk/badge wrapped with esc_attr()/wp_kses_post(), $icon/$status with esc_html(), $bar_w/$pct with (int) cast
+* Fixed - LIKE wildcard SQL queries now use $wpdb->esc_like() + %s placeholder in DataPurger, AbstractMigrator, AjaxHandler
+* Fixed - error_log() calls annotated with phpcs:ignore QITStandard.PHP.DebugCode — legitimate production server logging
+* Fixed - PDO usage in AjaxHandler annotated with phpcs:ignore — required for external OpenCart DB connection ($wpdb is WP-only)
+* Fixed - scripts/bump_version.php marked with phpcs:disable — CLI tool, not web-facing
+* Fixed - SqlImporter error_log rebranded from OctoWoo to CartShift
+* Update - Plugin header: Tested up to WordPress 7.0, WC tested up to 10.0, Requires PHP 8.0
 
 2026-05-21 - version 2.5.49
 * Fixed - Logs tab now loads most recent run entries automatically after a background migration completes, even when the browser was closed during the run
 * Fixed - refreshLogs() resolves to the latest run_id from checkpoints when no currentRunId is present in the browser session
+* Fixed - actionGetLogs resolves 'latest' keyword to most recent run_id from wp_octowoo_checkpoints ORDER BY updated_at DESC
 
 2026-05-21 - version 2.5.48
-* Fixed - OrderMigrator now warm-loads product, customer and order id_maps in 3 queries instead of 1 DB query per order line item — significant speed improvement for large order sets
+* Fixed - OrderMigrator now warm-loads product, customer and order id_maps in 3 queries instead of 1 DB query per order line item
 * Fixed - Orders now have a meta-based duplicate fallback checked in both HPOS and legacy post-table, preventing duplicate orders on re-run after id_map reset
 * Fixed - CustomerMigrator warm-loads customer id_map for safe in-memory duplicate detection on re-runs
 
