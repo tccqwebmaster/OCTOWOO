@@ -85,6 +85,12 @@ class CategoryMigrator extends AbstractMigrator {
         // calls during this batch are auto-assigned to the correct language by WPML.
         $this->wpmlSwitchToPrimary();
 
+        // Switch WPML to primary language for this chunk.
+        // Called per-chunk (not just per-migrate()) because in background mode
+        // each chunk is a separate PHP process — the switch from the previous
+        // chunk does not persist to this one.
+        $this->wpmlSwitchToPrimary();
+
         // resume_after_id is intentionally 0: we use OFFSET-based slicing on the
         // stable pre-sorted array, so ID-based skipping would be incorrect here.
         // In chunk mode BatchProcessor already uses processed_count as the offset.
