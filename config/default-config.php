@@ -62,7 +62,7 @@ return [
         // Items processed per batch (also used as chunk size in chunked AJAX mode).
         // Lower = safer on shared/managed hosting (avoids PHP timeout).
         // Recommended: 10–30 for products, up to 100 for simple entities like categories.
-        'batch_size' => 20,
+        'batch_size' => 10,
 
         // Dry-run: simulate all steps without writing anything to the DB.
         'dry_run'         => false,
