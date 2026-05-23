@@ -561,6 +561,8 @@
     }
 
     function runNextChunk() {
+        // Guard against stale chain invocations (e.g. after abort or page refresh).
+        // Uses migrationEpoch — if epoch changes mid-chain, all pending callbacks exit.
         if (!isRunning) { return; }
 
         var shouldClearOrders = chunkClearOrdersPending ? 1 : 0;
@@ -580,10 +582,11 @@
         })
         .done(function (res) {
             if (dispatchEpoch !== migrationEpoch) { return; }
-
-            if (!res.success) {
-                var msg = (res.data && res.data.message) ? res.data.message : 'Chunk error.';
-                if (res.data && res.data.db_error) {
+            // Re-assert isRunning — polling may have seen a brief idle state
+            // between chunks and incorrectly set isRunning=false.
+            if (!res || !res.success) {
+                var msg = (res && res.data && res.data.message) ? res.data.message : 'Chunk error.';
+                if (res && res.data && res.data.db_error) {
                     msg = '🔌 Database error: ' + msg + ' — Go to Settings → Database Connection.';
                 }
                 chunkFailCount++;
@@ -595,16 +598,17 @@
                     return;
                 }
                 showToast('Chunk failed (' + chunkFailCount + '/3): ' + msg, 'warning', 5000);
+                isRunning = true; // ensure chain continues
                 setTimeout(runNextChunk, 2000);
                 return;
             }
 
             chunkFailCount = 0;
+            isRunning = true; // re-assert — polling cannot stop a foreground chain
             var data = res.data;
 
             if (data.run_id && !currentRunId) {
                 currentRunId = data.run_id;
-                // Start polling only NOW we have a valid run_id.
                 startPolling();
             }
 
@@ -644,7 +648,7 @@
                 return;
             }
 
-            // Continue to next chunk.
+            // Continue to next chunk immediately.
             setTimeout(runNextChunk, 50);
         })
         .fail(function (xhr) {
@@ -658,6 +662,7 @@
                 stopPolling();
                 return;
             }
+            isRunning = true; // re-assert for retry
             showToast('Request failed ' + statusMsg + ' — retrying (' + chunkFailCount + '/3)…', 'warning', 4000);
             setTimeout(runNextChunk, 3000);
         });
@@ -667,10 +672,12 @@
     function startProductsImagesRecovery()       { startMigration(false, false, 'products,images,related',          'Products + Images Recovery',    true); }
     function startCategoriesManufacturersRecovery() { startMigration(false, false, 'categories,manufacturers',      'Categories + Manufacturers',    true); }
     function startMultilingualRecovery() {
-        // Run in FOREGROUND (AJAX-driven) mode so chunks process while the
-        // dashboard is open — no WP-Cron / Action Scheduler dependency.
-        // If the user closes the browser, the background cron picks up.
-        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', false);
+        // Clear any stale cron lock first, then start the multilingual recovery run.
+        // Uses foreground AJAX chain (last param noClearOrders=true — don't wipe orders).
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
+        .always(function() {
+            startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', true);
+        });
     }
 
     /* ── Multilingual pre-check ─────────────────────────────────────────── */
