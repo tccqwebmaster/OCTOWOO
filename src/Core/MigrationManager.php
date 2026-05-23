@@ -230,10 +230,12 @@ class MigrationManager {
         // ── Concurrency guard ─────────────────────────────────────────────────
         // Prevents two simultaneous AJAX chunk requests from running the same
         // batch (race condition in fast-clicking browsers or server-side retries).
-        $lock_key = 'octowoo_chunk_lock_' . $this->run_id;
-        $lock_val   = get_transient( $lock_key );
-        // v2.4.72: lock stored as unix timestamp; treat as stale after 180 s.
-        $lock_stale = ( is_numeric( $lock_val ) && ( time() - (int) $lock_val ) > 180 );
+        $lock_key  = 'octowoo_chunk_lock_' . $this->run_id;
+        $lock_val  = get_transient( $lock_key );
+        // Treat lock as stale after 45 s — a single chunk with direct DB writes
+        // should never take longer than 30 s. 180 s caused 3-minute stuck states
+        // when PHP was killed mid-chunk before the finally{} could delete the lock.
+        $lock_stale = ( is_numeric( $lock_val ) && ( time() - (int) $lock_val ) > 45 );
         if ( $lock_val && ! $lock_stale ) {
             return [
                 'done_all'    => false,
@@ -244,7 +246,9 @@ class MigrationManager {
                 'report'      => null,
             ];
         }
-        set_transient( $lock_key, (string) time(), 180 ); // v2.4.72: 180 s — covers slow shared-hosting chunks.
+        // Always delete before re-setting so a previous stale lock is never inherited.
+        delete_transient( $lock_key );
+        set_transient( $lock_key, (string) time(), 60 );
 
         try {
             $res = $this->doRunNextChunk();

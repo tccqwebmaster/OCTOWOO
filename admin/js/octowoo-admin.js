@@ -618,6 +618,12 @@
                 updateETA(data.checkpoints, data.migrator, data.chunk);
             }
 
+            // Server is busy processing a previous chunk (lock held). Retry.
+            if (data.busy) {
+                setTimeout(runNextChunk, 500);
+                return;
+            }
+
             if (data.done_all) {
                 isRunning = false;
                 isPausedState = false;
