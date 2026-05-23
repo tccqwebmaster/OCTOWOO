@@ -94,6 +94,7 @@ class AjaxHandler {
             // v2.5.43 additions.
             'octowoo_multilingual_precheck',
             'octowoo_clear_cron_lock',
+            'octowoo_full_cleanup',
         ];
 
         foreach ( $actions as $action ) {
@@ -323,6 +324,10 @@ class AjaxHandler {
             case 'octowoo_clear_cron_lock':
                 delete_transient( 'doing_cron' );
                 wp_send_json_success( [ 'message' => 'Cron lock cleared.' ] );
+                break;
+
+            case 'octowoo_full_cleanup':
+                $this->actionFullCleanup();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -2040,7 +2045,121 @@ class AjaxHandler {
         wp_send_json_success( [ 'audit' => $audit, 'force' => $force ] );
     }
 
-    // ── Action: multilingual pre-check ────────────────────────────────────────
+    // ── Action: full post-migration cleanup ───────────────────────────────────
+
+    /**
+     * One-click cleanup after a completed (or interrupted+resumed) migration.
+     * Handles duplicate categories, duplicate brands, and orphan WPML terms.
+     * Safe to run multiple times — idempotent.
+     */
+    private function actionFullCleanup(): void {
+        global $wpdb;
+        $purger  = new \OctoWoo\Core\DataPurger( AdminPage::getConfig() );
+        $results = [];
+
+        // 1. Duplicate categories (product_cat).
+        $_POST['taxonomy'] = 'product_cat'; // phpcs:ignore WordPress.Security.NonceVerification
+        ob_start();
+        $this->actionDedupTerms();
+        $cat_output = ob_get_clean();
+
+        // 2. Duplicate brands.
+        $brand_taxonomies = [ 'pwb-brand', 'yith_product_brand', 'product_brand', 'pa_brand', 'brand' ];
+        $brand_removed    = 0;
+        foreach ( $brand_taxonomies as $tax ) {
+            if ( ! taxonomy_exists( $tax ) ) { continue; }
+            $dupes = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.name, COUNT(*) as cnt, MIN(t.term_id) as keep_id
+                 FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE tt.taxonomy = %s
+                 GROUP BY LOWER(t.name) HAVING COUNT(*) > 1",
+                $tax
+            ), ARRAY_A );
+            foreach ( (array) $dupes as $dupe ) {
+                $all_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT t.term_id FROM {$wpdb->terms} t
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                     WHERE LOWER(t.name) = LOWER(%s) AND tt.taxonomy = %s
+                     ORDER BY tt.count DESC, t.term_id ASC",
+                    $dupe['name'], $tax
+                ) );
+                if ( count( $all_ids ) < 2 ) { continue; }
+                $keep_id     = (int) $all_ids[0];
+                $delete_ids  = array_slice( $all_ids, 1 );
+                foreach ( $delete_ids as $del_id ) {
+                    $del_ttid  = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+                        $del_id, $tax
+                    ) );
+                    $keep_ttid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+                        $keep_id, $tax
+                    ) );
+                    if ( $del_ttid && $keep_ttid ) {
+                        $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                            "UPDATE IGNORE {$wpdb->term_relationships} SET term_taxonomy_id = %d WHERE term_taxonomy_id = %d",
+                            $keep_ttid, $del_ttid
+                        ) );
+                        $wpdb->delete( $wpdb->term_relationships, [ 'term_taxonomy_id' => $del_ttid ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    }
+                    wp_delete_term( (int) $del_id, $tax );
+                    $brand_removed++;
+                }
+            }
+        }
+
+        // 3. Orphan WPML translation terms.
+        $orphans_removed = 0;
+        try {
+            $orphans_removed = $purger->purgeOrphanTranslationTerms();
+        } catch ( \Throwable $e ) {
+            // Non-fatal — continue.
+        }
+
+        // 4. Fix temp ow-t slugs.
+        $slug_fixed = 0;
+        foreach ( [ 'product_cat', 'pwb-brand', 'yith_product_brand', 'product_brand' ] as $tax ) {
+            if ( ! taxonomy_exists( $tax ) ) { continue; }
+            // Find ow-t- slugs.
+            $broken = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.term_id, t.slug, t.name FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE tt.taxonomy = %s AND t.slug LIKE %s",
+                $tax,
+                $wpdb->esc_like( 'ow-t-' ) . '%'
+            ), ARRAY_A );
+            foreach ( (array) $broken as $row ) {
+                $clean = sanitize_title( $row['name'] );
+                if ( $clean && $clean !== $row['slug'] ) {
+                    $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => (int) $row['term_id'] ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    clean_term_cache( (int) $row['term_id'], $tax );
+                    $slug_fixed++;
+                }
+            }
+        }
+
+        // 5. Recount all terms.
+        wp_update_term_count_now(
+            $wpdb->get_col( "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy IN ('product_cat','product_tag')" ), // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            'product_cat'
+        );
+        flush_rewrite_rules( false );
+
+        wp_send_json_success( [
+            'message'         => sprintf(
+                'Cleanup complete. Duplicate brands removed: %d. Orphan WPML terms removed: %d. Temp slugs fixed: %d.',
+                $brand_removed,
+                $orphans_removed,
+                $slug_fixed
+            ),
+            'brands_removed'  => $brand_removed,
+            'orphans_removed' => $orphans_removed,
+            'slugs_fixed'     => $slug_fixed,
+        ] );
+    }
+
+
 
     /**
      * Scan WooCommerce for missing secondary-language (Arabic) WPML translations

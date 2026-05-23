@@ -194,6 +194,7 @@
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
         $('#ow-btn-ml-precheck').on('click', runMultilingualPrecheck);
         $('#ow-btn-clear-cron-lock').on('click', clearCronLock);
+        $('#ow-btn-full-cleanup').on('click', runFullCleanup);
         $('#ow-btn-fix-secondary-content').on('click', function() {
             var $b = $(this);
             $b.prop('disabled', true).text('Fixing...');
@@ -799,7 +800,23 @@
         .always(function() { $btn.prop('disabled', false).text('🔍 Check Multilingual Readiness'); });
     }
 
-    /* ── Clear WP-Cron lock ──────────────────────────────────────────── */
+    /* ── Full post-migration cleanup ─────────────────────────────────── */
+    function runFullCleanup() {
+        var $btn = $('#ow-btn-full-cleanup');
+        $btn.prop('disabled', true).text('Cleaning…');
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_full_cleanup', nonce: octoWoo.nonce })
+        .done(function(r) {
+            if (r && r.success) {
+                showToast('✅ ' + (r.data.message || 'Cleanup complete.'), 'success', 8000);
+            } else {
+                showToast('Cleanup failed.', 'error');
+            }
+        })
+        .fail(function() { showToast('Request failed.', 'error'); })
+        .always(function() { $btn.prop('disabled', false).text('🧹 Full Cleanup (Categories + Brands + Orphans)'); });
+    }
+
+
     function clearCronLock() {
         var $btn = $('#ow-btn-clear-cron-lock');
         $btn.prop('disabled', true).text('Clearing…');

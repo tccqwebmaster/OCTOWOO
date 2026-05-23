@@ -375,6 +375,10 @@ if ( $_ow_show_wizard ) {
                         title="<?php esc_attr_e( 'Clears the WP-Cron doing_cron transient lock. Use when background migration appears stuck — the lock prevents WP-Cron from running any hooks.', 'octowoo' ); ?>">
                         🔓 <?php esc_html_e( 'Clear Cron Lock', 'octowoo' ); ?>
                     </button>
+                    <button type="button" id="ow-btn-full-cleanup" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Removes duplicate categories, brands and Arabic WPML stub terms left by interrupted multilingual runs. Run once after multilingual completes.', 'octowoo' ); ?>">
+                        🧹 <?php esc_html_e( 'Full Cleanup (Categories + Brands + Orphans)', 'octowoo' ); ?>
+                    </button>
                     <button type="button" id="ow-btn-multilingual" class="ow-btn ow-btn-secondary"
                         title="<?php esc_attr_e( 'Re-runs the Arabic / secondary language translation pass for all products, categories, and brands using WPML or Polylang. Use after entering Arabic descriptions in OpenCart, or if translations were missing.', 'octowoo' ); ?>">
                         🌐 <?php esc_html_e( 'Re-run Multilingual / Arabic', 'octowoo' ); ?>
