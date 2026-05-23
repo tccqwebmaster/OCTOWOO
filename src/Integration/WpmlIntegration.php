@@ -788,6 +788,7 @@ class WpmlIntegration extends AbstractMigrator {
      * Create a translated WP post in the secondary language.
      */
     private function createTranslatedPost( \WP_Post $source, string $title, string $content, string $post_type, string $excerpt = '' ): int {
+        global $wpdb;
         // Always use the primary-language slug so secondary-language URLs stay clean
         // (e.g. /ar/product/apple-cable/ instead of /ar/product/%d8%a7%d8%a8%d9%84-...).
         $slug = $source->post_name;
@@ -943,6 +944,7 @@ class WpmlIntegration extends AbstractMigrator {
      * We write directly to wp_posts and bust the object cache; no hooks fire.
      */
     private function fixTranslationSlug( int $post_id, string $desired_slug ): void {
+        global $wpdb;
         if ( $desired_slug === '' ) {
             return;
         }
@@ -967,6 +969,7 @@ class WpmlIntegration extends AbstractMigrator {
      * /ar/product-category/electronics-in-qatar/).
      */
     private function fixTranslationTermSlug( int $term_id, string $desired_slug ): void {
+        global $wpdb;
         if ( $desired_slug === '' || $term_id <= 0 ) {
             return;
         }
@@ -1760,6 +1763,7 @@ class WpmlIntegration extends AbstractMigrator {
      * Create a translated taxonomy term in the secondary language.
      */
     private function createTranslatedTerm( \WP_Term $source, string $name, string $description, string $taxonomy, int $sec_parent = 0 ): int {
+        global $wpdb;
         // Do NOT pass 'slug' to wp_insert_term — WordPress rejects the primary-
         // language slug because another term (the primary one) already owns it.
         // Let WordPress generate a temporary slug, then force the correct one
