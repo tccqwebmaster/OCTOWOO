@@ -300,7 +300,7 @@ class WpmlIntegration extends AbstractMigrator {
                 $this->checkpoint->update( self::KEY, $new_offset, $batch_count );
                 $product_offset = $new_offset;
 
-                $this->logger->info( "[multilingual] Products chunk done: offset={$product_offset}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
+                $this->logger->info( "[multilingual] Products chunk done: offset={$new_offset}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
             } else {
                 // No rows returned — treat as done.
                 $product_offset = $product_total;
