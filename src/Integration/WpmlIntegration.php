@@ -605,6 +605,45 @@ class WpmlIntegration extends AbstractMigrator {
             }
 
             $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
+
+            // Diagnostic: verify icl_translations entry for existing translations.
+            if ( $existing_translation_id > 0 ) {
+                global $wpdb;
+                $icl_lang = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT language_code FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
+                    $existing_translation_id,
+                    'post_' . $post_type
+                ) );
+                // If language is wrong (not Arabic), fix it directly now.
+                if ( $icl_lang && $icl_lang !== $this->secondary_lang ) {
+                    $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $wpdb->prefix . 'icl_translations',
+                        [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang ],
+                        [ 'element_id' => $existing_translation_id, 'element_type' => 'post_' . $post_type ]
+                    );
+                    $this->logger->info( "[multilingual] Fixed icl_translations language for post #{$existing_translation_id}: was '{$icl_lang}' → '{$this->secondary_lang}'" );
+                } elseif ( ! $icl_lang ) {
+                    // No icl_translations row at all — insert it now.
+                    $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT trid FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
+                        $primary_id,
+                        'post_' . $post_type
+                    ) );
+                    if ( $primary_trid ) {
+                        $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                            $wpdb->prefix . 'icl_translations',
+                            [
+                                'element_type'         => 'post_' . $post_type,
+                                'element_id'           => $existing_translation_id,
+                                'trid'                 => $primary_trid,
+                                'language_code'        => $this->secondary_lang,
+                                'source_language_code' => $this->primary_lang,
+                            ]
+                        );
+                        $this->logger->info( "[multilingual] Inserted missing icl_translations for post #{$existing_translation_id} (trid={$primary_trid})" );
+                    }
+                }
+            }
             if ( $existing_translation_id > 0 ) {
                 if ( $this->isDry() ) {
                     $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$sec_title}" );
