@@ -851,6 +851,42 @@ class WpmlIntegration extends AbstractMigrator {
         }
         clean_post_cache( $new_id );
 
+        // Since we used $wpdb->insert() instead of wp_insert_post(), WPML's save_post
+        // hook never fired — the new post has NO icl_translations row.
+        // linkPostTranslation() calls wpml_set_element_language_details which tries to
+        // find an existing row and may fail silently for brand-new posts.
+        // Fix: insert the icl_translations row directly so WPML always sees this post.
+        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            $icl_table    = $wpdb->prefix . 'icl_translations';
+            $element_type = 'post_' . $source->post_type;
+            // Get the primary post's trid.
+            $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT trid FROM `{$icl_table}` WHERE element_id = %d AND element_type = %s LIMIT 1",
+                (int) $source->ID,
+                $element_type
+            ) );
+            if ( $primary_trid ) {
+                // Check row doesn't already exist (idempotent).
+                $exists = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT COUNT(*) FROM `{$icl_table}` WHERE element_id = %d AND element_type = %s",
+                    $new_id,
+                    $element_type
+                ) );
+                if ( ! $exists ) {
+                    $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        $icl_table,
+                        [
+                            'element_type'         => $element_type,
+                            'element_id'           => $new_id,
+                            'trid'                 => $primary_trid,
+                            'language_code'        => $this->secondary_lang,
+                            'source_language_code' => $this->primary_lang,
+                        ]
+                    );
+                }
+            }
+        }
+
         // Copy Yoast SEO meta for secondary language.
         // Fall back to primary-language values when secondary meta is absent so the translated post
         // always has meaningful Yoast data instead of blank fields.
