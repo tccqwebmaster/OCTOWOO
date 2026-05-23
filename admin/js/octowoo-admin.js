@@ -674,12 +674,25 @@
         });
     }
 
-    function startImagesOnlyRecovery()           { startMigration(false, false, 'images,categories,manufacturers',  'Images-Only Recovery',          true); }
-    function startProductsImagesRecovery()       { startMigration(false, false, 'products,images,related',          'Products + Images Recovery',    true); }
-    function startCategoriesManufacturersRecovery() { startMigration(false, false, 'categories,manufacturers',      'Categories + Manufacturers',    true); }
+    /* ── Recovery helpers — always force-reset stuck state first ────── */
+    function _recoveryReset() {
+        // Clears isRunning so startMigration() doesn't immediately return.
+        // migrationEpoch++ invalidates any stale setTimeout callbacks from old runs.
+        isRunning = false;
+        migrationEpoch++;
+    }
+    function startImagesOnlyRecovery()              { _recoveryReset(); startMigration(false, false, 'images,categories,manufacturers',  'Images-Only Recovery',       true); }
+    function startProductsImagesRecovery()          { _recoveryReset(); startMigration(false, false, 'products,images,related',          'Products + Images Recovery', true); }
+    function startCategoriesManufacturersRecovery() { _recoveryReset(); startMigration(false, false, 'categories,manufacturers',         'Categories + Manufacturers', true); }
     function startMultilingualRecovery() {
-        // Clear any stale cron lock first, then start the multilingual recovery run.
-        // Uses foreground AJAX chain (last param noClearOrders=true — don't wipe orders).
+        // Force-reset any stuck running state from a previous session.
+        // isRunning can be left as true if a chunk loop got stuck — this prevents
+        // startMigration() from immediately returning. migrationEpoch++ invalidates
+        // any stale setTimeout(runNextChunk) callbacks from the old run.
+        isRunning = false;
+        migrationEpoch++;
+
+        // Clear cron lock, then start foreground AJAX chain.
         $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
         .always(function() {
             startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', true);
