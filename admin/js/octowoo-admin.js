@@ -348,7 +348,14 @@
             .fail(function() { showToast('Request failed.', 'error'); })
             .always(function() { $btn.prop('disabled', false).text('✓ Check Background Mode'); });
         });
-        $('#ow-btn-start-bg').on('click', function () { startBackgroundMigration(false); });
+        $('#ow-btn-start-bg').on('click', function () {
+            // Confirmation guard — prevents accidentally starting a fresh migration
+            // when Re-run Multilingual or Resume was intended.
+            if (!confirm('⚠️ Start a FULL fresh migration?\n\nThis will re-run ALL migrators from the beginning.\n\nIf you only want to continue Arabic translations, click CANCEL and use:\n"Re-run Multilingual / Arabic" instead.')) {
+                return;
+            }
+            startBackgroundMigration(false);
+        });
         $('#ow-btn-resume-bg').on('click', function () { startBackgroundMigration(true); });
         $('#ow-btn-cancel-bg').on('click', cancelBackgroundMigration);
 
