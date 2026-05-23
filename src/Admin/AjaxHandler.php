@@ -93,6 +93,7 @@ class AjaxHandler {
             'octowoo_audit_purge',
             // v2.5.43 additions.
             'octowoo_multilingual_precheck',
+            'octowoo_clear_cron_lock',
         ];
 
         foreach ( $actions as $action ) {
@@ -317,6 +318,11 @@ class AjaxHandler {
 
             case 'octowoo_multilingual_precheck':
                 $this->actionMultilingualPrecheck();
+                break;
+
+            case 'octowoo_clear_cron_lock':
+                delete_transient( 'doing_cron' );
+                wp_send_json_success( [ 'message' => 'Cron lock cleared.' ] );
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }

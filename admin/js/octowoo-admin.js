@@ -193,6 +193,7 @@
         $('#ow-btn-cats-manufacturers').on('click', startCategoriesManufacturersRecovery);
         $('#ow-btn-multilingual').on('click', startMultilingualRecovery);
         $('#ow-btn-ml-precheck').on('click', runMultilingualPrecheck);
+        $('#ow-btn-clear-cron-lock').on('click', clearCronLock);
         $('#ow-btn-fix-secondary-content').on('click', function() {
             var $b = $(this);
             $b.prop('disabled', true).text('Fixing...');
@@ -658,7 +659,12 @@
     function startImagesOnlyRecovery()           { startMigration(false, false, 'images,categories,manufacturers',  'Images-Only Recovery',          true); }
     function startProductsImagesRecovery()       { startMigration(false, false, 'products,images,related',          'Products + Images Recovery',    true); }
     function startCategoriesManufacturersRecovery() { startMigration(false, false, 'categories,manufacturers',      'Categories + Manufacturers',    true); }
-    function startMultilingualRecovery()         { startMigration(false, false, 'multilingual',                     'Multilingual-only Recovery',    true); }
+    function startMultilingualRecovery() {
+        // Run in FOREGROUND (AJAX-driven) mode so chunks process while the
+        // dashboard is open — no WP-Cron / Action Scheduler dependency.
+        // If the user closes the browser, the background cron picks up.
+        startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', false);
+    }
 
     /* ── Multilingual pre-check ─────────────────────────────────────────── */
     function runMultilingualPrecheck() {
@@ -723,6 +729,21 @@
         .always(function() { $btn.prop('disabled', false).text('🔍 Check Multilingual Readiness'); });
     }
 
+    /* ── Clear WP-Cron lock ──────────────────────────────────────────── */
+    function clearCronLock() {
+        var $btn = $('#ow-btn-clear-cron-lock');
+        $btn.prop('disabled', true).text('Clearing…');
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
+        .done(function(r) {
+            if (r && r.success) {
+                showToast('✅ Cron lock cleared. Re-run Multilingual to continue.', 'success');
+            } else {
+                showToast('Failed: ' + (r && r.data && r.data.message || 'unknown error'), 'error');
+            }
+        })
+        .fail(function() { showToast('Request failed.', 'error'); })
+        .always(function() { $btn.prop('disabled', false).text('🔓 Clear Cron Lock'); });
+    }
 
     function abortMigration() {
         var runId = currentRunId || octoWoo.activeRunId;
