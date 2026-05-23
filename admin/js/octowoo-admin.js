@@ -1062,6 +1062,24 @@
             if (!res.success) { return; }
             var data = res.data;
             isPausedState = !!data.paused;
+
+            // If this is a single-migrator run (e.g. Re-run Multilingual), the
+            // other migrators show PENDING which looks broken to the user.
+            // Fill in COMPLETED status for migrators that are not in this run's
+            // checkpoints but were completed in a previous run.
+            if (data.checkpoints && data.checkpoints.length > 0) {
+                var runMigrators = {};
+                data.checkpoints.forEach(function(cp) { runMigrators[cp.migrator] = true; });
+                var allMigrators = ['tax','order_statuses','categories','images','products','manufacturers',
+                    'related','customers','orders','coupons','seo','information','tags',
+                    'filters','downloads','reviews','multilingual'];
+                allMigrators.forEach(function(m) {
+                    if (!runMigrators[m]) {
+                        data.checkpoints.push({ migrator: m, status: 'completed', processed_count: 0, total: 0 });
+                    }
+                });
+            }
+
             if (data.checkpoints) { renderProgressTable(data.checkpoints); }
 
             // If server reports an active run we don't know about (e.g. Re-run
