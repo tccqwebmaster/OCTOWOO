@@ -32,7 +32,7 @@ class BackgroundProcessor {
     const AS_GROUP = 'octowoo';
 
     /** Seconds between consecutive AS chunks. */
-    const CHUNK_DELAY = 5;
+    const CHUNK_DELAY = 1;
 
     /** Transient TTL for storing per-run overrides. */
     const TRANSIENT_TTL = DAY_IN_SECONDS;
@@ -172,7 +172,7 @@ class BackgroundProcessor {
      *
      * @param  string $run_id  The migration run ID.
      */
-    public static function processChunk( string $run_id ): void {
+    public static function processChunk( string $run_id, int $attempt = 0 ): void {
         // Guard: abort was requested externally.
         if ( MigrationManager::checkAborted( $run_id ) ) {
             self::finish( $run_id );
@@ -217,6 +217,19 @@ class BackgroundProcessor {
                 self::sendCompletionEmail( $run_id );
             }
 
+            return;
+        }
+
+        // Chunk lock was held by a concurrent request — retry after a short delay.
+        // Use a unique 'attempt' arg so AS doesn't deduplicate against the
+        // already-pending chunk 2 job (dedup blocks scheduling with identical args).
+        if ( ! empty( $result['busy'] ) ) {
+            as_schedule_single_action(
+                time() + 10,
+                self::AS_HOOK,
+                [ 'run_id' => $run_id, 'attempt' => time() ],
+                self::AS_GROUP
+            );
             return;
         }
 
