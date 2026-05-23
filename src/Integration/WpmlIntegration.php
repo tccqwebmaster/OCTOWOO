@@ -520,6 +520,7 @@ class WpmlIntegration extends AbstractMigrator {
         string $content_meta_key,
         array  $sec_seo_map = []
     ): array {
+        global $wpdb;
         $processed = 0;
         $skipped   = 0;
         $failed    = 0;
