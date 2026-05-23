@@ -466,7 +466,9 @@
             // Re-render progress table when switching to migration tab.
             // Ensures table is populated even if it was hidden during initial render.
             renderProgressTable(null);
-            if (currentRunId || octoWoo.lastRunId) { pollProgress(); }
+            // Always start polling on page load — detects any active background run
+            // (e.g. Re-run Multilingual started without a currentRunId in this session).
+            startPolling();
         }
 
         var url = new URL(window.location.href);
@@ -947,12 +949,18 @@
     }
 
     function pollProgress() {
-        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: currentRunId })
+        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: currentRunId || 'latest' })
         .done(function (res) {
             if (!res.success) { return; }
             var data = res.data;
             isPausedState = !!data.paused;
             if (data.checkpoints) { renderProgressTable(data.checkpoints); }
+
+            // If server reports an active run we don't know about (e.g. Re-run
+            // Multilingual started in background), adopt its run_id and keep polling.
+            if (data.active && data.run_id && data.run_id !== currentRunId) {
+                currentRunId = data.run_id;
+            }
 
             // Re-enable control buttons when migration is active (even after page reload).
             // On refresh, buttons default to disabled. Poll detects active run → enable them.
@@ -962,6 +970,8 @@
                 $btnPause.prop('disabled', false);
                 $btnAbort.prop('disabled', false);
                 $btnSkip.prop('disabled', false);
+                // Ensure polling keeps running.
+                if (!pollTimer) { pollTimer = setInterval(pollProgress, 3000); }
             } else if (isPausedState) {
                 setButtonState('paused');
             } else if (!isRunning && currentRunId && data.run_id === currentRunId) {
