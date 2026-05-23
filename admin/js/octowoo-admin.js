@@ -686,16 +686,53 @@
     function startCategoriesManufacturersRecovery() { _recoveryReset(); startMigration(false, false, 'categories,manufacturers',         'Categories + Manufacturers', true); }
     function startMultilingualRecovery() {
         // Force-reset any stuck running state from a previous session.
-        // isRunning can be left as true if a chunk loop got stuck — this prevents
-        // startMigration() from immediately returning. migrationEpoch++ invalidates
-        // any stale setTimeout(runNextChunk) callbacks from the old run.
         isRunning = false;
         migrationEpoch++;
 
-        // Clear cron lock, then start foreground AJAX chain.
+        // Clear cron lock, then start in BACKGROUND mode.
+        // Background = Action Scheduler drives chunks via WP-Cron every minute.
+        // Browser can be closed — migration continues on the server.
+        // Progress is visible by re-opening the dashboard (polls automatically).
         $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
         .always(function() {
-            startMigration(false, false, 'multilingual', 'Multilingual-only Recovery', true);
+            startBackgroundMigration_multilingual();
+        });
+    }
+
+    function startBackgroundMigration_multilingual() {
+        if (isRunning) { return; }
+        isRunning = true;
+        migrationEpoch++;
+        setBannerRunning('Multilingual-only Recovery (Background)');
+        setButtonState('running');
+        startPolling();
+
+        $.post(octoWoo.ajaxUrl, {
+            action:    'octowoo_start_background',
+            nonce:     octoWoo.nonce,
+            resume:    0,
+            migrators: 'multilingual',
+            dry_run:   0,
+            demo_limit: 0,
+            on_duplicate: $('#ow-opt-on-duplicate').val() || 'update',
+        })
+        .done(function(res) {
+            if (res && res.success && res.data && res.data.run_id) {
+                currentRunId = res.data.run_id;
+                showToast('✅ Multilingual started in background. You can close the browser.', 'success', 6000);
+            } else {
+                var msg = (res && res.data && res.data.message) || 'Failed to start background migration.';
+                setBannerError(msg);
+                isRunning = false;
+                setButtonState('idle');
+                stopPolling();
+            }
+        })
+        .fail(function() {
+            setBannerError('Request failed. Check server logs.');
+            isRunning = false;
+            setButtonState('idle');
+            stopPolling();
         });
     }
 
