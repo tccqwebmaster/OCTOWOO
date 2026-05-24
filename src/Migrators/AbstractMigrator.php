@@ -155,18 +155,16 @@ abstract class AbstractMigrator {
      * Preserves Arabic characters (does NOT transliterate them).
      */
     protected function toSlug( string $text ): string {
-        // Let WP's sanitize_title handle the basic normalisation.
-        // We then strip leftover characters that are not URL-safe.
-        $slug = sanitize_title( $text );
-
-        // sanitize_title may strip all Arabic chars on some setups.
-        // Fallback: manually lowercase + replace spaces.
-        if ( $slug === '' ) {
-            $slug = mb_strtolower( trim( $text ), 'UTF-8' );
-            $slug = preg_replace( '/\s+/u', '-', $slug );
-            $slug = preg_replace( '/[^\p{L}\p{N}\-]/u', '', $slug );
-        }
-
+        // Preserve Arabic/Unicode characters as-is — matching OpenCart slug format.
+        // sanitize_title() URL-encodes Arabic ("ساعة" → "%d8%b3%d8%a7%d8%b9%d8%a9")
+        // producing ugly URLs. We keep Unicode letters/digits, replace spaces with
+        // hyphens, and strip only truly unsafe characters.
+        $slug = trim( $text );
+        $slug = mb_strtolower( $slug, 'UTF-8' );
+        $slug = preg_replace( '/[\s\x{200B}\x{200C}\x{200D}\x{FEFF}]+/u', '-', $slug );
+        $slug = preg_replace( '/[^\p{L}\p{N}\-\.]/u', '', $slug );
+        $slug = preg_replace( '/-{2,}/', '-', $slug );
+        $slug = trim( $slug, '-' );
         return $slug ?: 'item-' . wp_rand( 1000, 9999 );
     }
 
