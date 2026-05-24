@@ -524,10 +524,13 @@ class AjaxHandler {
             wp_send_json_error( [ 'message' => __( 'No active migration to abort.', 'octowoo' ) ] );
         }
 
-        // 1. Cancel any pending Action Scheduler background jobs for this run.
-        //    Without this, AS fires the next queued batch ≈5 s after abort,
-        //    which calls markRunActive() again and makes the banner re-appear.
+        // 1. Cancel ALL pending Action Scheduler background jobs for ANY octowoo run.
+        //    Using run_id-specific cancellation misses jobs from previous runs that
+        //    are still queued. Cancel everything in the 'octowoo' AS group.
         BackgroundProcessor::abort( $run_id );
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( 'octowoo_process_as_chunk', [], 'octowoo' );
+        }
 
         // 2. Signal any still-running synchronous PHP process to stop gracefully.
         MigrationManager::requestAbort( $run_id );
@@ -1682,8 +1685,10 @@ class AjaxHandler {
         }
 
         BackgroundProcessor::abort( $run_id );
-
-        // Also update DB checkpoints so the UI reflects the aborted state.
+        // Cancel ALL pending octowoo AS jobs (not just this run_id).
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( 'octowoo_process_as_chunk', [], 'octowoo' );
+        }
         global $wpdb;
         $cp_table = $wpdb->prefix . 'octowoo_checkpoints';
         $wpdb->query(
