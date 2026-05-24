@@ -195,6 +195,7 @@
         $('#ow-btn-ml-precheck').on('click', runMultilingualPrecheck);
         $('#ow-btn-clear-cron-lock').on('click', clearCronLock);
         $('#ow-btn-full-cleanup').on('click', runFullCleanup);
+        $('#ow-btn-fix-arabic-wpml').on('click', repairWpmlArabicLinks);
         $('#ow-btn-fix-secondary-content').on('click', function() {
             var $b = $(this);
             $b.prop('disabled', true).text('Fixing...');
@@ -800,7 +801,23 @@
         .always(function() { $btn.prop('disabled', false).text('🔍 Check Multilingual Readiness'); });
     }
 
-    /* ── Full post-migration cleanup ─────────────────────────────────── */
+    /* ── Repair WPML Arabic product links ───────────────────────────── */
+    function repairWpmlArabicLinks() {
+        var $btn = $('#ow-btn-fix-arabic-wpml');
+        $btn.prop('disabled', true).text('Repairing…');
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_repair_wpml_arabic_links', nonce: octoWoo.nonce })
+        .done(function(r) {
+            if (r && r.success) {
+                showToast('✅ ' + r.data.message, 'success', 10000);
+            } else {
+                showToast('Repair failed: ' + (r && r.data && r.data.message || 'unknown error'), 'error');
+            }
+        })
+        .fail(function() { showToast('Request failed.', 'error'); })
+        .always(function() { $btn.prop('disabled', false).text('🔗 Fix Arabic → WPML Links'); });
+    }
+
+
     function runFullCleanup() {
         var $btn = $('#ow-btn-full-cleanup');
         $btn.prop('disabled', true).text('Cleaning…');

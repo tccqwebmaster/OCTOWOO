@@ -403,6 +403,10 @@ if ( $_ow_show_wizard ) {
                 <p style="margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;color:#888;letter-spacing:.5px;"><?php esc_html_e( 'Fix / Repair — One-time targeted fixes', 'octowoo' ); ?></p>
                 <p style="margin:0 0 8px;font-size:11px;color:#666;"><?php esc_html_e( 'Run these only if you see a specific problem. Each performs a surgical fix without touching other data.', 'octowoo' ); ?></p>
                 <div class="ow-actions" style="gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="ow-btn-fix-arabic-wpml" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'Directly inserts or fixes icl_translations rows for all Arabic product posts. Use when Arabic product count is stuck at the same number despite multilingual running. Fixes in seconds without re-running the full multilingual pass.', 'octowoo' ); ?>">
+                        🔗 <?php esc_html_e( 'Fix Arabic → WPML Links', 'octowoo' ); ?>
+                    </button>
                     <button type="button" id="ow-btn-fix-secondary-content" class="ow-btn ow-btn-secondary"
                         title="<?php esc_attr_e( 'Scans all WPML Arabic translation posts, detects any that still show English (WPML overwrote the Arabic content), and directly re-writes the Arabic text into the database bypassing all hooks. Run this if Multilingual Recovery completed but Arabic pages still show English content.', 'octowoo' ); ?>">
                         🌐 <?php esc_html_e( 'Fix Arabic Content (direct DB write)', 'octowoo' ); ?>

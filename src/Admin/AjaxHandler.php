@@ -95,6 +95,7 @@ class AjaxHandler {
             'octowoo_multilingual_precheck',
             'octowoo_clear_cron_lock',
             'octowoo_full_cleanup',
+            'octowoo_repair_wpml_arabic_links',
         ];
 
         foreach ( $actions as $action ) {
@@ -328,6 +329,10 @@ class AjaxHandler {
 
             case 'octowoo_full_cleanup':
                 $this->actionFullCleanup();
+                break;
+
+            case 'octowoo_repair_wpml_arabic_links':
+                $this->actionRepairWpmlArabicLinks();
                 break;
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
@@ -3198,3 +3203,110 @@ class AjaxHandler {
     }
 
 }
+
+    // ── Action: repair WPML Arabic product links ──────────────────────────────
+
+    /**
+     * One-shot repair: find every Arabic product post (has _octowoo_translation_of meta)
+     * and ensure it has a correct icl_translations row linking it to the English primary.
+     * This fixes the "Arabic (933)" stuck count without running the full multilingual pass.
+     */
+    private function actionRepairWpmlArabicLinks(): void {
+        global $wpdb;
+        $icl = $wpdb->prefix . 'icl_translations';
+        $secondary = 'ar';
+        $primary   = 'en';
+
+        // 1. Find all Arabic product posts created by OctoWoo.
+        $arabic_posts = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT p.ID, pm.meta_value AS primary_id
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_translation_of'
+             WHERE p.post_type = 'product'
+               AND p.post_status IN ('publish','draft')",
+            ARRAY_A
+        );
+
+        if ( empty( $arabic_posts ) ) {
+            wp_send_json_success( [ 'message' => 'No Arabic product posts found with _octowoo_translation_of meta.', 'fixed' => 0 ] );
+            return;
+        }
+
+        $fixed   = 0;
+        $skipped = 0;
+        $errors  = 0;
+
+        foreach ( $arabic_posts as $row ) {
+            $arabic_id  = (int) $row['ID'];
+            $primary_id = (int) $row['primary_id'];
+
+            // Get the primary product's trid.
+            $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT trid FROM `{$icl}` WHERE element_id = %d AND element_type = 'post_product' LIMIT 1",
+                $primary_id
+            ) );
+
+            if ( ! $primary_trid ) {
+                // Primary has no WPML trid — create one for the primary first.
+                $new_trid = (int) $wpdb->get_var( "SELECT MAX(trid)+1 FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                $new_trid = max( 1, $new_trid );
+                $wpdb->insert( $icl, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    'element_type' => 'post_product',
+                    'element_id'   => $primary_id,
+                    'trid'         => $new_trid,
+                    'language_code'        => $primary,
+                    'source_language_code' => null,
+                ] );
+                $primary_trid = $new_trid;
+            }
+
+            // Check existing icl row for the Arabic post.
+            $existing = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT id, trid, language_code FROM `{$icl}` WHERE element_id = %d AND element_type = 'post_product' LIMIT 1",
+                $arabic_id
+            ), ARRAY_A );
+
+            if ( $existing ) {
+                if ( (int) $existing['trid'] === $primary_trid && $existing['language_code'] === $secondary ) {
+                    $skipped++;
+                    continue;
+                }
+                // Fix wrong trid or language.
+                $wpdb->update( $icl, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    'trid'                 => $primary_trid,
+                    'language_code'        => $secondary,
+                    'source_language_code' => $primary,
+                ], [ 'id' => (int) $existing['id'] ] );
+                $fixed++;
+            } else {
+                // Insert missing row.
+                $inserted = $wpdb->insert( $icl, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    'element_type'         => 'post_product',
+                    'element_id'           => $arabic_id,
+                    'trid'                 => $primary_trid,
+                    'language_code'        => $secondary,
+                    'source_language_code' => $primary,
+                ] );
+                if ( $inserted ) {
+                    $fixed++;
+                } else {
+                    $errors++;
+                }
+            }
+        }
+
+        // Flush WPML caches.
+        if ( function_exists( 'wpml_reload_active_languages_setting' ) ) {
+            do_action( 'wpml_cache_clear' );
+        }
+        clean_post_cache( 0 );
+
+        wp_send_json_success( [
+            'message' => "WPML Arabic links repaired. Fixed: {$fixed}, Already correct: {$skipped}, Errors: {$errors}. Total Arabic posts: " . count( $arabic_posts ),
+            'fixed'   => $fixed,
+            'skipped' => $skipped,
+            'errors'  => $errors,
+            'total'   => count( $arabic_posts ),
+        ] );
+    }
+
