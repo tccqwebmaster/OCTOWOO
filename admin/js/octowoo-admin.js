@@ -949,7 +949,12 @@
     function resetMigration() {
         if (isRunning) { showToast('⚠ Click ⏹ Abort first, wait for it to stop, then try Full Reset.', 'warning'); return; }
 
-        owConfirm('FULL RESET: Deletes ALL migration progress AND the ID map. Categories and Images will re-run from scratch. Use \"Reset Products Only\" for a partial reset. Continue?', 'Yes, reset everything', 'Cancel')
+        // Type-to-confirm prevents accidental full resets that have caused
+        // days of repeated migration work to be lost.
+        var typed = window.prompt('⚠️ FULL RESET will delete ALL migration progress.\n\nYour WooCommerce products/categories/orders are safe — only migration tracking is cleared.\n\nType  RESET  (all caps) to confirm:');
+        if (typed !== 'RESET') { showToast('Full Reset cancelled — type RESET to confirm.', 'info'); return; }
+
+        owConfirm('Last chance: Reset ALL migration progress and ID map? Categories and Images will re-run from scratch.', 'Yes, reset everything', 'Cancel')
         .then(function (confirmed) {
             if (!confirmed) { return; }
             $.post(octoWoo.ajaxUrl, { action: 'octowoo_reset_migration', nonce: octoWoo.nonce })
