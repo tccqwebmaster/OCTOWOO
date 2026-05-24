@@ -351,9 +351,9 @@
             .always(function() { $btn.prop('disabled', false).text('✓ Check Background Mode'); });
         });
         $('#ow-btn-start-bg').on('click', function () {
-            // Confirmation guard — prevents accidentally starting a fresh migration
-            // when Re-run Multilingual or Resume was intended.
-            if (!confirm('⚠️ Start a FULL fresh migration?\n\nThis will re-run ALL migrators from the beginning.\n\nIf you only want to continue Arabic translations, click CANCEL and use:\n"Re-run Multilingual / Arabic" instead.')) {
+            var typed = window.prompt('⚠️ Start a FULL background migration from scratch?\n\nThis re-runs ALL migrators (Products, SEO, Multilingual etc.)\n\nIf you only need Arabic translations: click CANCEL → use "Re-run Multilingual / Arabic"\n\nType  START  to confirm full migration:');
+            if (typed !== 'START') {
+                showToast('Migration cancelled. Use "Re-run Multilingual / Arabic" if you only need Arabic translations.', 'info', 5000);
                 return;
             }
             startBackgroundMigration(false);
