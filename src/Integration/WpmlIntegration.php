@@ -127,7 +127,11 @@ class WpmlIntegration extends AbstractMigrator {
         remove_all_actions( 'save_post_product' );
 
         $chunk_mode  = $this->batch->isChunkMode();
-        $batch_size  = max( 1, (int) ( $this->config['migration']['batch_size'] ?? 50 ) );
+        // For multilingual, cap at 10 per chunk regardless of global batch_size.
+        // The OC remote DB (13.x.x.x) takes 2-5s per product for content fetch.
+        // batch_size=50 → 100-250s per chunk → PHP timeout kills it after ~10 products.
+        // batch_size=10 → 20-50s per chunk → always completes, counter works correctly.
+        $batch_size  = min( 10, max( 1, (int) ( $this->config['migration']['batch_size'] ?? 10 ) ) );
         $demo_limit  = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
 
         global $wpdb;
