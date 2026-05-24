@@ -1604,6 +1604,13 @@ class AjaxHandler {
             ] );
         }
 
+        // Cancel ALL pending octowoo AS jobs before starting a new run.
+        // Old runs leave orphan AS jobs that restart the full migration on every
+        // cron tick — even after Abort. This ensures a clean slate every time.
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( 'octowoo_process_as_chunk', [], 'octowoo' );
+        }
+
         $active_run = CheckpointManager::getActiveRunId();
         // phpcs:ignore WordPress.Security.NonceVerification
         $resume     = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
