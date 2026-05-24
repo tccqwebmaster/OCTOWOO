@@ -207,7 +207,12 @@ class WpmlIntegration extends AbstractMigrator {
             ];
         }
 
-        if ( $product_offset === 0 && ! $terms_state['done'] ) {
+        // Terms phase: runs until terms_state['done']=true.
+        // IMPORTANT: do NOT gate this on product_offset===0. The new NOT EXISTS
+        // product query doesn't use offset so product_offset is always 0 in the
+        // checkpoint, which would cause the terms phase (and checkpoint->init())
+        // to re-run on every chunk, resetting processed_count to 0 forever.
+        if ( ! $terms_state['done'] ) {
 
             if ( ! $terms_state['inited'] ) {
                 $this->checkpoint->init( self::KEY, $product_total );
@@ -322,19 +327,23 @@ class WpmlIntegration extends AbstractMigrator {
                 $processed += $p; $skipped += $s; $failed += $f;
 
                 $batch_count    = count( $product_rows );
-                $new_offset     = $product_offset + $batch_count;
-                $this->checkpoint->update( self::KEY, $new_offset, $batch_count );
-                $product_offset = $new_offset;
+                // With NOT EXISTS query, $product_offset is meaningless for pagination.
+                // Use a running total stored in the transient to track cumulative progress.
+                $terms_state['products_done'] = ( (int) ( $terms_state['products_done'] ?? 0 ) ) + $batch_count;
+                set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                $this->checkpoint->update( self::KEY, $terms_state['products_done'], $batch_count );
 
-                $this->logger->info( "[multilingual] Products chunk done: offset={$new_offset}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
+                $this->logger->info( "[multilingual] Products chunk done: offset={$terms_state['products_done']}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
             } else {
-                // No rows returned — treat as done.
-                $product_offset = $product_total;
+                // No rows returned — all products translated, treat as done.
+                $terms_state['products_done'] = $product_total;
+                set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
             }
         }
 
         // ── Last chunk: translate pages + complete ────────────────────────────
-        if ( $product_offset >= $product_total ) {
+        $products_done = (int) ( $terms_state['products_done'] ?? 0 );
+        if ( $products_done >= $product_total ) {
             // Pages (InformationMigrator) are small; process them all at once.
             [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $this->secLangSuffix(), '_octowoo_desc' . $this->secLangSuffix() );
             $processed += $p; $skipped += $s; $failed += $f;
