@@ -1049,7 +1049,7 @@
     function startPolling() {
         stopPolling();
         pollProgress();
-        pollTimer = setInterval(pollProgress, 3000);
+        pollTimer = setInterval(pollProgress, 1500);
     }
 
     function stopPolling() {
@@ -1096,8 +1096,9 @@
                 $btnPause.prop('disabled', false);
                 $btnAbort.prop('disabled', false);
                 $btnSkip.prop('disabled', false);
-                // Ensure polling keeps running.
-                if (!pollTimer) { pollTimer = setInterval(pollProgress, 3000); }
+                // Fast polling during active run.
+                if (pollTimer) { clearInterval(pollTimer); }
+                pollTimer = setInterval(pollProgress, 1500);
             } else if (isPausedState) {
                 setButtonState('paused');
             } else if (!isRunning && currentRunId && data.run_id === currentRunId) {

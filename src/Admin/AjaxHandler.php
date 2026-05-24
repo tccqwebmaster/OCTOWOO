@@ -650,8 +650,25 @@ class AjaxHandler {
 
         MigrationManager::requestSkipCurrentMigrator( $run_id, $migrator );
 
+        // Cancel any pending/running AS chunk jobs for this run so the skip
+        // takes effect on the very next cron tick instead of waiting for the
+        // current background chunk to naturally finish.
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( 'octowoo_process_as_chunk', [ 'run_id' => $run_id ], 'octowoo' );
+        }
+
+        // Schedule a fresh chunk immediately so the next migrator starts right away.
+        if ( function_exists( 'as_schedule_single_action' ) ) {
+            as_schedule_single_action(
+                time() + 2,
+                'octowoo_process_as_chunk',
+                [ 'run_id' => $run_id, 'attempt' => time() ],
+                'octowoo'
+            );
+        }
+
         wp_send_json_success( [
-            'message'  => sprintf( __( 'Skip requested for %s. Next chunk will continue with the next entity.', 'octowoo' ), $migrator ),
+            'message'  => sprintf( __( 'Skipped %s — next migrator will start within seconds.', 'octowoo' ), $migrator ),
             'run_id'   => $run_id,
             'migrator' => $migrator,
         ] );
