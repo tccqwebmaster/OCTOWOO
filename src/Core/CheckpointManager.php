@@ -147,8 +147,8 @@ class CheckpointManager {
                 )
             );
 
-            if ( $last_updated && ( time() - (int) strtotime( $last_updated ) ) > 900 ) {
-                // No batch has run for 15+ min — process is dead.
+            if ( $last_updated && ( time() - (int) strtotime( $last_updated ) ) > 7200 ) {
+                // No batch has run for 2+ hours — process is dead.
                 delete_option( 'octowoo_active_run_id' );
                 $wpdb->get_var( "SELECT RELEASE_LOCK('octowoo_migration')" ); // phpcs:ignore WordPress.DB.PreparedSQL
                 return null;

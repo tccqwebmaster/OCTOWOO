@@ -1062,7 +1062,7 @@
     }
 
     function pollProgress() {
-        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: currentRunId || 'latest' })
+        $.get(octoWoo.ajaxUrl, { action: 'octowoo_get_progress', nonce: octoWoo.nonce, run_id: currentRunId || octoWoo.activeRunId || 'latest' })
         .done(function (res) {
             if (!res.success) { return; }
             var data = res.data;
