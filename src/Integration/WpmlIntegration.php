@@ -144,16 +144,31 @@ class WpmlIntegration extends AbstractMigrator {
         // both WPML and Polylang.  It also preserves correct OFFSET-based
         // pagination because the meta is set on the TRANSLATED posts, not the
         // originals, so the primary-language result set is stable across chunks.
+        // Count only products that truly need translation (no Arabic in icl_translations yet).
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         $product_total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
-             WHERE p.post_type   = 'product'
-               AND p.post_status IN ('publish','draft')
-               AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm_x
-                   WHERE pm_x.post_id  = p.ID
-                     AND pm_x.meta_key = '_octowoo_translation_of'
-               )"
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->posts} p
+                 WHERE p.post_type   = 'product'
+                   AND p.post_status IN ('publish','draft')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM {$wpdb->postmeta} pm_x
+                       WHERE pm_x.post_id  = p.ID
+                         AND pm_x.meta_key = '_octowoo_translation_of'
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM {$wpdb->prefix}icl_translations icl_pri
+                       JOIN {$wpdb->prefix}icl_translations icl_sec
+                           ON icl_sec.trid          = icl_pri.trid
+                          AND icl_sec.language_code  = %s
+                          AND icl_sec.element_type   = 'post_product'
+                       WHERE icl_pri.element_id   = p.ID
+                         AND icl_pri.element_type  = 'post_product'
+                         AND icl_pri.language_code = %s
+                   )",
+                $this->secondary_lang,
+                $this->primary_lang
+            )
         );
         if ( $demo_limit > 0 ) {
             $product_total = min( $product_total, $demo_limit );
@@ -269,10 +284,21 @@ class WpmlIntegration extends AbstractMigrator {
                            WHERE pm_x.post_id  = p.ID
                              AND pm_x.meta_key = '_octowoo_translation_of'
                        )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM {$wpdb->prefix}icl_translations icl_pri
+                           JOIN {$wpdb->prefix}icl_translations icl_sec
+                               ON icl_sec.trid          = icl_pri.trid
+                              AND icl_sec.language_code  = %s
+                              AND icl_sec.element_type   = 'post_product'
+                           WHERE icl_pri.element_id   = p.ID
+                             AND icl_pri.element_type  = 'post_product'
+                             AND icl_pri.language_code = %s
+                       )
                      ORDER BY p.ID ASC
-                     LIMIT %d OFFSET %d",
-                    $fetch_limit,
-                    $product_offset
+                     LIMIT %d",
+                    $this->secondary_lang,
+                    $this->primary_lang,
+                    $fetch_limit
                 ),
                 ARRAY_A
             );
