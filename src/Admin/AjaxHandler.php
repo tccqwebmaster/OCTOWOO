@@ -3211,7 +3211,7 @@ class AjaxHandler {
      */
     private function actionRepairWpmlArabicLinks(): void {
         global $wpdb;
-        $icl = $wpdb->prefix . 'icl_translations';
+        $icl       = $wpdb->prefix . 'icl_translations';
         $secondary = 'ar';
         $primary   = 'en';
 
@@ -3225,48 +3225,56 @@ class AjaxHandler {
         );
 
         if ( empty( $arabic_posts ) ) {
-            wp_send_json_success( [ 'message' => 'No Arabic product posts found.', 'fixed' => 0 ] );
+            wp_send_json_success( [ 'message' => 'No Arabic product posts found with _octowoo_translation_of meta. Run multilingual first.', 'fixed' => 0 ] );
             return;
         }
 
-        $fixed = 0; $skipped = 0; $errors = 0;
+        $fixed = 0; $skipped = 0; $errors = 0; $first_error = '';
 
         foreach ( $arabic_posts as $row ) {
             $arabic_id  = (int) $row['ID'];
             $primary_id = (int) $row['primary_id'];
 
+            // Get primary trid — try any post_ element_type (WPML may use post_product or similar)
             $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT trid FROM `{$icl}` WHERE element_id = %d AND element_type = 'post_product' LIMIT 1",
+                "SELECT trid FROM `{$icl}` WHERE element_id = %d AND element_type LIKE 'post_%' ORDER BY translation_id ASC LIMIT 1",
                 $primary_id
             ) );
 
             if ( ! $primary_trid ) {
-                $max_trid = (int) $wpdb->get_var( "SELECT MAX(trid) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+                // Primary has no WPML row — create one.
+                $max_trid     = (int) $wpdb->get_var( "SELECT MAX(trid) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
                 $primary_trid = $max_trid + 1;
-                $wpdb->insert( $icl, [ 'element_type' => 'post_product', 'element_id' => $primary_id, 'trid' => $primary_trid, 'language_code' => $primary, 'source_language_code' => null ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "INSERT IGNORE INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code) VALUES ('post_product', %d, %d, %s, NULL)",
+                    $primary_id, $primary_trid, $primary
+                ) );
             }
 
-            $existing = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT id, trid, language_code FROM `{$icl}` WHERE element_id = %d AND element_type = 'post_product' LIMIT 1",
-                $arabic_id
-            ), ARRAY_A );
+            // INSERT ... ON DUPLICATE KEY UPDATE handles both missing and wrong rows.
+            $result = $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+                 VALUES ('post_product', %d, %d, %s, %s)
+                 ON DUPLICATE KEY UPDATE trid = VALUES(trid), language_code = VALUES(language_code), source_language_code = VALUES(source_language_code)",
+                $arabic_id, $primary_trid, $secondary, $primary
+            ) );
 
-            if ( $existing ) {
-                if ( (int) $existing['trid'] === $primary_trid && $existing['language_code'] === $secondary ) {
-                    $skipped++; continue;
+            if ( $result === false ) {
+                $errors++;
+                if ( ! $first_error ) {
+                    $first_error = $wpdb->last_error . " [ar_id={$arabic_id} pri_id={$primary_id} trid={$primary_trid}]";
                 }
-                $wpdb->update( $icl, [ 'trid' => $primary_trid, 'language_code' => $secondary, 'source_language_code' => $primary ], [ 'id' => (int) $existing['id'] ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                $fixed++;
+            } elseif ( (int) $result === 0 ) {
+                $skipped++; // Row existed and was already correct.
             } else {
-                $r = $wpdb->insert( $icl, [ 'element_type' => 'post_product', 'element_id' => $arabic_id, 'trid' => $primary_trid, 'language_code' => $secondary, 'source_language_code' => $primary ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                if ( $r ) { $fixed++; } else { $errors++; }
+                $fixed++; // Row inserted (1) or updated (2).
             }
         }
 
         do_action( 'wpml_cache_clear' );
 
         wp_send_json_success( [
-            'message' => "WPML Arabic links repaired. Fixed: {$fixed}, Already correct: {$skipped}, Errors: {$errors}. Total: " . count( $arabic_posts ),
+            'message' => "WPML Arabic links repaired. Fixed/Updated: {$fixed}, Already correct: {$skipped}, Errors: {$errors}. Total: " . count( $arabic_posts ) . ( $first_error ? " | Error: {$first_error}" : '' ),
             'fixed'   => $fixed, 'skipped' => $skipped, 'errors' => $errors, 'total' => count( $arabic_posts ),
         ] );
     }
