@@ -82,6 +82,7 @@ class WpmlIntegration extends AbstractMigrator {
      * @var array<int, array{sec: string, pri: string}>
      */
     private array $sec_tags_cache = [];
+    private array $sec_desc_cache = []; // Keyed by OC product_id → description row array
 
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
@@ -315,6 +316,10 @@ class WpmlIntegration extends AbstractMigrator {
                 $batch_oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $product_rows ) );
                 if ( ! empty( $batch_oc_ids ) ) {
                     $this->prefetchSecLangTagsForProducts( $batch_oc_ids );
+                    // Bulk-fetch ALL OC product descriptions for this batch in ONE remote query.
+                    // Without this, translatePostsFromRows() makes 1 OC DB query per product
+                    // = 50 remote queries per chunk = 20-50s per chunk on slow OC connections.
+                    $this->prefetchSecDescriptionsFromOC( $batch_oc_ids );
                 }
 
                 [ $p, $s, $f ] = $this->translatePostsFromRows(
@@ -534,6 +539,87 @@ class WpmlIntegration extends AbstractMigrator {
                 'sec' => $sec_index[ $oc_id ] ?? '',
                 'pri' => $pri_index[ $oc_id ] ?? '',
             ];
+        }
+    }
+
+    /**
+     * Bulk-fetch secondary language descriptions for a batch of OC product IDs.
+     * Stores results in $this->sec_desc_cache keyed by OC product_id.
+     * Eliminates N+1 remote OC DB queries in translatePostsFromRows().
+     *
+     * @param int[] $oc_ids
+     */
+    private function prefetchSecDescriptionsFromOC( array $oc_ids ): void {
+        if ( empty( $oc_ids ) ) {
+            return;
+        }
+        $this->sec_desc_cache = [];
+        try {
+            $pfx         = $this->pfx();
+            $pri_lid     = $this->langId();
+            $sec_lid     = $this->langIdSecondary();
+            $placeholders = implode( ',', array_fill( 0, count( $oc_ids ), '?' ) );
+
+            // Fetch ALL non-primary language rows for the entire batch in ONE query.
+            $all_rows = $this->oc->fetchAll(
+                "SELECT product_id, language_id, name, description, meta_title, meta_description, meta_keyword, tag
+                 FROM `{$pfx}product_description`
+                 WHERE product_id IN ({$placeholders}) AND language_id != ?
+                 ORDER BY product_id ASC, language_id ASC",
+                array_merge( $oc_ids, [ $pri_lid ] )
+            );
+
+            // Group by product_id.
+            $grouped = [];
+            foreach ( (array) $all_rows as $row ) {
+                $grouped[ (int) $row['product_id'] ][] = $row;
+            }
+
+            // For each product, apply same 4-tier priority as fetchSecDescriptionFromOC().
+            foreach ( $oc_ids as $oc_id ) {
+                $rows = $grouped[ $oc_id ] ?? [];
+                if ( empty( $rows ) ) {
+                    $this->sec_desc_cache[ $oc_id ] = null;
+                    continue;
+                }
+
+                $selected = null;
+
+                // Priority 1: configured sec lang + Arabic content.
+                foreach ( $rows as $row ) {
+                    if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid
+                         && preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                        $selected = $row;
+                        break;
+                    }
+                }
+                // Priority 2: any Arabic row.
+                if ( ! $selected ) {
+                    foreach ( $rows as $row ) {
+                        if ( preg_match( '/[\x{0600}-\x{06FF}]/u', $row['name'] . $row['description'] ) ) {
+                            $selected = $row;
+                            break;
+                        }
+                    }
+                }
+                // Priority 3: configured sec lang (even if not Arabic).
+                if ( ! $selected ) {
+                    foreach ( $rows as $row ) {
+                        if ( $sec_lid > 0 && (int) $row['language_id'] === $sec_lid ) {
+                            $selected = $row;
+                            break;
+                        }
+                    }
+                }
+                // Priority 4: first available non-primary row.
+                if ( ! $selected ) {
+                    $selected = $rows[0];
+                }
+
+                $this->sec_desc_cache[ $oc_id ] = $selected;
+            }
+        } catch ( \Throwable $e ) {
+            $this->logger->warning( '[multilingual] prefetchSecDescriptionsFromOC failed: ' . $e->getMessage() );
         }
     }
 
@@ -2416,7 +2502,12 @@ class WpmlIntegration extends AbstractMigrator {
      * @return array|null         Associative row from oc_product_description, or null.
      */
     private function fetchSecDescriptionFromOC( int $oc_id ): ?array {
-        try {
+        // Use bulk-prefetched cache if available (eliminates remote OC query per product).
+        if ( array_key_exists( $oc_id, $this->sec_desc_cache ) ) {
+            return $this->sec_desc_cache[ $oc_id ];
+        }
+
+        // Fallback: single-product query (used when cache not pre-populated).
             $pfx     = $this->pfx();
             $pri_lid = $this->langId();
             $sec_lid = $this->langIdSecondary();
