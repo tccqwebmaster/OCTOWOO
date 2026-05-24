@@ -2508,6 +2508,7 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // Fallback: single-product query (used when cache not pre-populated).
+        try {
             $pfx     = $this->pfx();
             $pri_lid = $this->langId();
             $sec_lid = $this->langIdSecondary();
