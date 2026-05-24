@@ -727,41 +727,52 @@ class WpmlIntegration extends AbstractMigrator {
 
             $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
 
-            // Diagnostic: verify icl_translations entry for existing translations.
+            // Verify and repair language registration for existing translations.
             if ( $existing_translation_id > 0 ) {
                 global $wpdb;
-                $icl_lang = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                    "SELECT language_code FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
-                    $existing_translation_id,
-                    'post_' . $post_type
-                ) );
-                // If language is wrong (not Arabic), fix it directly now.
-                if ( $icl_lang && $icl_lang !== $this->secondary_lang ) {
-                    $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                        $wpdb->prefix . 'icl_translations',
-                        [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang ],
-                        [ 'element_id' => $existing_translation_id, 'element_type' => 'post_' . $post_type ]
-                    );
-                    $this->logger->info( "[multilingual] Fixed icl_translations language for post #{$existing_translation_id}: was '{$icl_lang}' → '{$this->secondary_lang}'" );
-                } elseif ( ! $icl_lang ) {
-                    // No icl_translations row at all — insert it now.
-                    $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                        "SELECT trid FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
-                        $primary_id,
+                if ( $this->adapter === 'wpml' ) {
+                    // WPML: verify icl_translations row has correct language_code.
+                    $icl_lang = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT language_code FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
+                        $existing_translation_id,
                         'post_' . $post_type
                     ) );
-                    if ( $primary_trid ) {
-                        $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    if ( $icl_lang && $icl_lang !== $this->secondary_lang ) {
+                        $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                             $wpdb->prefix . 'icl_translations',
-                            [
-                                'element_type'         => 'post_' . $post_type,
-                                'element_id'           => $existing_translation_id,
-                                'trid'                 => $primary_trid,
-                                'language_code'        => $this->secondary_lang,
-                                'source_language_code' => $this->primary_lang,
-                            ]
+                            [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang ],
+                            [ 'element_id' => $existing_translation_id, 'element_type' => 'post_' . $post_type ]
                         );
-                        $this->logger->info( "[multilingual] Inserted missing icl_translations for post #{$existing_translation_id} (trid={$primary_trid})" );
+                        $this->logger->info( "[multilingual] Fixed icl_translations language for post #{$existing_translation_id}: was '{$icl_lang}' → '{$this->secondary_lang}'" );
+                    } elseif ( ! $icl_lang ) {
+                        $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                            "SELECT trid FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type LIKE 'post_%' LIMIT 1",
+                            $primary_id
+                        ) );
+                        if ( $primary_trid ) {
+                            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                                "INSERT INTO `{$wpdb->prefix}icl_translations` (element_type, element_id, trid, language_code, source_language_code)
+                                 VALUES (%s, %d, %d, %s, %s)
+                                 ON DUPLICATE KEY UPDATE trid=VALUES(trid), language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
+                                'post_' . $post_type, $existing_translation_id, $primary_trid, $this->secondary_lang, $this->primary_lang
+                            ) );
+                            $this->logger->info( "[multilingual] Inserted missing icl_translations for post #{$existing_translation_id} (trid={$primary_trid})" );
+                        }
+                    }
+                } elseif ( $this->adapter === 'polylang' ) {
+                    // Polylang: verify pll_set_post_language is correct.
+                    $pll_lang = function_exists( 'pll_get_post_language' ) ? pll_get_post_language( $existing_translation_id ) : null;
+                    if ( $pll_lang !== $this->secondary_lang ) {
+                        if ( function_exists( 'pll_set_post_language' ) ) {
+                            pll_set_post_language( $existing_translation_id, $this->secondary_lang );
+                        }
+                        if ( function_exists( 'pll_save_post_translations' ) ) {
+                            pll_save_post_translations( [
+                                $this->primary_lang   => $primary_id,
+                                $this->secondary_lang => $existing_translation_id,
+                            ] );
+                        }
+                        $this->logger->info( "[multilingual] Fixed Polylang language for post #{$existing_translation_id}: was '{$pll_lang}' → '{$this->secondary_lang}'" );
                     }
                 }
             }
@@ -976,7 +987,12 @@ class WpmlIntegration extends AbstractMigrator {
         }
         // Direct DB INSERT — 10-20x faster than wp_insert_post() which fires
         // save_post, WC product hooks, stock recalc, and transient flush per post.
-        global $wpdb;
+        //
+        // NOTE: For Polylang, we still use direct $wpdb->insert() but then call
+        // pll_set_post_language() + pll_save_post_translations() via linkPostTranslation()
+        // because Polylang stores language in its own table (not wp_postmeta), so
+        // bypassing save_post is safe — Polylang API handles its own DB writes.
+        // For WPML we insert into icl_translations directly (see below).
         $now     = current_time( 'mysql' );
         $now_gmt = current_time( 'mysql', true );
         $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -1011,42 +1027,36 @@ class WpmlIntegration extends AbstractMigrator {
         }
         clean_post_cache( $new_id );
 
-        // Since we used $wpdb->insert() instead of wp_insert_post(), WPML's save_post
-        // hook never fired — the new post has NO icl_translations row.
-        // linkPostTranslation() calls wpml_set_element_language_details which tries to
-        // find an existing row and may fail silently for brand-new posts.
-        // Fix: insert the icl_translations row directly so WPML always sees this post.
-        if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+        // Since we used $wpdb->insert() instead of wp_insert_post(), language hooks
+        // never fired. Register the post with the correct language plugin directly.
+        if ( $this->adapter === 'wpml' && defined( 'ICL_SITEPRESS_VERSION' ) ) {
+            // WPML: insert icl_translations row directly (ON DUPLICATE KEY UPDATE = idempotent).
             $icl_table    = $wpdb->prefix . 'icl_translations';
             $element_type = 'post_' . $source->post_type;
-            // Get the primary post's trid.
             $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT trid FROM `{$icl_table}` WHERE element_id = %d AND element_type = %s LIMIT 1",
-                (int) $source->ID,
-                $element_type
+                "SELECT trid FROM `{$icl_table}` WHERE element_id = %d AND element_type LIKE 'post_%' LIMIT 1",
+                (int) $source->ID
             ) );
             if ( $primary_trid ) {
-                // Check row doesn't already exist (idempotent).
-                $exists = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                    "SELECT COUNT(*) FROM `{$icl_table}` WHERE element_id = %d AND element_type = %s",
-                    $new_id,
-                    $element_type
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "INSERT INTO `{$icl_table}` (element_type, element_id, trid, language_code, source_language_code)
+                     VALUES (%s, %d, %d, %s, %s)
+                     ON DUPLICATE KEY UPDATE trid=VALUES(trid), language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
+                    $element_type, $new_id, $primary_trid, $this->secondary_lang, $this->primary_lang
                 ) );
-                if ( ! $exists ) {
-                    $wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                        $icl_table,
-                        [
-                            'element_type'         => $element_type,
-                            'element_id'           => $new_id,
-                            'trid'                 => $primary_trid,
-                            'language_code'        => $this->secondary_lang,
-                            'source_language_code' => $this->primary_lang,
-                        ]
-                    );
-                }
+            }
+        } elseif ( $this->adapter === 'polylang' ) {
+            // Polylang: use pll_* API — it manages its own tables (no icl_translations).
+            if ( function_exists( 'pll_set_post_language' ) ) {
+                pll_set_post_language( $new_id, $this->secondary_lang );
+            }
+            if ( function_exists( 'pll_save_post_translations' ) ) {
+                pll_save_post_translations( [
+                    $this->primary_lang   => (int) $source->ID,
+                    $this->secondary_lang => $new_id,
+                ] );
             }
         }
-
         // Copy Yoast SEO meta for secondary language.
         // Fall back to primary-language values when secondary meta is absent so the translated post
         // always has meaningful Yoast data instead of blank fields.
