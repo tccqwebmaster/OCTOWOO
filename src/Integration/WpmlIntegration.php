@@ -186,8 +186,10 @@ class WpmlIntegration extends AbstractMigrator {
         //   'done'       bool        true once both taxonomies are finished
         //   'inited'     bool        true once checkpoint->init() was called
         $run_id_key    = $this->checkpoint->getRunId();
-        $terms_key   = 'octowoo_ml_terms_' . $run_id_key;
-        $terms_state = get_option( $terms_key, false ); // wp_option persists reliably (transients can expire)
+        // Fixed key (not run_id based) so terms_state persists across Re-run Multilingual runs.
+        // Categories/brands only re-run if terms_state was explicitly cleared (e.g. Full Reset).
+        $terms_key   = 'octowoo_ml_terms_v2';  // bump suffix to invalidate old state
+        $terms_state = get_option( $terms_key, false );
         $brand_tax     = $this->detectActiveBrandTaxonomy();
 
         if ( ! is_array( $terms_state ) ) {
@@ -359,7 +361,7 @@ class WpmlIntegration extends AbstractMigrator {
             flush_rewrite_rules( false );
 
             // Clean up the terms-phase transient — no longer needed after completion.
-            delete_option( 'octowoo_ml_terms_' . $this->checkpoint->getRunId() );
+            delete_option( 'octowoo_ml_terms_v2' ); // clear on full completion only
 
             $this->checkpoint->complete( self::KEY );
             return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => true ];
