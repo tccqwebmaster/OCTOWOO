@@ -148,31 +148,19 @@ class WpmlIntegration extends AbstractMigrator {
         // both WPML and Polylang.  It also preserves correct OFFSET-based
         // pagination because the meta is set on the TRANSLATED posts, not the
         // originals, so the primary-language result set is stable across chunks.
-        // Count only products that truly need translation (no Arabic in icl_translations yet).
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        // Count products needing translation: English primary posts with no Arabic copy yet.
+        // Uses _octowoo_translation_of postmeta (set when we create each Arabic post).
+        // Simple and reliable — no dependency on icl_translations state.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
         $product_total = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->posts} p
-                 WHERE p.post_type   = 'product'
-                   AND p.post_status IN ('publish','draft')
-                   AND NOT EXISTS (
-                       SELECT 1 FROM {$wpdb->postmeta} pm_x
-                       WHERE pm_x.post_id  = p.ID
-                         AND pm_x.meta_key = '_octowoo_translation_of'
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM {$wpdb->prefix}icl_translations icl_pri
-                       JOIN {$wpdb->prefix}icl_translations icl_sec
-                           ON icl_sec.trid          = icl_pri.trid
-                          AND icl_sec.language_code  = %s
-                          AND icl_sec.element_type   = 'post_product'
-                       WHERE icl_pri.element_id   = p.ID
-                         AND icl_pri.element_type  = 'post_product'
-                         AND icl_pri.language_code = %s
-                   )",
-                $this->secondary_lang,
-                $this->primary_lang
-            )
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type   = 'product'
+               AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm_sec
+                   WHERE pm_sec.meta_key   = '_octowoo_translation_of'
+                     AND pm_sec.meta_value = p.ID
+               )"
         );
         if ( $demo_limit > 0 ) {
             $product_total = min( $product_total, $demo_limit );
@@ -198,8 +186,8 @@ class WpmlIntegration extends AbstractMigrator {
         //   'done'       bool        true once both taxonomies are finished
         //   'inited'     bool        true once checkpoint->init() was called
         $run_id_key    = $this->checkpoint->getRunId();
-        $terms_key     = 'octowoo_ml_terms_' . $run_id_key;
-        $terms_state   = get_transient( $terms_key );
+        $terms_key   = 'octowoo_ml_terms_' . $run_id_key;
+        $terms_state = get_option( $terms_key, false ); // wp_option persists reliably (transients can expire)
         $brand_tax     = $this->detectActiveBrandTaxonomy();
 
         if ( ! is_array( $terms_state ) ) {
@@ -235,7 +223,7 @@ class WpmlIntegration extends AbstractMigrator {
 
                 if ( $cat_has_more ) {
                     $terms_state['cat_off'] = (int) $terms_state['cat_off'] + $batch_size;
-                    set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                    update_option( $terms_key, $terms_state, false );
                     $this->logger->info( "[multilingual] Categories chunk done (offset={$terms_state['cat_off']}). More categories remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
@@ -253,7 +241,7 @@ class WpmlIntegration extends AbstractMigrator {
 
                 if ( $brand_has_more ) {
                     $terms_state['brand_off'] = (int) $terms_state['brand_off'] + $batch_size;
-                    set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                    update_option( $terms_key, $terms_state, false );
                     $this->logger->info( "[multilingual] Brands chunk done (offset={$terms_state['brand_off']}). More brands remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
@@ -263,7 +251,7 @@ class WpmlIntegration extends AbstractMigrator {
 
             // All terms done — next chunk will start products.
             $terms_state['done'] = true;
-            set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+            update_option( $terms_key, $terms_state, false );
             $this->logger->info( "[multilingual] All terms done. Next chunk starts products: total={$product_total}, batch_size={$batch_size}" );
             return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
         }
@@ -279,7 +267,11 @@ class WpmlIntegration extends AbstractMigrator {
             // NOT EXISTS on '_octowoo_translation_of' excludes secondary-language copies
             // that our migrator created, so we only process primary-language originals.
             // This is stable across chunks (meta is on translations, not originals).
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            // Simple NOT EXISTS on _octowoo_translation_of — 
+            // the most reliable way to find untranslated products.
+            // We set this meta on every Arabic post we create, so this
+            // is always accurate regardless of icl_translations state.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
             $product_rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT p.ID AS wc_id, COALESCE(pm.meta_value, 0) AS oc_id
@@ -289,24 +281,12 @@ class WpmlIntegration extends AbstractMigrator {
                      WHERE p.post_type   = 'product'
                        AND p.post_status IN ('publish','draft')
                        AND NOT EXISTS (
-                           SELECT 1 FROM {$wpdb->postmeta} pm_x
-                           WHERE pm_x.post_id  = p.ID
-                             AND pm_x.meta_key = '_octowoo_translation_of'
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1 FROM {$wpdb->prefix}icl_translations icl_pri
-                           JOIN {$wpdb->prefix}icl_translations icl_sec
-                               ON icl_sec.trid          = icl_pri.trid
-                              AND icl_sec.language_code  = %s
-                              AND icl_sec.element_type   = 'post_product'
-                           WHERE icl_pri.element_id   = p.ID
-                             AND icl_pri.element_type  = 'post_product'
-                             AND icl_pri.language_code = %s
+                           SELECT 1 FROM {$wpdb->postmeta} pm_sec
+                           WHERE pm_sec.meta_key   = '_octowoo_translation_of'
+                             AND pm_sec.meta_value = p.ID
                        )
                      ORDER BY p.ID ASC
                      LIMIT %d",
-                    $this->secondary_lang,
-                    $this->primary_lang,
                     $fetch_limit
                 ),
                 ARRAY_A
@@ -338,14 +318,14 @@ class WpmlIntegration extends AbstractMigrator {
                 // With NOT EXISTS query, $product_offset is meaningless for pagination.
                 // Use a running total stored in the transient to track cumulative progress.
                 $terms_state['products_done'] = ( (int) ( $terms_state['products_done'] ?? 0 ) ) + $batch_count;
-                set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                update_option( $terms_key, $terms_state, false );
                 $this->checkpoint->update( self::KEY, $terms_state['products_done'], $batch_count );
 
                 $this->logger->info( "[multilingual] Products chunk done: offset={$terms_state['products_done']}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
             } else {
                 // No rows returned — all products translated, treat as done.
                 $terms_state['products_done'] = $product_total;
-                set_transient( $terms_key, $terms_state, DAY_IN_SECONDS );
+                update_option( $terms_key, $terms_state, false );
             }
         }
 
@@ -379,7 +359,7 @@ class WpmlIntegration extends AbstractMigrator {
             flush_rewrite_rules( false );
 
             // Clean up the terms-phase transient — no longer needed after completion.
-            delete_transient( 'octowoo_ml_terms_' . $this->checkpoint->getRunId() );
+            delete_option( 'octowoo_ml_terms_' . $this->checkpoint->getRunId() );
 
             $this->checkpoint->complete( self::KEY );
             return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => true ];
