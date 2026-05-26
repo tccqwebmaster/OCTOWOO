@@ -644,7 +644,7 @@ class WpmlIntegration extends AbstractMigrator {
         $posts = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $wpdb->prepare( "SELECT ID,post_title,post_content,post_excerpt,post_status,post_type,post_name,post_author,menu_order FROM {$wpdb->posts} WHERE ID IN ({$ids_ph})", $batch_ids ), ARRAY_A );
         $post_cache = [];
-        foreach ( (array) $posts as $p ) { $post_cache[ (int) $p['ID'] ] = (object) $p; }
+        foreach ( (array) $posts as $p ) { $post_cache[ (int) $p['ID'] ] = new \WP_Post( (object) $p ); }
 
         foreach ( $rows as $row ) {
             $primary_id = (int) $row['wc_id'];
