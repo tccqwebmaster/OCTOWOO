@@ -293,17 +293,14 @@ class WpmlIntegration extends AbstractMigrator {
             );
 
             if ( ! empty( $product_rows ) ) {
-                // Pre-fetch secondary + primary OC tags for this batch of products
-                // in a single query each to eliminate the N+1 OC DB query pattern
-                // previously found in copyProductDataToTranslation().
+                // Prefetch secondary-language tags from OC (lightweight — tag strings only).
                 $batch_oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $product_rows ) );
                 if ( ! empty( $batch_oc_ids ) ) {
                     $this->prefetchSecLangTagsForProducts( $batch_oc_ids );
-                    // Bulk-fetch ALL OC product descriptions for this batch in ONE remote query.
-                    // Without this, translatePostsFromRows() makes 1 OC DB query per product
-                    // = 50 remote queries per chunk = 20-50s per chunk on slow OC connections.
-                    $this->prefetchSecDescriptionsFromOC( $batch_oc_ids );
                 }
+                // NOTE: We do NOT call prefetchSecDescriptionsFromOC() here.
+                // Arabic product content is already stored in WP postmeta by ProductMigrator.
+                // The OC remote DB connection takes 40s+ — calling it here caused PHP timeout.
 
                 [ $p, $s, $f ] = $this->translatePostsFromRows(
                     $product_rows,
