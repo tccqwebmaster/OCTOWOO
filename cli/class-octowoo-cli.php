@@ -439,8 +439,11 @@ class OctoWoo_CLI extends WP_CLI_Command {
         $config['multilingual']['enabled']         = true;
         $config['migration']['batch_size']         = 500;
 
+        // Build all dependencies WpmlIntegration needs (extends AbstractMigrator).
+        $oc         = new \OctoWoo\Core\DatabaseConnector( $config['db'] ?? [] );
         $logger     = new \OctoWoo\Core\Logger( $run_id );
         $checkpoint = new \OctoWoo\Core\CheckpointManager( $run_id );
+        $batch      = new \OctoWoo\Core\BatchProcessor( $logger );
         $checkpoint->init( 'multilingual', 9999 );
         $checkpoint->start( 'multilingual' );
 
@@ -452,7 +455,7 @@ class OctoWoo_CLI extends WP_CLI_Command {
 
         do {
             $chunk++;
-            $wpml   = new \OctoWoo\Integration\WpmlIntegration( $logger, $checkpoint, $config );
+            $wpml   = new \OctoWoo\Integration\WpmlIntegration( $oc, $logger, $checkpoint, $batch, $config );
             $result = $wpml->migrate();
 
             $total_processed += (int) ( $result['processed'] ?? 0 );
