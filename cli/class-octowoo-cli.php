@@ -402,4 +402,89 @@ class OctoWoo_CLI extends WP_CLI_Command {
             WP_CLI::error( 'Connection failed: ' . $e->getMessage() );
         }
     }
+
+
+    /**
+     * Run ONLY the multilingual/Arabic translation pass.
+     *
+     * ## DESCRIPTION
+     *
+     * Translates all products, categories and brands to the secondary language
+     * (Arabic by default). Runs directly — no cron, no browser needed.
+     * Safe to run multiple times; already-translated products are skipped.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo multilingual
+     *
+     * @when after_wp_load
+     */
+    public function multilingual( array $args, array $assoc_args ): void {
+        global $wpdb;
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Multilingual (Arabic) Pass          ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( '' );
+
+        // Clear stale state.
+        delete_option( 'octowoo_active_run_id' );
+        delete_option( 'octowoo_ml_terms_v2' );
+        $wpdb->query( "UPDATE {$wpdb->prefix}octowoo_checkpoints SET status='pending', processed_count=0 WHERE migrator='multilingual'" );
+
+        $run_id     = 'cli-ml-' . date( 'YmdHis' );
+        $config     = get_option( 'octowoo_settings', [] );
+        $config['migration']['run_multilingual']   = true;
+        $config['multilingual']['enabled']         = true;
+        $config['migration']['batch_size']         = 500;
+
+        $logger     = new \OctoWoo\Core\Logger( $run_id );
+        $checkpoint = new \OctoWoo\Core\CheckpointManager( $run_id );
+        $checkpoint->init( 'multilingual', 9999 );
+        $checkpoint->start( 'multilingual' );
+
+        WP_CLI::line( "Run ID: {$run_id}" );
+        WP_CLI::line( '' );
+
+        $total_processed = 0;
+        $chunk           = 0;
+
+        do {
+            $chunk++;
+            $wpml   = new \OctoWoo\Integration\WpmlIntegration( $logger, $checkpoint, $config );
+            $result = $wpml->migrate();
+
+            $total_processed += (int) ( $result['processed'] ?? 0 );
+            $is_done          = ! empty( $result['is_done'] );
+
+            // Count untranslated remaining.
+            $remaining = (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM {$wpdb->posts} p
+                 WHERE p.post_type='product' AND p.post_status IN ('publish','draft')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM {$wpdb->postmeta} ps
+                     WHERE ps.meta_key='_octowoo_translation_of' AND ps.meta_value=p.ID
+                 )"
+            );
+
+            WP_CLI::line( sprintf(
+                'Chunk %d — translated: %d | remaining: %d | done: %s',
+                $chunk,
+                (int) ( $result['processed'] ?? 0 ),
+                $remaining,
+                $is_done ? 'YES ✔' : 'no'
+            ) );
+
+            if ( $chunk > 200 ) {
+                WP_CLI::warning( 'Safety limit reached (200 chunks). Run again if needed.' );
+                break;
+            }
+        } while ( ! $is_done );
+
+        WP_CLI::line( '' );
+        WP_CLI::success( "Multilingual complete. Total translated: {$total_processed}. Remaining: {$remaining}" );
+    }
+
+
 }
