@@ -1679,6 +1679,13 @@ class AjaxHandler {
 
         try {
             $enqueued_run_id = BackgroundProcessor::enqueue( $overrides, $run_id );
+
+            // Trigger Action Scheduler immediately via async HTTP request.
+            // Without this, the first chunk waits until the next WP-Cron tick (up to 1 min).
+            // This makes the migration start within seconds of clicking the button.
+            as_schedule_single_action( time(), 'action_scheduler_run_queue', [], 'default' );
+            spawn_cron();
+
             wp_send_json_success( [
                 'message' => __( 'Background migration queued. Progress will update automatically.', 'octowoo' ),
                 'run_id'  => $enqueued_run_id,

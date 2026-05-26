@@ -433,13 +433,17 @@ class OctoWoo_CLI extends WP_CLI_Command {
         delete_option( 'octowoo_ml_terms_v2' );
         $wpdb->query( "UPDATE {$wpdb->prefix}octowoo_checkpoints SET status='pending', processed_count=0 WHERE migrator='multilingual'" );
 
-        $run_id     = 'cli-ml-' . date( 'YmdHis' );
-        $config     = get_option( 'octowoo_settings', [] );
-        $config['migration']['run_multilingual']   = true;
-        $config['multilingual']['enabled']         = true;
-        $config['migration']['batch_size']         = 500;
+        // Use a proper run_id and register it so the dashboard can track progress.
+        $run_id = 'cli-ml-' . date( 'YmdHis' );
+        $config = get_option( 'octowoo_settings', [] );
+        $config['migration']['run_multilingual'] = true;
+        $config['multilingual']['enabled']       = true;
+        $config['migration']['batch_size']       = 500;
 
-        // Build all dependencies WpmlIntegration needs (extends AbstractMigrator).
+        // Register run as active so dashboard polling picks it up.
+        update_option( 'octowoo_active_run_id', $run_id );
+        delete_option( 'octowoo_ml_terms_v2' );
+
         $oc         = new \OctoWoo\Core\DatabaseConnector( $config['db'] ?? [] );
         $logger     = new \OctoWoo\Core\Logger( $run_id );
         $checkpoint = new \OctoWoo\Core\CheckpointManager( $run_id );
