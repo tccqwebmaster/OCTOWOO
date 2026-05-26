@@ -710,20 +710,21 @@
         startPolling();
 
         $.post(octoWoo.ajaxUrl, {
-            action:    'octowoo_start_background',
-            nonce:     octoWoo.nonce,
-            resume:    0,
-            migrators: 'multilingual',
-            dry_run:   0,
-            demo_limit: 0,
+            action:       'octowoo_start_background',
+            nonce:        octoWoo.nonce,
+            resume:       1,  // force resume=1 so active_run check is bypassed
+            migrators:    'multilingual',
+            dry_run:      0,
+            demo_limit:   0,
             on_duplicate: $('#ow-opt-on-duplicate').val() || 'update',
+            force_multilingual: 1,
         })
         .done(function(res) {
             if (res && res.success && res.data && res.data.run_id) {
                 currentRunId = res.data.run_id;
                 showToast('✅ Multilingual started in background. You can close the browser.', 'success', 6000);
             } else {
-                var msg = (res && res.data && res.data.message) || 'Failed to start background migration.';
+                var msg = (res && res.data && res.data.message) || 'Failed to start. Try clicking Abort first then Re-run Multilingual.';
                 setBannerError(msg);
                 isRunning = false;
                 setButtonState('idle');

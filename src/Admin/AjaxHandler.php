@@ -1613,7 +1613,18 @@ class AjaxHandler {
 
         $active_run = CheckpointManager::getActiveRunId();
         // phpcs:ignore WordPress.Security.NonceVerification
-        $resume     = filter_input( INPUT_POST, 'resume', FILTER_VALIDATE_BOOLEAN );
+        $resume            = filter_input( INPUT_POST, 'resume',            FILTER_VALIDATE_BOOLEAN );
+        // phpcs:ignore WordPress.Security.NonceVerification
+        $force_multilingual = filter_input( INPUT_POST, 'force_multilingual', FILTER_VALIDATE_BOOLEAN );
+
+        // Allow force-starting a multilingual-only run even if a completed run exists.
+        // Without this, actionStartBackground rejects with "already active" when the
+        // previous full migration run_id is still stored in octowoo_active_run_id.
+        if ( $force_multilingual ) {
+            delete_option( 'octowoo_active_run_id' );
+            $active_run = null;
+            $resume     = false;
+        }
 
         if ( $active_run && ! $resume ) {
             wp_send_json_error( [
