@@ -87,305 +87,177 @@ class WpmlIntegration extends AbstractMigrator {
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
-        $settings_enabled = ! empty( $this->config['multilingual']['enabled'] );
-        $run_enabled      = ! empty( $this->config['migration']['run_multilingual'] );
+        global $wpdb;
 
-        if ( ! $settings_enabled && ! $run_enabled ) {
-            $this->logger->info( '[multilingual] Disabled in config – skipping.' );
+        // ── Guards ────────────────────────────────────────────────────────────
+        if ( empty( $this->config['multilingual']['enabled'] ) && empty( $this->config['migration']['run_multilingual'] ) ) {
+            $this->logger->info( '[multilingual] Disabled — skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
-
-        // Guard against re-execution when a prior chunk already completed this step.
-        // In update mode we always re-run so images, secondary-language tags, and brands are
-        // re-copied to existing secondary-language translations without requiring Reset Progress.
         if ( $this->onDuplicate() !== 'update' && $this->checkpoint->isCompleted( self::KEY ) ) {
-            $this->logger->info( '[multilingual] Already completed – skipping.' );
+            $this->logger->info( '[multilingual] Already completed — skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
-        $this->primary_lang   = $this->config['multilingual']['primary_locale']   ?? 'en';
-        $this->secondary_lang = $this->config['multilingual']['secondary_locale']  ?? 'ar';
-
-        $this->adapter = $this->detectAdapter();
-
+        // ── Setup ─────────────────────────────────────────────────────────────
+        $this->primary_lang   = $this->config['multilingual']['primary_locale']  ?? 'en';
+        $this->secondary_lang = $this->config['multilingual']['secondary_locale'] ?? 'ar';
+        $this->adapter        = $this->detectAdapter();
         $this->resolveLanguageCodes();
 
         if ( $this->adapter === 'none' ) {
-            $this->logger->warning( '[multilingual] Neither WPML nor Polylang is active. Skipping translation pass.' );
+            $this->logger->warning( '[multilingual] Neither WPML nor Polylang active — skipping.' );
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0, 'is_done' => true ];
         }
 
         $this->logger->info( "[multilingual] Using adapter: {$this->adapter}. Primary: {$this->primary_lang} | Secondary: {$this->secondary_lang}" );
 
-        // Suppress expensive WC/WP hooks — we use direct $wpdb INSERT/UPDATE,
-        // not wp_insert_post/wp_update_post. This prevents third-party plugins
-        // from attaching save_post handlers that slow down each post write.
+        // Suppress WC hooks — we use direct $wpdb writes.
         wp_suspend_cache_invalidation( true );
         wp_defer_term_counting( true );
         remove_all_actions( 'woocommerce_update_product' );
         remove_all_actions( 'woocommerce_new_product' );
         remove_all_actions( 'save_post_product' );
 
-        $chunk_mode  = $this->batch->isChunkMode();
-        $batch_size   = 500; // products: no OC queries, bulk postmeta = <0.1s each
-        $terms_batch  = 10;  // terms: OC queries for Arabic names, keep small
-        $demo_limit  = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
-
-        global $wpdb;
-
-        // How many product rows have been translated so far (used as SQL OFFSET).
-        $product_offset = $this->checkpoint->getProcessedCount( self::KEY );
-
-        // Total products to translate — query wp_posts directly so Multilingual
-        // Recovery works even when the id_map was cleared (e.g. after Reset Progress).
-        //
-        // We exclude secondary-language copies using NOT EXISTS on the
-        // '_octowoo_translation_of' postmeta that our migrator sets on every
-        // translated post it creates.  This is faster than JOINing on
-        // icl_translations (which may be unindexed for our query) and works for
-        // both WPML and Polylang.  It also preserves correct OFFSET-based
-        // pagination because the meta is set on the TRANSLATED posts, not the
-        // originals, so the primary-language result set is stable across chunks.
-        // Count products needing translation: English primary posts with no Arabic copy yet.
-        // Uses _octowoo_translation_of postmeta (set when we create each Arabic post).
-        // Simple and reliable — no dependency on icl_translations state.
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
-        $product_total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$wpdb->posts} p
-             WHERE p.post_type   = 'product'
-               AND p.post_status IN ('publish','draft')
-               AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} pm_sec
-                   WHERE pm_sec.meta_key   = '_octowoo_translation_of'
-                     AND pm_sec.meta_value = p.ID
-               )"
-        );
-        if ( $demo_limit > 0 ) {
-            $product_total = min( $product_total, $demo_limit );
-        }
-
-        $processed = 0;
-        $skipped   = 0;
-        $failed    = 0;
-
-        // ── Terms phase: chunked translation of categories + brands ────────────
-        // Categories and brand terms MUST be done before products so that
-        // copyProductDataToTranslation() can resolve secondary-language term IDs.
-        //
-        // Because large stores can have 200+ categories and each WPML term
-        // operation does several DB inserts, we process terms in batches of
-        // $batch_size per chunk (same as products) and track progress in a
-        // transient keyed by run_id.  Each chunk returns early (is_done=false)
-        // until all taxonomies are done, then products start on the next chunk.
-        //
-        // Transient structure:
-        //   'cat_off'    int|'done'  offset into category rows
-        //   'brand_off'  int|'done'  offset into brand rows (or 'done' when no brand tax)
-        //   'done'       bool        true once both taxonomies are finished
-        //   'inited'     bool        true once checkpoint->init() was called
-        $run_id_key    = $this->checkpoint->getRunId();
-        // Fixed key (not run_id based) so terms_state persists across Re-run Multilingual runs.
-        // Categories/brands only re-run if terms_state was explicitly cleared (e.g. Full Reset).
-        $terms_key   = 'octowoo_ml_terms_v2';  // bump suffix to invalidate old state
-        $terms_state = get_option( $terms_key, false );
-        $brand_tax     = $this->detectActiveBrandTaxonomy();
-
+        $terms_key   = 'octowoo_ml_terms_v2';
+        $terms_state = get_option( $terms_key, [] );
         if ( ! is_array( $terms_state ) ) {
-            $terms_state = [
-                'cat_off'   => 0,
-                'brand_off' => ( $brand_tax !== '' ) ? 0 : 'done',
-                'done'      => false,
-                'inited'    => false,
-            ];
+            $terms_state = [];
         }
+        $terms_done   = ! empty( $terms_state['done'] );
+        $brand_tax    = $this->detectActiveBrandTaxonomy();
+        $sfx          = $this->secLangSuffix();
+        $processed    = 0;
+        $skipped      = 0;
+        $failed       = 0;
 
-        // Terms phase: runs until terms_state['done']=true.
-        // IMPORTANT: do NOT gate this on product_offset===0. The new NOT EXISTS
-        // product query doesn't use offset so product_offset is always 0 in the
-        // checkpoint, which would cause the terms phase (and checkpoint->init())
-        // to re-run on every chunk, resetting processed_count to 0 forever.
-        if ( ! $terms_state['done'] ) {
-
-            if ( ! $terms_state['inited'] ) {
-                $this->checkpoint->init( self::KEY, $product_total );
+        // ── Phase 1: Terms (categories + brands) — 10 per chunk, OC queries needed ──
+        if ( ! $terms_done ) {
+            if ( empty( $terms_state['inited'] ) ) {
+                $total = $this->countUntranslated( $wpdb );
+                $this->checkpoint->init( self::KEY, $total );
                 $this->checkpoint->start( self::KEY );
-                $terms_state['inited'] = true;
+                $terms_state['inited']    = true;
+                $terms_state['cat_off']   = 0;
+                $terms_state['brand_off'] = 0;
+                $terms_state['prod_done'] = 0;
             }
 
-            // ── Category batch ────────────────────────────────────────────
-            if ( $terms_state['cat_off'] !== 'done' ) {
-                $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
-                [ $p, $s, $f, $cat_has_more ] = $this->translateTerms(
-                    'product_cat', $cat_seo_map, 'category',
-                    (int) $terms_state['cat_off'], $terms_batch
-                );
+            // Categories
+            if ( ( $terms_state['cat_off'] ?? 'done' ) !== 'done' ) {
+                $cat_seo = $this->fetchSecondaryCategorySeoMap();
+                [ $p, $s, $f, $more ] = $this->translateTerms( 'product_cat', $cat_seo, 'category', (int) $terms_state['cat_off'], 10 );
                 $processed += $p; $skipped += $s; $failed += $f;
-
-                if ( $cat_has_more ) {
-                    $terms_state['cat_off'] = (int) $terms_state['cat_off'] + $terms_batch;
+                $terms_state['cat_off'] = $more ? (int) $terms_state['cat_off'] + 10 : 'done';
+                if ( $more ) {
                     update_option( $terms_key, $terms_state, false );
-                    $this->logger->info( "[multilingual] Categories chunk done (offset={$terms_state['cat_off']}). More categories remain." );
+                    $this->logger->info( "[multilingual] Categories chunk done (offset={$terms_state['cat_off']}). More remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
-                $terms_state['cat_off'] = 'done';
-                $this->logger->info( '[multilingual] Categories translation complete.' );
+                $this->logger->info( '[multilingual] Categories complete.' );
             }
 
-            // ── Brand batch ───────────────────────────────────────────────
-            if ( $brand_tax !== '' && $terms_state['brand_off'] !== 'done' ) {
-                [ $p, $s, $f, $brand_has_more ] = $this->translateTerms(
-                    $brand_tax, [], 'manufacturer',
-                    (int) $terms_state['brand_off'], $terms_batch
-                );
+            // Brands
+            if ( $brand_tax !== '' && ( $terms_state['brand_off'] ?? 'done' ) !== 'done' ) {
+                [ $p, $s, $f, $more ] = $this->translateTerms( $brand_tax, [], 'manufacturer', (int) $terms_state['brand_off'], 10 );
                 $processed += $p; $skipped += $s; $failed += $f;
-
-                if ( $brand_has_more ) {
-                    $terms_state['brand_off'] = (int) $terms_state['brand_off'] + $terms_batch;
+                $terms_state['brand_off'] = $more ? (int) $terms_state['brand_off'] + 10 : 'done';
+                if ( $more ) {
                     update_option( $terms_key, $terms_state, false );
-                    $this->logger->info( "[multilingual] Brands chunk done (offset={$terms_state['brand_off']}). More brands remain." );
+                    $this->logger->info( "[multilingual] Brands chunk done (offset={$terms_state['brand_off']}). More remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
-                $terms_state['brand_off'] = 'done';
-                $this->logger->info( '[multilingual] Brands translation complete.' );
+                $this->logger->info( '[multilingual] Brands complete.' );
             }
 
-            // All terms done — next chunk will start products.
             $terms_state['done'] = true;
             update_option( $terms_key, $terms_state, false );
-            $this->logger->info( "[multilingual] All terms done. Next chunk starts products: total={$product_total}, batch_size={$batch_size}" );
+            $total = $this->countUntranslated( $wpdb );
+            $this->logger->info( "[multilingual] Terms done. Products remaining: {$total}" );
             return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
         }
 
-        // ── Translate a batch of products ─────────────────────────────────────
-        if ( $product_total > 0 ) {
-            $sec_seo_map = $this->fetchSecondaryLangSeoMap();
-            $fetch_limit = $chunk_mode ? $batch_size : $product_total;
+        // ── Phase 2: Products — 500 per chunk, pure WP postmeta, zero OC queries ──
+        $total = $this->countUntranslated( $wpdb );
 
-            // Fetch products directly from wp_posts with a LEFT JOIN on _octowoo_oc_id.
-            // Using wp_posts (not id_map) ensures ALL products are translated,
-            // even when id_map was cleared by Reset Progress.
-            // NOT EXISTS on '_octowoo_translation_of' excludes secondary-language copies
-            // that our migrator created, so we only process primary-language originals.
-            // This is stable across chunks (meta is on translations, not originals).
-            // Simple NOT EXISTS on _octowoo_translation_of — 
-            // the most reliable way to find untranslated products.
-            // We set this meta on every Arabic post we create, so this
-            // is always accurate regardless of icl_translations state.
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
-            $product_rows = $wpdb->get_results(
+        if ( $total > 0 ) {
+            // Fetch 500 untranslated English products.
+            // _octowoo_translation_of is set on every Arabic post we create.
+            $rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT p.ID AS wc_id, COALESCE(pm.meta_value, 0) AS oc_id
                      FROM {$wpdb->posts} p
-                     LEFT JOIN {$wpdb->postmeta} pm
-                         ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
-                     WHERE p.post_type   = 'product'
+                     LEFT JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = '_octowoo_oc_id'
+                     WHERE p.post_type = 'product'
                        AND p.post_status IN ('publish','draft')
                        AND NOT EXISTS (
-                           SELECT 1 FROM {$wpdb->postmeta} pm_sec
-                           WHERE pm_sec.meta_key   = '_octowoo_translation_of'
-                             AND pm_sec.meta_value = p.ID
+                           SELECT 1 FROM {$wpdb->postmeta} ps
+                           WHERE ps.meta_key = '_octowoo_translation_of' AND ps.meta_value = p.ID
                        )
-                     ORDER BY p.ID ASC
-                     LIMIT %d",
-                    $fetch_limit
+                     ORDER BY p.ID ASC LIMIT %d",
+                    500
                 ),
                 ARRAY_A
             );
 
-            if ( ! empty( $product_rows ) ) {
-                // Prefetch secondary-language tags from OC (lightweight — tag strings only).
-                $batch_oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $product_rows ) );
-                if ( ! empty( $batch_oc_ids ) ) {
-                    $this->prefetchSecLangTagsForProducts( $batch_oc_ids );
+            if ( ! empty( $rows ) ) {
+                // Prefetch tags from OC (lightweight string query only).
+                $oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $rows ) );
+                if ( $oc_ids ) {
+                    $this->prefetchSecLangTagsForProducts( $oc_ids );
                 }
-                // NOTE: We do NOT call prefetchSecDescriptionsFromOC() here.
-                // Arabic product content is already stored in WP postmeta by ProductMigrator.
-                // The OC remote DB connection takes 40s+ — calling it here caused PHP timeout.
 
                 [ $p, $s, $f ] = $this->translatePostsFromRows(
-                    $product_rows,
-                    'product',
-                    '_octowoo_name' . $this->secLangSuffix(),
-                    '_octowoo_description' . $this->secLangSuffix(),
-                    $sec_seo_map
+                    $rows, 'product',
+                    '_octowoo_name' . $sfx,
+                    '_octowoo_description' . $sfx,
+                    $this->fetchSecondaryLangSeoMap()
                 );
                 $processed += $p; $skipped += $s; $failed += $f;
 
-                $batch_count    = count( $product_rows );
-                // With NOT EXISTS query, $product_offset is meaningless for pagination.
-                // Use a running total stored in the transient to track cumulative progress.
-                $terms_state['products_done'] = ( (int) ( $terms_state['products_done'] ?? 0 ) ) + $batch_count;
+                $done_so_far = ( (int) ( $terms_state['prod_done'] ?? 0 ) ) + count( $rows );
+                $terms_state['prod_done'] = $done_so_far;
                 update_option( $terms_key, $terms_state, false );
-                $this->checkpoint->update( self::KEY, $terms_state['products_done'], $batch_count );
+                $this->checkpoint->update( self::KEY, $done_so_far, count( $rows ) );
+                $this->logger->info( "[multilingual] Products chunk done: {$done_so_far} translated, {$total} remaining, batch={$p} ok/{$f} fail" );
 
-                $this->logger->info( "[multilingual] Products chunk done: offset={$terms_state['products_done']}/{$product_total}, translated={$p}, skipped={$s}, failed={$f}" );
-            } else {
-                // No rows returned — all products translated, treat as done.
-                $terms_state['products_done'] = $product_total;
-                update_option( $terms_key, $terms_state, false );
+                wp_suspend_cache_invalidation( false );
+                wp_defer_term_counting( false );
+                return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
             }
         }
 
-        // ── Last chunk: translate pages + complete ────────────────────────────
-        $products_done = (int) ( $terms_state['products_done'] ?? 0 );
-        if ( $products_done >= $product_total ) {
-            // Pages (InformationMigrator) are small; process them all at once.
-            [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $this->secLangSuffix(), '_octowoo_desc' . $this->secLangSuffix() );
-            $processed += $p; $skipped += $s; $failed += $f;
+        // ── Phase 3: Pages + completion ───────────────────────────────────────
+        [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $sfx, '_octowoo_desc' . $sfx );
+        $processed += $p; $skipped += $s; $failed += $f;
 
-            $this->logger->info( "[multilingual] All done. Translated: {$processed}, Skipped: {$skipped}, Errors: {$failed}" );
+        $fix_taxes  = array_filter( [ 'product_cat', $brand_tax ?: null ] );
+        $slug_fixed = $this->autoFixTempSlugs( $fix_taxes );
+        if ( $slug_fixed > 0 ) { $this->logger->info( "[multilingual] Auto-fixed {$slug_fixed} temp slug(s)." ); }
 
-            // Auto-fix any 'ow-t-' temp slugs left on Arabic/secondary terms.
-            // These can remain if the process was interrupted mid-chunk between
-            // the temp-slug write and fixTranslationTermSlug(). Running this here
-            // means no manual "Fix Category Slugs" button is ever needed.
-            $brand_tax  = $this->detectActiveBrandTaxonomy();
-            $fix_taxes  = array_filter( [ 'product_cat', $brand_tax !== '' ? $brand_tax : null ] );
-            $slug_fixed = $this->autoFixTempSlugs( $fix_taxes );
-            if ( $slug_fixed > 0 ) {
-                $this->logger->info( "[multilingual] Auto-fixed {$slug_fixed} temp slug(s)." );
-            }
-
-            // Restore WordPress cache and term counting after the pass.
-            wp_suspend_cache_invalidation( false );
-            wp_defer_term_counting( false );
-            wp_cache_flush();
-
-            // Flush WordPress rewrite rules so newly created/updated term slugs
-            // are immediately routable.
-            flush_rewrite_rules( false );
-
-            // Clean up the terms-phase transient — no longer needed after completion.
-            delete_option( 'octowoo_ml_terms_v2' ); // clear on full completion only
-
-            $this->checkpoint->complete( self::KEY );
-            return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => true ];
-        }
-
-        // More product batches remain — signal the caller to schedule another chunk.
-        $this->flushSecondaryLangRedirects();
-        return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
+        wp_suspend_cache_invalidation( false );
+        wp_defer_term_counting( false );
+        wp_cache_flush();
+        flush_rewrite_rules( false );
+        delete_option( $terms_key );
+        $this->checkpoint->complete( self::KEY );
+        $this->logger->info( "[multilingual] ✔ Complete. processed={$processed} skipped={$skipped} failed={$failed}" );
+        return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => true ];
     }
 
-    /**
-     * Pre-fetch secondary (secondary) and primary language tag strings from
-     * oc_product_description for a given set of OC product IDs.
-     *
-     * This eliminates the N+1 OC DB query pattern in copyProductDataToTranslation()
-     * where each product made two separate queries.  Instead we make two bulk queries
-     * per chunk and cache the results in $this->sec_tags_cache.
-     *
-     * @param int[] $oc_ids
-     */
+    // ── Count untranslated products ───────────────────────────────────────────
+    private function countUntranslated( \wpdb $wpdb ): int {
+        return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+            "SELECT COUNT(*) FROM {$wpdb->posts} p
+             WHERE p.post_type = 'product'
+               AND p.post_status IN ('publish','draft')
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} ps
+                   WHERE ps.meta_key = '_octowoo_translation_of' AND ps.meta_value = p.ID
+               )"
+        );
+    }
 
-    /**
-     * Rebuild the octowoo_id_map table for entity_type='product' from the
-     * _octowoo_oc_id postmeta stored on existing WC product posts.
-     *
-     * Called automatically when Multilingual Recovery is triggered but the
-     * id_map is empty (e.g. after Reset Progress). This allows translation to
-     * run without requiring a full product re-migration.
-     */
     private function rebuildProductIdMapFromMeta(): void {
         global $wpdb;
 
@@ -627,263 +499,146 @@ class WpmlIntegration extends AbstractMigrator {
         $failed    = 0;
         $sfx       = $this->secLangSuffix();
 
-        // Bulk-load ALL postmeta for the entire batch in TWO queries (not N×3).
+        if ( empty( $rows ) ) {
+            return [ $processed, $skipped, $failed ];
+        }
+
+        // ── Bulk load postmeta + posts (2 queries for entire batch) ───────────
         $batch_ids = array_map( fn( $r ) => (int) $r['wc_id'], $rows );
         $meta_keys = [ $title_meta_key, $content_meta_key, '_octowoo_short_description' . $sfx ];
-        $ids_ph    = implode( ',', array_fill( 0, count( $batch_ids ), '%d' ) );
-        $keys_ph   = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
-        $meta_rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->prepare( "SELECT post_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id IN ({$ids_ph}) AND meta_key IN ({$keys_ph})", array_merge( $batch_ids, $meta_keys ) ), ARRAY_A );
-        $meta_cache = [];
-        foreach ( (array) $meta_rows as $mr ) { $meta_cache[ (int) $mr['post_id'] ][ $mr['meta_key'] ] = $mr['meta_value']; }
+        $id_ph     = implode( ',', array_fill( 0, count( $batch_ids ), '%d' ) );
+        $key_ph    = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
 
-        // Bulk-load all primary posts.
-        $posts = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $wpdb->prepare( "SELECT ID,post_title,post_content,post_excerpt,post_status,post_type,post_name,post_author,menu_order FROM {$wpdb->posts} WHERE ID IN ({$ids_ph})", $batch_ids ), ARRAY_A );
-        $post_cache = [];
-        foreach ( (array) $posts as $p ) { $post_cache[ (int) $p['ID'] ] = new \WP_Post( (object) $p ); }
+        $raw_meta = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT post_id, meta_key, meta_value FROM {$wpdb->postmeta}
+                 WHERE post_id IN ({$id_ph}) AND meta_key IN ({$key_ph})",
+                array_merge( $batch_ids, $meta_keys )
+            ),
+            ARRAY_A
+        );
+        $meta = [];
+        foreach ( (array) $raw_meta as $r ) {
+            $meta[ (int) $r['post_id'] ][ $r['meta_key'] ] = $r['meta_value'];
+        }
 
+        $raw_posts = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT ID, post_title, post_content, post_excerpt, post_status,
+                        post_type, post_name, post_author, menu_order
+                 FROM {$wpdb->posts} WHERE ID IN ({$id_ph})",
+                $batch_ids
+            ),
+            ARRAY_A
+        );
+        $posts = [];
+        foreach ( (array) $raw_posts as $r ) {
+            $posts[ (int) $r['ID'] ] = new \WP_Post( (object) $r );
+        }
+
+        // ── Process each product ──────────────────────────────────────────────
         foreach ( $rows as $row ) {
             $primary_id = (int) $row['wc_id'];
-            $oc_id      = (int) $row['oc_id'];
+            $primary    = $posts[ $primary_id ] ?? null;
+            if ( ! $primary ) { $failed++; continue; }
 
-            $sec_title   = (string) ( $meta_cache[ $primary_id ][ $title_meta_key ]   ?? '' );
-            $sec_content = (string) ( $meta_cache[ $primary_id ][ $content_meta_key ] ?? '' );
-            $sec_excerpt = $post_type === 'product' ? (string) ( $meta_cache[ $primary_id ][ '_octowoo_short_description' . $sfx ] ?? '' ) : '';
+            // Get secondary-language content from postmeta (set by ProductMigrator).
+            // No OC DB queries — content is already in WP.
+            $sec_title   = (string) ( $meta[ $primary_id ][ $title_meta_key   ] ?? '' );
+            $sec_content = (string) ( $meta[ $primary_id ][ $content_meta_key ] ?? '' );
+            $sec_excerpt = (string) ( $meta[ $primary_id ][ '_octowoo_short_description' . $sfx ] ?? '' );
 
-            $primary_post_raw = $post_cache[ $primary_id ] ?? null;
-            if ( ! $primary_post_raw ) {
-                $failed++;
-                continue;
-            }
+            // Fall back to English if secondary language content is empty.
+            if ( $sec_title   === '' ) { $sec_title   = $primary->post_title;   }
+            if ( $sec_content === '' ) { $sec_content = $primary->post_content;  }
+            if ( $sec_excerpt === '' ) { $sec_excerpt = $primary->post_excerpt;  }
 
+            $existing_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
 
-            if ( $sec_title === '' ) {
-                $sec_title = $primary_post_raw->post_title;
-                $this->logger->debug( "[multilingual] No secondary-language title for {$post_type} #{$primary_id} – using primary title as fallback." );
-            }
-            if ( $sec_content === '' ) {
-                $sec_content = $primary_post_raw->post_content;
-            } elseif ( trim( wp_strip_all_tags( $sec_content ) ) === trim( wp_strip_all_tags( $primary_post_raw->post_content ) ) ) {
-                // Secondary description identical to primary — OC product likely has the
-                // same (untranslated) content in both language rows.
-                $this->logger->debug(
-                    "[multilingual] Note: secondary-language description for {$post_type} #{$primary_id} is identical to primary. " .
-                    'This may mean the OpenCart description was not translated in the source store.'
-                );
-            }
-            if ( $sec_excerpt === '' && $post_type === 'product' ) {
-                $sec_excerpt = $primary_post_raw->post_excerpt;
-            }
+            if ( $existing_id > 0 && get_post_status( $existing_id ) !== false ) {
+                // ── Update existing translation ───────────────────────────────
+                $this->verifyAndFixTranslationLanguage( $existing_id, $primary_id, $post_type );
 
-            $existing_translation_id = $this->getExistingTranslationId( $primary_id, 'post_' . $post_type );
-
-            // Verify and repair language registration for existing translations.
-            if ( $existing_translation_id > 0 ) {
-                global $wpdb;
-                if ( $this->adapter === 'wpml' ) {
-                    // WPML: verify icl_translations row has correct language_code.
-                    $icl_lang = $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                        "SELECT language_code FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type = %s LIMIT 1",
-                        $existing_translation_id,
-                        'post_' . $post_type
-                    ) );
-                    if ( $icl_lang && $icl_lang !== $this->secondary_lang ) {
-                        $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                            $wpdb->prefix . 'icl_translations',
-                            [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang ],
-                            [ 'element_id' => $existing_translation_id, 'element_type' => 'post_' . $post_type ]
-                        );
-                        $this->logger->info( "[multilingual] Fixed icl_translations language for post #{$existing_translation_id}: was '{$icl_lang}' → '{$this->secondary_lang}'" );
-                    } elseif ( ! $icl_lang ) {
-                        $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                            "SELECT trid FROM {$wpdb->prefix}icl_translations WHERE element_id = %d AND element_type LIKE 'post_%' LIMIT 1",
-                            $primary_id
-                        ) );
-                        if ( $primary_trid ) {
-                            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                                "INSERT INTO `{$wpdb->prefix}icl_translations` (element_type, element_id, trid, language_code, source_language_code)
-                                 VALUES (%s, %d, %d, %s, %s)
-                                 ON DUPLICATE KEY UPDATE trid=VALUES(trid), language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
-                                'post_' . $post_type, $existing_translation_id, $primary_trid, $this->secondary_lang, $this->primary_lang
-                            ) );
-                            $this->logger->info( "[multilingual] Inserted missing icl_translations for post #{$existing_translation_id} (trid={$primary_trid})" );
-                        }
-                    }
-                } elseif ( $this->adapter === 'polylang' ) {
-                    // Polylang: verify pll_set_post_language is correct.
-                    $pll_lang = function_exists( 'pll_get_post_language' ) ? pll_get_post_language( $existing_translation_id ) : null;
-                    if ( $pll_lang !== $this->secondary_lang ) {
-                        if ( function_exists( 'pll_set_post_language' ) ) {
-                            pll_set_post_language( $existing_translation_id, $this->secondary_lang );
-                        }
-                        if ( function_exists( 'pll_save_post_translations' ) ) {
-                            pll_save_post_translations( [
-                                $this->primary_lang   => $primary_id,
-                                $this->secondary_lang => $existing_translation_id,
-                            ] );
-                        }
-                        $this->logger->info( "[multilingual] Fixed Polylang language for post #{$existing_translation_id}: was '{$pll_lang}' → '{$this->secondary_lang}'" );
-                    }
-                }
-            }
-            if ( $existing_translation_id > 0 ) {
-                if ( $this->isDry() ) {
-                    $this->logger->debug( "[DRY-RUN] Would update existing {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$sec_title}" );
-                    $processed++;
-                    continue;
-                }
-
-                // Temporarily remove WPML's save_post field-sync handler so it
-                // doesn't copy primary-language content over our Arabic content
-                // when wp_update_post fires save_post on the translated post.
-                global $sitepress;
-                $wpml_handler_removed = false;
-                if ( isset( $sitepress ) && method_exists( $sitepress, 'save_post_handler' ) ) {
-                    remove_action( 'save_post', [ $sitepress, 'save_post_handler' ] );
-                    $wpml_handler_removed = true;
-                }
-                // Also try the newer WPML hook name used in WPML 4.5+.
-                $wpml_save_removed = remove_filter( 'save_post', [ 'WPML_Translation_Job_Helper', 'save_post_handler' ], 10 );
-
-                // Direct DB write — 10-20x faster than wp_update_post() which
-                // fires save_post, all WC hooks, stock recalc, and cache flush
-                // for every product. We flush cache in bulk at chunk end instead.
-                $update_data = [
-                    'post_title'   => $sec_title,
-                    'post_content' => $sec_content,
-                    'post_excerpt' => $sec_excerpt,
-                    'post_name'    => $primary_post_raw->post_name,
-                    'post_modified'         => current_time( 'mysql' ),
-                    'post_modified_gmt'     => current_time( 'mysql', true ),
-                ];
-                $updated = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     $wpdb->posts,
-                    $update_data,
-                    [ 'ID' => $existing_translation_id ]
+                    [
+                        'post_title'        => $sec_title,
+                        'post_content'      => $sec_content,
+                        'post_excerpt'      => $sec_excerpt,
+                        'post_modified'     => current_time( 'mysql' ),
+                        'post_modified_gmt' => current_time( 'mysql', true ),
+                    ],
+                    [ 'ID' => $existing_id ]
                 );
-                if ( $updated === false ) {
-                    $this->logger->error( "[multilingual] Failed updating existing translated post #{$existing_translation_id}: " . $wpdb->last_error );
-                    $failed++;
-                    continue;
+                clean_post_cache( $existing_id );
+                $this->copyProductDataToTranslation( $primary_id, $existing_id );
+                $this->linkPostTranslation( $primary_id, $existing_id, $post_type );
+                $this->applyYoastPostMeta( $primary_id, $existing_id );
+
+                if ( isset( $sec_seo_map[ (int) $row['oc_id'] ] ) ) {
+                    $this->queueSecondaryLangRedirect( $existing_id, $sec_seo_map[ (int) $row['oc_id'] ] );
                 }
-                clean_post_cache( $existing_translation_id );
-
-                if ( $post_type === 'product' ) {
-                    $this->copyProductDataToTranslation( $primary_id, $existing_translation_id );
-                }
-
-                $this->applyYoastPostMeta( $primary_id, $existing_translation_id );
-                $this->fixTranslationSlug( $existing_translation_id, $primary_post_raw->post_name );
-
-                // Force secondary-language content + thumbnail after wp_update_post which fires
-                // save_post: WPML field-sync may copy primary-language post_content back over
-                // the secondary content we set in $update_data, erasing the description.
-                // Direct DB write + meta update bypass all hooks (same as fixTranslationSlug).
-                $sec_len = mb_strlen( wp_strip_all_tags( $sec_content ) );
-                $pri_len = mb_strlen( wp_strip_all_tags( $primary_post_raw->post_content ) );
-                if ( $sec_len > 0 ) {
-                    $this->logger->info( "[multilingual] Updating {$post_type} #{$existing_translation_id} — secondary content: {$sec_len} chars | primary: {$pri_len} chars" );
-                } else {
-                    $this->logger->warning( "[multilingual] ⚠ {$post_type} #{$primary_id}: secondary description is EMPTY — translation will use primary (English) content. Check oc_product_description language_id={$this->langIdSecondary()} has Arabic description." );
-                }
-                $this->forceTranslationContent(
-                    $existing_translation_id,
-                    $sec_title,
-                    $sec_content,
-                    $sec_excerpt,
-                    (int) get_post_meta( $primary_id, '_thumbnail_id', true )
-                );
-
-                // Read-back verification: confirm the DB actually has our content.
-                $verify_post = get_post( $existing_translation_id );
-                if ( $verify_post ) {
-                    $saved_len = mb_strlen( wp_strip_all_tags( $verify_post->post_content ) );
-                    $want_len  = mb_strlen( wp_strip_all_tags( $sec_content ) );
-                    if ( $saved_len !== $want_len ) {
-                        $this->logger->warning( "[multilingual] ⚠ Content mismatch after write for {$post_type} #{$existing_translation_id}: wanted {$want_len} chars, DB has {$saved_len} chars. WPML may be overwriting — trying direct DB update again." );
-                        // Second direct DB write attempt.
-                        $this->forceTranslationContent(
-                            $existing_translation_id, $sec_title, $sec_content, $sec_excerpt,
-                            (int) get_post_meta( $primary_id, '_thumbnail_id', true )
-                        );
-                    } else {
-                        $this->logger->info( "[multilingual] ✔ Verified: {$post_type} #{$existing_translation_id} has {$saved_len} chars of secondary content in DB." );
-                    }
-                }
-
-                if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
-                    $this->queueSecondaryLangRedirect( $existing_translation_id, $sec_seo_map[ $oc_id ] );
-                }
-
-                $this->logger->debug( "[multilingual] Updated existing {$post_type} translation #{$existing_translation_id} from primary #{$primary_id}." );
+                update_post_meta( $existing_id, '_octowoo_translation_of',   $primary_id );
+                update_post_meta( $existing_id, '_octowoo_translation_lang',  $this->secondary_lang );
+                $this->logger->info( "[multilingual] Updating product #{$existing_id} ← #{$primary_id}" );
                 $processed++;
-                continue;
-            }
+            } else {
+                // ── Create new translation ────────────────────────────────────
+                $new_id = $this->createTranslatedPost( $primary, $sec_title, $sec_content, $post_type, $sec_excerpt );
+                if ( ! $new_id ) { $failed++; continue; }
 
-            if ( $this->isDry() ) {
-                $this->logger->debug( "[DRY-RUN] Would create {$this->secondary_lang} translation for {$post_type} #{$primary_id}: {$sec_title}" );
+                $this->copyProductDataToTranslation( $primary_id, $new_id );
+                $this->linkPostTranslation( $primary_id, $new_id, $post_type );
+                $this->applyYoastPostMeta( $primary_id, $new_id );
+
+                if ( isset( $sec_seo_map[ (int) $row['oc_id'] ] ) ) {
+                    $this->queueSecondaryLangRedirect( $new_id, $sec_seo_map[ (int) $row['oc_id'] ] );
+                }
+                update_post_meta( $new_id, '_octowoo_translation_of',   $primary_id );
+                update_post_meta( $new_id, '_octowoo_translation_lang',  $this->secondary_lang );
+                $this->logger->info( "[multilingual] Created product #{$new_id} ({$this->secondary_lang}) ← #{$primary_id}" );
                 $processed++;
-                continue;
             }
-
-            $translated_id = $this->createTranslatedPost( $primary_post_raw, $sec_title, $sec_content, $post_type, $sec_excerpt );
-
-            if ( ! $translated_id ) {
-                $this->logger->error( "[multilingual] Failed to create {$this->secondary_lang} translation for {$post_type} #{$primary_id} – wp_insert_post returned 0." );
-                $failed++;
-                continue;
-            }
-
-            // Register the WPML/Polylang translation link BEFORE copying WC data.
-            // This ensures any field-sync triggered by wpml_set_element_language_details
-            // fires first, so we can then overwrite with the correct secondary-language values.
-            $this->linkPostTranslation( $primary_id, $translated_id, $post_type );
-
-            if ( $post_type === 'product' ) {
-                $this->copyProductDataToTranslation( $primary_id, $translated_id );
-            }
-
-            $this->fixTranslationSlug( $translated_id, $primary_post_raw->post_name );
-
-            // Force secondary-language content + thumbnail AFTER all WPML/Polylang operations.
-            $sec_len_c = mb_strlen( wp_strip_all_tags( $sec_content ) );
-            $pri_len_c = mb_strlen( wp_strip_all_tags( $primary_post_raw->post_content ) );
-            if ( $sec_len_c === 0 ) {
-                $this->logger->warning( "[multilingual] ⚠ {$post_type} #{$primary_id}: secondary description is EMPTY — translation #{$translated_id} will use primary (English) content." );
-            } elseif ( $sec_len_c === $pri_len_c ) {
-                $this->logger->debug( "[multilingual] Note: secondary content same length as primary for {$post_type} #{$primary_id} (may not be translated in OC)." );
-            }
-            $this->forceTranslationContent(
-                $translated_id,
-                $sec_title,
-                $sec_content,
-                $sec_excerpt,
-                (int) get_post_meta( $primary_id, '_thumbnail_id', true )
-            );
-
-            if ( ! empty( $sec_seo_map[ $oc_id ] ) ) {
-                $this->queueSecondaryLangRedirect( $translated_id, $sec_seo_map[ $oc_id ] );
-            }
-
-            $this->logger->debug( "[multilingual] Linked {$post_type} #{$primary_id} ({$this->primary_lang}) ↔ #{$translated_id} ({$this->secondary_lang})" );
-            $processed++;
         }
 
         $this->flushSecondaryLangRedirects();
-
         return [ $processed, $skipped, $failed ];
     }
 
-    // ── Post translation pass (all-at-once, for small collections like pages) ─
+    // ── Verify and fix icl_translations / Polylang language for existing posts ─
+    private function verifyAndFixTranslationLanguage( int $trans_id, int $primary_id, string $post_type ): void {
+        global $wpdb;
+        if ( $this->adapter === 'wpml' ) {
+            $icl = $wpdb->prefix . 'icl_translations';
+            $row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT id, language_code, trid FROM `{$icl}` WHERE element_id=%d AND element_type=%s LIMIT 1",
+                $trans_id, 'post_' . $post_type
+            ), ARRAY_A );
+            $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT trid FROM `{$icl}` WHERE element_id=%d AND element_type LIKE 'post_%' LIMIT 1", $primary_id ) );
+            if ( $row ) {
+                if ( $row['language_code'] !== $this->secondary_lang || (int) $row['trid'] !== $primary_trid ) {
+                    $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang, 'trid' => $primary_trid ],
+                        [ 'id' => (int) $row['id'] ]
+                    );
+                }
+            } elseif ( $primary_trid ) {
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "INSERT INTO `{$icl}` (element_type,element_id,trid,language_code,source_language_code) VALUES(%s,%d,%d,%s,%s) ON DUPLICATE KEY UPDATE trid=VALUES(trid),language_code=VALUES(language_code)",
+                    'post_' . $post_type, $trans_id, $primary_trid, $this->secondary_lang, $this->primary_lang
+                ) );
+            }
+        } elseif ( $this->adapter === 'polylang' ) {
+            if ( function_exists( 'pll_get_post_language' ) && pll_get_post_language( $trans_id ) !== $this->secondary_lang ) {
+                if ( function_exists( 'pll_set_post_language' ) ) { pll_set_post_language( $trans_id, $this->secondary_lang ); }
+                if ( function_exists( 'pll_save_post_translations' ) ) {
+                    pll_save_post_translations( [ $this->primary_lang => $primary_id, $this->secondary_lang => $trans_id ] );
+                }
+            }
+        }
+    }
 
-    /**
-     * Fetch ALL id_map rows for the given entity type and translate them in one
-     * pass.  Only used for 'page' (InformationMigrator content) which is a
-     * small set.  Products use the chunked translatePostsFromRows() path.
-     *
-     * @return int[] [processed, skipped, failed]
-     */
     private function translatePosts( string $post_type, string $title_meta_key, string $content_meta_key, array $sec_seo_map = [] ): array {
         global $wpdb;
 
