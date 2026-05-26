@@ -127,10 +127,11 @@ class WpmlIntegration extends AbstractMigrator {
         remove_all_actions( 'save_post_product' );
 
         $chunk_mode  = $this->batch->isChunkMode();
-        // Hard cap at 10 for multilingual — OC remote DB takes 2-5s per product.
-        // batch_size=50 causes PHP timeout before checkpoint->update() fires.
-        // User's Settings value is ignored here intentionally.
-        $batch_size = 10;
+        // No OC DB queries in product phase — postmeta only (<0.1s per product).
+        // Process 500 per chunk: 500 × 0.1s = 50s, well within PHP timeout.
+        // Terms phase still uses batch_size=10 (keeps OC queries for category names).
+        $batch_size = 500; // products: no OC queries, fast
+        $terms_batch = 10; // terms: OC queries for Arabic names
         $demo_limit  = max( 0, (int) ( $this->config['migration']['demo_limit'] ?? 0 ) );
 
         global $wpdb;
@@ -219,12 +220,12 @@ class WpmlIntegration extends AbstractMigrator {
                 $cat_seo_map = $this->fetchSecondaryCategorySeoMap();
                 [ $p, $s, $f, $cat_has_more ] = $this->translateTerms(
                     'product_cat', $cat_seo_map, 'category',
-                    (int) $terms_state['cat_off'], $batch_size
+                    (int) $terms_state['cat_off'], $terms_batch
                 );
                 $processed += $p; $skipped += $s; $failed += $f;
 
                 if ( $cat_has_more ) {
-                    $terms_state['cat_off'] = (int) $terms_state['cat_off'] + $batch_size;
+                    $terms_state['cat_off'] = (int) $terms_state['cat_off'] + $terms_batch;
                     update_option( $terms_key, $terms_state, false );
                     $this->logger->info( "[multilingual] Categories chunk done (offset={$terms_state['cat_off']}). More categories remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
@@ -237,12 +238,12 @@ class WpmlIntegration extends AbstractMigrator {
             if ( $brand_tax !== '' && $terms_state['brand_off'] !== 'done' ) {
                 [ $p, $s, $f, $brand_has_more ] = $this->translateTerms(
                     $brand_tax, [], 'manufacturer',
-                    (int) $terms_state['brand_off'], $batch_size
+                    (int) $terms_state['brand_off'], $terms_batch
                 );
                 $processed += $p; $skipped += $s; $failed += $f;
 
                 if ( $brand_has_more ) {
-                    $terms_state['brand_off'] = (int) $terms_state['brand_off'] + $batch_size;
+                    $terms_state['brand_off'] = (int) $terms_state['brand_off'] + $terms_batch;
                     update_option( $terms_key, $terms_state, false );
                     $this->logger->info( "[multilingual] Brands chunk done (offset={$terms_state['brand_off']}). More brands remain." );
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
@@ -628,17 +629,52 @@ class WpmlIntegration extends AbstractMigrator {
         $skipped   = 0;
         $failed    = 0;
 
+        // Bulk-load ALL postmeta for the entire batch in ONE query.
+        // Eliminates N+1 get_post_meta() calls (3+ WP DB queries per product).
+        $batch_ids     = array_map( fn( $r ) => (int) $r['wc_id'], $rows );
+        $sfx           = $this->secLangSuffix();
+        $meta_keys     = [ $title_meta_key, $content_meta_key, '_octowoo_short_description' . $sfx,
+                           '_octowoo_oc_id', '_octowoo_translation_of' ];
+        $ids_ph        = implode( ',', array_fill( 0, count( $batch_ids ), '%d' ) );
+        $keys_ph       = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
+        $meta_rows     = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT post_id, meta_key, meta_value FROM {$wpdb->postmeta}
+                 WHERE post_id IN ({$ids_ph}) AND meta_key IN ({$keys_ph})",
+                array_merge( $batch_ids, $meta_keys )
+            ),
+            ARRAY_A
+        );
+        $meta_cache = [];
+        foreach ( (array) $meta_rows as $mr ) {
+            $meta_cache[ (int) $mr['post_id'] ][ $mr['meta_key'] ] = $mr['meta_value'];
+        }
+
+        // Bulk-load all primary posts in ONE query.
+        $post_cache = [];
+        $posts = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->prepare(
+                "SELECT ID, post_title, post_content, post_excerpt, post_status, post_type, post_name, post_author, menu_order, comment_status, ping_status
+                 FROM {$wpdb->posts} WHERE ID IN ({$ids_ph})",
+                $batch_ids
+            ),
+            ARRAY_A
+        );
+        foreach ( (array) $posts as $p ) {
+            $post_cache[ (int) $p['ID'] ] = (object) $p;
+        }
+
         foreach ( $rows as $row ) {
             $primary_id = (int) $row['wc_id'];
             $oc_id      = (int) $row['oc_id'];
 
-            $sec_title   = (string) get_post_meta( $primary_id, $title_meta_key,   true );
-            $sec_content = (string) get_post_meta( $primary_id, $content_meta_key, true );
+            $sec_title   = (string) ( $meta_cache[ $primary_id ][ $title_meta_key ]   ?? '' );
+            $sec_content = (string) ( $meta_cache[ $primary_id ][ $content_meta_key ] ?? '' );
             $sec_excerpt = $post_type === 'product'
-                ? (string) get_post_meta( $primary_id, '_octowoo_short_description' . $this->secLangSuffix(), true )
+                ? (string) ( $meta_cache[ $primary_id ][ '_octowoo_short_description' . $sfx ] ?? '' )
                 : '';
 
-            $primary_post_raw = get_post( $primary_id );
+            $primary_post_raw = $post_cache[ $primary_id ] ?? null;
             if ( ! $primary_post_raw ) {
                 $failed++;
                 continue;
