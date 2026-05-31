@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.54
+* Added - 'wp octowoo relink_images' CLI command: re-links product thumbnails from already-imported local media (matched by _octowoo_oc_image_path) with NO remote downloads, and makes every Arabic translation share its English parent's image/gallery. Fixes products that show an empty thumbnail even though the image already exists in the media library. Use --dry-run to preview, --download for an optional slow remote fallback.
+
 2026-05-31 - version 2.5.53
 * Fixed - Multilingual (Arabic) pass ran at ~45s per product: each product missing a thumbnail triggered a blocking remote image download (download_url 30s + wp_remote_get 10s timeouts) during the translation pass. Removed image re-import from the translation pass entirely — the Arabic post now simply shares the English parent's thumbnail/gallery. Image (re)import belongs to "Re-run Products + Images". The translation pass is now pure-DB and fast.
 

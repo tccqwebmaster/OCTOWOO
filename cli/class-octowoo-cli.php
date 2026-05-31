@@ -493,5 +493,139 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::success( "Multilingual complete. Total translated: {$total_processed}. Remaining: {$remaining}" );
     }
 
+    /**
+     * Re-link product thumbnails from already-imported local media — NO remote downloads.
+     *
+     * Why this exists: some products were created without a _thumbnail_id even though
+     * their image is already sitting in the media library (imported by the Images step
+     * or a previous run, but never linked back to the product). English and Arabic
+     * share the SAME image, so there is never a reason to re-download for Arabic —
+     * we just point both posts at the existing attachment.
+     *
+     * Pass A: every English/primary product missing a thumbnail is matched to its
+     *         existing attachment via _octowoo_oc_image_path (pure DB lookup) and linked.
+     * Pass B: every Arabic translation is made to share its English parent's thumbnail
+     *         and gallery, so the translated post is never missing an image the parent has.
+     *
+     * Remote download is NEVER attempted unless --download is passed explicitly.
+     *
+     * ## OPTIONS
+     *
+     * [--dry-run]
+     * : Report what would change without writing.
+     *
+     * [--download]
+     * : As a last resort, download from the remote shop for products with no local
+     *   attachment at all. Slow — off by default.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo relink_images
+     *     wp octowoo relink_images --dry-run
+     *
+     * @when after_wp_load
+     */
+    public function relink_images( array $args, array $assoc_args ): void {
+        global $wpdb;
+
+        $dry      = isset( $assoc_args['dry-run'] );
+        $download = isset( $assoc_args['download'] );
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Re-link Product Images (local)       ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( $dry ? 'Mode: DRY-RUN (no writes)' : 'Mode: LIVE' );
+        WP_CLI::line( $download ? 'Remote download: ENABLED (slow fallback)' : 'Remote download: disabled (local only)' );
+        WP_CLI::line( '' );
+
+        $config = get_option( 'octowoo_settings', [] );
+        $run_id = 'cli-relink-' . date( 'YmdHis' );
+        $oc         = new \OctoWoo\Core\DatabaseConnector( $config['db'] ?? [] );
+        $logger     = new \OctoWoo\Core\Logger( $run_id );
+        $checkpoint = new \OctoWoo\Core\CheckpointManager( $run_id );
+        $batch      = new \OctoWoo\Core\BatchProcessor( $logger );
+        $img        = new \OctoWoo\Migrators\ImageMigrator( $oc, $logger, $checkpoint, $batch, $config );
+
+        // ── Pass A: relink primary products missing a thumbnail ──────────────
+        $missing = $wpdb->get_results( // phpcs:ignore WordPress.DB
+            "SELECT p.ID AS pid, oip.meta_value AS oc_path
+             FROM {$wpdb->posts} p
+             JOIN {$wpdb->postmeta} oip ON oip.post_id = p.ID AND oip.meta_key = '_octowoo_oc_image_path'
+             LEFT JOIN {$wpdb->postmeta} th ON th.post_id = p.ID AND th.meta_key = '_thumbnail_id'
+             WHERE p.post_type = 'product' AND p.post_status IN ('publish','draft')
+               AND ( th.meta_value IS NULL OR th.meta_value = '' OR th.meta_value = '0' )",
+            ARRAY_A
+        );
+
+        $relinked = 0; $downloaded = 0; $still_missing = 0;
+        WP_CLI::line( 'Pass A — products missing thumbnail: ' . count( $missing ) );
+        $bar = \WP_CLI\Utils\make_progress_bar( 'Re-linking', max( 1, count( $missing ) ) );
+
+        foreach ( $missing as $row ) {
+            $pid     = (int) $row['pid'];
+            $oc_path = (string) $row['oc_path'];
+            $aid     = $oc_path !== '' ? $img->findAttachmentByOcPath( $oc_path ) : null;
+
+            if ( ! $aid && $download && $oc_path !== '' ) {
+                $aid = $img->importByOcPath( $oc_path );
+                if ( $aid && $aid > 0 ) { $downloaded++; }
+            }
+
+            if ( $aid && $aid > 0 ) {
+                if ( ! $dry ) { set_post_thumbnail( $pid, (int) $aid ); }
+                $relinked++;
+            } else {
+                $still_missing++;
+            }
+            $bar->tick();
+        }
+        $bar->finish();
+
+        // ── Pass B: make every Arabic translation share its parent's image ───
+        $trans = $wpdb->get_results( // phpcs:ignore WordPress.DB
+            "SELECT pm.post_id AS tid, pm.meta_value AS parent
+             FROM {$wpdb->postmeta} pm
+             JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type = 'product'
+             WHERE pm.meta_key = '_octowoo_translation_of'",
+            ARRAY_A
+        );
+
+        $propagated = 0;
+        WP_CLI::line( '' );
+        WP_CLI::line( 'Pass B — translations to sync: ' . count( $trans ) );
+        $bar2 = \WP_CLI\Utils\make_progress_bar( 'Syncing Arabic', max( 1, count( $trans ) ) );
+
+        foreach ( $trans as $row ) {
+            $tid    = (int) $row['tid'];
+            $parent = (int) $row['parent'];
+            if ( $parent <= 0 ) { $bar2->tick(); continue; }
+
+            $parent_thumb = (int) get_post_meta( $parent, '_thumbnail_id', true );
+            $own_thumb    = (int) get_post_meta( $tid, '_thumbnail_id', true );
+            if ( $parent_thumb > 0 && $parent_thumb !== $own_thumb ) {
+                if ( ! $dry ) {
+                    set_post_thumbnail( $tid, $parent_thumb );
+                    $gallery = (string) get_post_meta( $parent, '_product_image_gallery', true );
+                    update_post_meta( $tid, '_product_image_gallery', $gallery );
+                }
+                $propagated++;
+            }
+            $bar2->tick();
+        }
+        $bar2->finish();
+
+        WP_CLI::line( '' );
+        WP_CLI::success( sprintf(
+            'Done. Re-linked %d primary%s, synced %d Arabic translations. %d still missing (no image anywhere).',
+            $relinked,
+            $download ? " ({$downloaded} downloaded)" : '',
+            $propagated,
+            $still_missing
+        ) );
+        if ( $still_missing > 0 && ! $download ) {
+            WP_CLI::line( 'Tip: the still-missing products have no imported image. Run the Images step, or add --download to fetch them from the shop.' );
+        }
+    }
 
 }
