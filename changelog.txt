@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.59
+* Fixed - THE multilingual speed fix. Confirmed via timing logs that ~90s/product was spent in the product-tag section, where each tag fired up to three wpml_set_element_language_details actions — each triggering WPML's full taxonomy re-sync (~2s) because taxonomies were flagged out of sync. Replaced those WPML hook calls with direct, indexed icl_translations writes (INSERT … ON DUPLICATE KEY UPDATE). The English tag row is only created if missing, never overwritten, so English terms never drop from their language filter. Tag time drops from ~90s to a few milliseconds, which also resolves the "stops after 2-3 products" stalls (chunks now finish within the time limit and schedule the next one).
+
+
 2026-05-31 - version 2.5.58
 * Diagnostic - Added sub-timing inside copyProductDataToTranslation() (meta/type/cat/tag/brand) — confirmed via v2.5.57 logs to be the sole bottleneck (~130s/product). Logs a breakdown line whenever copy() exceeds 3s, pinpointing the exact slow taxonomy section before the targeted fix.
 

@@ -1373,31 +1373,19 @@ class WpmlIntegration extends AbstractMigrator {
 
                             // Find the matching primary-language WC tag term by position.
                             // If found, force the secondary-language term to share the same slug
-                            // so URLs use clean primary-language text instead of encoded characters.
+                            // so URLs use clean primary-language text instead of encoded characters,
+                            // and link the two in WPML via DIRECT icl_translations writes (fast).
                             if ( isset( $pri_tag_names[ $idx ] ) ) {
                                 $pri_term = get_term_by( 'name', $pri_tag_names[ $idx ], 'product_tag' );
                                 if ( $pri_term && ! is_wp_error( $pri_term ) ) {
                                     $this->fixTranslationTermSlug( $sec_tid, $pri_term->slug );
-                                    // Register WPML translation link between primary and secondary tag terms.
-                                    $this->linkTermTranslation( $pri_term->term_id, $sec_tid, 'product_tag' );
+                                    $this->fastLinkTagTranslation( (int) $pri_term->term_id, $sec_tid );
                                 }
-                            }
-
-                            // Register secondary-language tag with WPML (idempotent).
-                            if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
-                                $sec_term_obj = get_term( $sec_tid, 'product_tag' );
-                                if ( $sec_term_obj && ! is_wp_error( $sec_term_obj ) ) {
-                                    $sec_tt_id = (int) $sec_term_obj->term_taxonomy_id;
-                                    if ( $sec_tt_id > 0 ) {
-                                        do_action( 'wpml_set_element_language_details', [
-                                            'element_id'           => $sec_tt_id,
-                                            'element_type'         => 'tax_product_tag',
-                                            'trid'                 => null,
-                                            'language_code'        => $this->secondary_lang,
-                                            'source_language_code' => null,
-                                        ] );
-                                    }
-                                }
+                            } elseif ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+                                // No primary counterpart — register the Arabic tag as a
+                                // standalone secondary-language term in its own group,
+                                // again via a direct write rather than a WPML re-sync hook.
+                                $this->fastLinkTagTranslation( $sec_tid, $sec_tid );
                             }
 
                             $this->tag_xlate_cache[ $sec_tag_name ] = $sec_tid;
@@ -1924,6 +1912,68 @@ class WpmlIntegration extends AbstractMigrator {
     /**
      * Set language and link the term pair with WPML or Polylang.
      */
+    /**
+     * Fast WPML tag-translation link via DIRECT icl_translations writes.
+     *
+     * linkTermTranslation() fires up to two wpml_set_element_language_details
+     * actions and the tag loop fired a third — each of which triggers WPML's full
+     * taxonomy re-sync when taxonomies are flagged out-of-sync, costing ~2s apiece
+     * (≈90s for a product with many tags). This does the same registration with two
+     * indexed INSERT … ON DUPLICATE KEY UPDATE statements (the icl_translations
+     * UNIQUE key is element_type+element_id), in milliseconds, without invoking any
+     * WPML hook. The English row is only created if absent — never overwritten —
+     * so the English tag never drops out of its own language filter.
+     */
+    private function fastLinkTagTranslation( int $en_term_id, int $ar_term_id ): void {
+        global $wpdb;
+        if ( $en_term_id <= 0 || $ar_term_id <= 0 ) { return; }
+
+        $icl = $wpdb->prefix . 'icl_translations';
+        $et  = 'tax_product_tag';
+
+        $ar_tt = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id=%d AND taxonomy='product_tag' LIMIT 1", $ar_term_id ) );
+        if ( $ar_tt <= 0 ) { return; }
+
+        // Standalone Arabic tag (no English counterpart): register it as a secondary-
+        // language element in its own translation group (source_language_code = NULL).
+        if ( $en_term_id === $ar_term_id ) {
+            $existing = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT trid FROM `{$icl}` WHERE element_type=%s AND element_id=%d LIMIT 1", $et, $ar_tt ) );
+            if ( $existing > 0 ) { return; }
+            $trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+                 VALUES (%s,%d,%d,%s,NULL)
+                 ON DUPLICATE KEY UPDATE language_code=VALUES(language_code)",
+                $et, $ar_tt, $trid, $this->secondary_lang ) );
+            return;
+        }
+
+        $en_tt = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id=%d AND taxonomy='product_tag' LIMIT 1", $en_term_id ) );
+        if ( $en_tt <= 0 ) { return; }
+
+        // Resolve (or create) the English tag's translation group id (trid).
+        $trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT trid FROM `{$icl}` WHERE element_type=%s AND element_id=%d LIMIT 1", $et, $en_tt ) );
+        if ( $trid <= 0 ) {
+            $trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+                 VALUES (%s,%d,%d,%s,NULL)
+                 ON DUPLICATE KEY UPDATE trid=VALUES(trid)",
+                $et, $en_tt, $trid, $this->primary_lang ) );
+        }
+
+        // Link the Arabic tag into the same group.
+        $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+             VALUES (%s,%d,%d,%s,%s)
+             ON DUPLICATE KEY UPDATE trid=VALUES(trid), language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
+            $et, $ar_tt, $trid, $this->secondary_lang, $this->primary_lang ) );
+    }
+
     private function linkTermTranslation( int $primary_term_id, int $translated_term_id, string $taxonomy ): void {
         $primary_term = get_term( $primary_term_id, $taxonomy );
         if ( ! $primary_term || is_wp_error( $primary_term ) ) {
