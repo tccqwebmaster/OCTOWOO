@@ -260,17 +260,30 @@ class WpmlIntegration extends AbstractMigrator {
             );
 
             if ( ! empty( $rows ) ) {
+                // TIMING (v2.5.56): measure remote-OC setup cost per chunk.
+                $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
+                $ts0 = microtime( true );
+
                 // Prefetch tags from OC (lightweight string query only).
                 $oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $rows ) );
                 if ( $oc_ids ) {
                     $this->prefetchSecLangTagsForProducts( $oc_ids );
                 }
+                $ts1 = microtime( true );
+
+                $seo_map = $this->fetchSecondaryLangSeoMap();
+                $ts2 = microtime( true );
+
+                $this->logger->info( sprintf(
+                    '[multilingual] Chunk setup timing(ms): fetched %d rows, prefetchTags=%d, seoMap=%d',
+                    count( $rows ), $ms( $ts0, $ts1 ), $ms( $ts1, $ts2 )
+                ) );
 
                 [ $p, $s, $f ] = $this->translatePostsFromRows(
                     $rows, 'product',
                     '_octowoo_name' . $sfx,
                     '_octowoo_description' . $sfx,
-                    $this->fetchSecondaryLangSeoMap()
+                    $seo_map
                 );
                 $processed += $p; $skipped += $s; $failed += $f;
 
@@ -654,12 +667,21 @@ class WpmlIntegration extends AbstractMigrator {
                 $processed++;
             } else {
                 // ── Create new translation ────────────────────────────────────
+                // TIMING INSTRUMENTATION (v2.5.56): break down where each product's
+                // time goes so we can pinpoint any slow step. Remove once resolved.
+                $t0 = microtime( true );
                 $new_id = $this->createTranslatedPost( $primary, $sec_title, $sec_content, $post_type, $sec_excerpt );
                 if ( ! $new_id ) { $failed++; continue; }
+                $t1 = microtime( true );
 
                 $this->copyProductDataToTranslation( $primary_id, $new_id );
+                $t2 = microtime( true );
+
                 $this->linkPostTranslation( $primary_id, $new_id, $post_type );
+                $t3 = microtime( true );
+
                 $this->applyYoastPostMeta( $primary_id, $new_id );
+                $t4 = microtime( true );
 
                 if ( isset( $sec_seo_map[ (int) $row['oc_id'] ] ) ) {
                     $this->queueSecondaryLangRedirect( $new_id, $sec_seo_map[ (int) $row['oc_id'] ] );
@@ -667,7 +689,15 @@ class WpmlIntegration extends AbstractMigrator {
                 update_post_meta( $new_id, '_octowoo_translation_of',   $primary_id );
                 update_post_meta( $new_id, '_octowoo_translation_lang',  $this->secondary_lang );
                 update_post_meta( $primary_id, '_octowoo_has_translation', 1 );
-                $this->logger->info( "[multilingual] Created product #{$new_id} ({$this->secondary_lang}) ← #{$primary_id}" );
+                $t5 = microtime( true );
+
+                $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
+                $this->logger->info( sprintf(
+                    '[multilingual] Created product #%d (%s) ← #%d | timing(ms): insert=%d copy=%d link=%d yoast=%d meta=%d TOTAL=%d',
+                    $new_id, $this->secondary_lang, $primary_id,
+                    $ms( $t0, $t1 ), $ms( $t1, $t2 ), $ms( $t2, $t3 ),
+                    $ms( $t3, $t4 ), $ms( $t4, $t5 ), $ms( $t0, $t5 )
+                ) );
                 $processed++;
             }
         }
