@@ -153,6 +153,13 @@ return [
 
         // WordPress language code for the secondary/translated language.
         'secondary_locale' => 'ar',
+
+        // Products translated per background chunk. Keep this small enough that a
+        // full chunk finishes inside PHP max_execution_time — otherwise the worker
+        // is killed before the end-of-chunk checkpoint/redirect-flush runs and the
+        // run drags on for days. 40 is safe on shared hosting; raise to ~100 only
+        // on fast servers with a high max_execution_time. Hard-capped 1–200.
+        'product_chunk'    => 40,
     ],
 
     // ── Cron / Dropshipping Auto-Import ────────────────────────────────

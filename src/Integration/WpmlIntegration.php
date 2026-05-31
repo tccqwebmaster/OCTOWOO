@@ -84,6 +84,25 @@ class WpmlIntegration extends AbstractMigrator {
     private array $sec_tags_cache = [];
     private array $sec_desc_cache = []; // Keyed by OC product_id → description row array
 
+    /**
+     * Memoised active brand taxonomy slug. detectActiveBrandTaxonomy() runs up to
+     * 7 taxonomy_exists() probes; without this it was re-run for every product
+     * inside copyProductDataToTranslation(). Resolved once per request.
+     *
+     * @var string|null  null = not yet resolved, '' = none found.
+     */
+    private ?string $brand_tax_cache = null;
+
+    /**
+     * Per-request cache of secondary-language tag translation work.
+     * Tag terms are SHARED across products, so creating/linking/WPML-registering
+     * them once per product (per tag) was an N×M explosion against the heaviest
+     * WPML API call. Keyed by secondary tag-name → resolved secondary term_id.
+     *
+     * @var array<string, int>
+     */
+    private array $tag_xlate_cache = [];
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
@@ -177,11 +196,23 @@ class WpmlIntegration extends AbstractMigrator {
             return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
         }
 
-        // ── Phase 2: Products — 500 per chunk, pure WP postmeta, zero OC queries ──
+        // ── Phase 2: Products — chunked, pure WP postmeta, zero OC queries ──
         $total = $this->countUntranslated( $wpdb );
 
         if ( $total > 0 ) {
-            // Fetch 500 untranslated English products.
+            // Chunk size must be small enough that a full chunk — including the
+            // end-of-chunk checkpoint update + redirect flush below — finishes
+            // inside PHP max_execution_time. A 500-row chunk of fully-decorated
+            // products (meta + taxonomies + tags + WPML linking) routinely
+            // exceeded 30–60s on shared hosting, so the process was killed before
+            // the checkpoint/flush ran: each chunk paid the full 500-row fetch but
+            // committed only a fraction, dragging the run out for days. A small
+            // chunk that COMPLETES every time is far faster end-to-end.
+            $product_chunk = (int) ( $this->config['multilingual']['product_chunk'] ?? 40 );
+            if ( $product_chunk < 1 )   { $product_chunk = 40; }
+            if ( $product_chunk > 200 ) { $product_chunk = 200; }
+
+            // Fetch the next batch of untranslated English products.
             // _octowoo_translation_of is set on every Arabic post we create.
             $rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
@@ -195,7 +226,7 @@ class WpmlIntegration extends AbstractMigrator {
                            WHERE ps.meta_key = '_octowoo_translation_of' AND ps.meta_value = p.ID
                        )
                      ORDER BY p.ID ASC LIMIT %d",
-                    500
+                    $product_chunk
                 ),
                 ARRAY_A
             );
@@ -1245,6 +1276,17 @@ class WpmlIntegration extends AbstractMigrator {
 
                         $sec_term_ids = [];
                         foreach ( $sec_tag_names as $idx => $sec_tag_name ) {
+                            // Tags are SHARED across products. Resolve each unique
+                            // secondary-language tag name only once per request — the
+                            // create / slug-fix / WPML-link / WPML-register work below
+                            // is idempotent, so repeating it for every product that
+                            // happens to carry the same tag was pure waste (and the
+                            // WPML do_action is one of the most expensive calls here).
+                            if ( isset( $this->tag_xlate_cache[ $sec_tag_name ] ) ) {
+                                $sec_term_ids[] = $this->tag_xlate_cache[ $sec_tag_name ];
+                                continue;
+                            }
+
                             // Create (or find existing) secondary-language tag term.
                             $result = wp_insert_term( $sec_tag_name, 'product_tag' );
                             if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
@@ -1284,6 +1326,7 @@ class WpmlIntegration extends AbstractMigrator {
                                 }
                             }
 
+                            $this->tag_xlate_cache[ $sec_tag_name ] = $sec_tid;
                             $sec_term_ids[] = $sec_tid;
                         }
 
@@ -1331,6 +1374,9 @@ class WpmlIntegration extends AbstractMigrator {
      * Return the first registered brand taxonomy slug on this site, or ''.
      */
     private function detectActiveBrandTaxonomy(): string {
+        if ( $this->brand_tax_cache !== null ) {
+            return $this->brand_tax_cache;
+        }
         $candidates = [
             'product_brand',        // WooCommerce Brands (official) · Ultimate WooCommerce Brands
             'pwb-brand',            // Perfect WooCommerce Brands
@@ -1342,10 +1388,10 @@ class WpmlIntegration extends AbstractMigrator {
         ];
         foreach ( $candidates as $tax ) {
             if ( taxonomy_exists( $tax ) ) {
-                return $tax;
+                return $this->brand_tax_cache = $tax;
             }
         }
-        return '';
+        return $this->brand_tax_cache = '';
     }
 
     /**

@@ -1,5 +1,11 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.51
+* Fixed - Multilingual (Arabic) background recovery extremely slow / appearing to run for days: product chunk reduced from a hard-coded 500 to a configurable, completable size (default 40) so each background chunk finishes inside PHP max_execution_time and commits its end-of-chunk checkpoint + redirect flush instead of being killed mid-batch
+* Performance - Secondary-language product tags are now translated/linked/WPML-registered once per unique tag instead of repeatedly for every product carrying that tag (removes the per-product N×M wp_insert_term + wpml_set_element_language_details explosion)
+* Performance - detectActiveBrandTaxonomy() result memoised (was running up to 7 taxonomy_exists() probes for every translated product)
+* Added - multilingual.product_chunk setting (1–200, default 40) to tune background chunk size per server
+
 2026-05-21 - version 2.5.50
 * Added - phpcs.xml configuration to document architectural exceptions (PDO for external DB, table name interpolation, CLI scripts)
 * Added - CartShift branding — plugin renamed from OctoWoo to CartShift for WooCommerce Marketplace submission
