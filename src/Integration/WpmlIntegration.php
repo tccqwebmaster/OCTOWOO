@@ -197,6 +197,28 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // ── Phase 2: Products — chunked, pure WP postmeta, zero OC queries ──
+        // One-time backfill: flag every English product that ALREADY has an Arabic
+        // twin with '_octowoo_has_translation' so the fast indexed query below sees
+        // them as done. Pays the slow legacy scan exactly once per run; the LEFT JOIN
+        // guard makes it idempotent even if it somehow runs again. Without this, the
+        // first run after upgrading would re-translate the thousands already done.
+        if ( empty( $terms_state['hastrans_backfilled'] ) ) {
+            $wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+                "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+                 SELECT DISTINCT CAST(ps.meta_value AS UNSIGNED), '_octowoo_has_translation', '1'
+                 FROM {$wpdb->postmeta} ps
+                 LEFT JOIN {$wpdb->postmeta} pf
+                     ON pf.post_id = CAST(ps.meta_value AS UNSIGNED)
+                    AND pf.meta_key = '_octowoo_has_translation'
+                 WHERE ps.meta_key = '_octowoo_translation_of'
+                   AND ps.meta_value REGEXP '^[0-9]+$'
+                   AND pf.post_id IS NULL"
+            );
+            $terms_state['hastrans_backfilled'] = true;
+            update_option( $terms_key, $terms_state, false );
+            $this->logger->info( '[multilingual] Backfilled _octowoo_has_translation flags for existing translations.' );
+        }
+
         $total = $this->countUntranslated( $wpdb );
 
         if ( $total > 0 ) {
@@ -212,8 +234,10 @@ class WpmlIntegration extends AbstractMigrator {
             if ( $product_chunk < 1 )   { $product_chunk = 40; }
             if ( $product_chunk > 200 ) { $product_chunk = 200; }
 
-            // Fetch the next batch of untranslated English products.
-            // _octowoo_translation_of is set on every Arabic post we create.
+            // Fetch the next batch of untranslated English originals.
+            // Indexed (post_id, meta_key) lookups — no LONGTEXT scan.
+            //   • skip products already flagged as translated
+            //   • skip the Arabic posts themselves (they carry _octowoo_translation_of)
             $rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $wpdb->prepare(
                     "SELECT p.ID AS wc_id, COALESCE(pm.meta_value, 0) AS oc_id
@@ -222,8 +246,12 @@ class WpmlIntegration extends AbstractMigrator {
                      WHERE p.post_type = 'product'
                        AND p.post_status IN ('publish','draft')
                        AND NOT EXISTS (
-                           SELECT 1 FROM {$wpdb->postmeta} ps
-                           WHERE ps.meta_key = '_octowoo_translation_of' AND ps.meta_value = p.ID
+                           SELECT 1 FROM {$wpdb->postmeta} pf
+                           WHERE pf.post_id = p.ID AND pf.meta_key = '_octowoo_has_translation'
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM {$wpdb->postmeta} pt
+                           WHERE pt.post_id = p.ID AND pt.meta_key = '_octowoo_translation_of'
                        )
                      ORDER BY p.ID ASC LIMIT %d",
                     $product_chunk
@@ -277,14 +305,24 @@ class WpmlIntegration extends AbstractMigrator {
     }
 
     // ── Count untranslated products ───────────────────────────────────────────
+    // Fast: both NOT EXISTS subqueries hit the postmeta (post_id, meta_key) index.
+    // The old query compared the unindexed LONGTEXT meta_value to p.ID, forcing a
+    // full scan that grew slower with every translation created (minutes per call
+    // once thousands existed). '_octowoo_has_translation' is a flag set on every
+    // English product that has an Arabic twin; '_octowoo_translation_of' marks the
+    // Arabic posts themselves so they are never re-fed into the translation loop.
     private function countUntranslated( \wpdb $wpdb ): int {
         return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
             "SELECT COUNT(*) FROM {$wpdb->posts} p
              WHERE p.post_type = 'product'
                AND p.post_status IN ('publish','draft')
                AND NOT EXISTS (
-                   SELECT 1 FROM {$wpdb->postmeta} ps
-                   WHERE ps.meta_key = '_octowoo_translation_of' AND ps.meta_value = p.ID
+                   SELECT 1 FROM {$wpdb->postmeta} pf
+                   WHERE pf.post_id = p.ID AND pf.meta_key = '_octowoo_has_translation'
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pt
+                   WHERE pt.post_id = p.ID AND pt.meta_key = '_octowoo_translation_of'
                )"
         );
     }
@@ -611,6 +649,7 @@ class WpmlIntegration extends AbstractMigrator {
                 }
                 update_post_meta( $existing_id, '_octowoo_translation_of',   $primary_id );
                 update_post_meta( $existing_id, '_octowoo_translation_lang',  $this->secondary_lang );
+                update_post_meta( $primary_id,  '_octowoo_has_translation',   1 );
                 $this->logger->info( "[multilingual] Updating product #{$existing_id} ← #{$primary_id}" );
                 $processed++;
             } else {
@@ -627,6 +666,7 @@ class WpmlIntegration extends AbstractMigrator {
                 }
                 update_post_meta( $new_id, '_octowoo_translation_of',   $primary_id );
                 update_post_meta( $new_id, '_octowoo_translation_lang',  $this->secondary_lang );
+                update_post_meta( $primary_id, '_octowoo_has_translation', 1 );
                 $this->logger->info( "[multilingual] Created product #{$new_id} ({$this->secondary_lang}) ← #{$primary_id}" );
                 $processed++;
             }

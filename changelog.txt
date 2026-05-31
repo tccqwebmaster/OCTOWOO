@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.55
+* Performance - Eliminated the multi-minute stall at the start of every multilingual chunk. The untranslated-product count and fetch queries no longer compare the unindexed LONGTEXT postmeta.meta_value to a post ID (a full scan that got slower with every translation created). They now use indexed (post_id, meta_key) lookups via a new '_octowoo_has_translation' flag set on each translated English product, plus a one-time idempotent backfill for products translated before the upgrade. The fetch also now correctly excludes the Arabic posts themselves. Combined with v2.5.53, each chunk should complete in seconds instead of timing out after ~3 products.
+
 2026-05-31 - version 2.5.54
 * Added - 'wp octowoo relink_images' CLI command: re-links product thumbnails from already-imported local media (matched by _octowoo_oc_image_path) with NO remote downloads, and makes every Arabic translation share its English parent's image/gallery. Fixes products that show an empty thumbnail even though the image already exists in the media library. Use --dry-run to preview, --download for an optional slow remote fallback.
 
