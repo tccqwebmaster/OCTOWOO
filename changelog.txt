@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.52
+* Fixed - Background migration could be queued and marked "in progress" but never actually execute (all entities stuck at PENDING, zero logs) when a stale 'doing_cron' lock made spawn_cron() silently no-op. Start/Resume in Background now clears that lock before kicking Action Scheduler.
+
 2026-05-31 - version 2.5.51
 * Fixed - Multilingual (Arabic) background recovery extremely slow / appearing to run for days: product chunk reduced from a hard-coded 500 to a configurable, completable size (default 40) so each background chunk finishes inside PHP max_execution_time and commits its end-of-chunk checkpoint + redirect flush instead of being killed mid-batch
 * Performance - Secondary-language product tags are now translated/linked/WPML-registered once per unique tag instead of repeatedly for every product carrying that tag (removes the per-product N×M wp_insert_term + wpml_set_element_language_details explosion)

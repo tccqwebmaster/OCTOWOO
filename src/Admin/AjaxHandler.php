@@ -1683,6 +1683,11 @@ class AjaxHandler {
             // Trigger Action Scheduler immediately via async HTTP request.
             // Without this, the first chunk waits until the next WP-Cron tick (up to 1 min).
             // This makes the migration start within seconds of clicking the button.
+            //
+            // A stale 'doing_cron' transient makes spawn_cron() silently no-op, which
+            // leaves the run marked active but never executed (every entity stuck at
+            // PENDING, zero logs). Clear it first so the kick below always fires.
+            delete_transient( 'doing_cron' );
             as_schedule_single_action( time(), 'action_scheduler_run_queue', [], 'default' );
             spawn_cron();
 
