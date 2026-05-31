@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.53
+* Fixed - Multilingual (Arabic) pass ran at ~45s per product: each product missing a thumbnail triggered a blocking remote image download (download_url 30s + wp_remote_get 10s timeouts) during the translation pass. Removed image re-import from the translation pass entirely — the Arabic post now simply shares the English parent's thumbnail/gallery. Image (re)import belongs to "Re-run Products + Images". The translation pass is now pure-DB and fast.
+
 2026-05-31 - version 2.5.52
 * Fixed - Background migration could be queued and marked "in progress" but never actually execute (all entities stuck at PENDING, zero logs) when a stale 'doing_cron' lock made spawn_cron() silently no-op. Start/Resume in Background now clears that lock before kicking Action Scheduler.
 

@@ -1188,23 +1188,15 @@ class WpmlIntegration extends AbstractMigrator {
             update_post_meta( $target_id, $key, $value );
         }
 
-        // ── Image fallback: re-attempt import when primary product has no thumbnail ──
-        // This covers the case where images were unavailable during the primary
-        // migration pass (e.g. source server temporarily down, local path not mounted).
-        // ProductMigrator stores '_octowoo_oc_image_path' on every product so we
-        // can always retry the import here without any extra DB queries.
-        $thumb_id = (int) get_post_meta( $source_id, '_thumbnail_id', true );
-        if ( $thumb_id <= 0 ) {
-            $oc_image_path = (string) get_post_meta( $source_id, '_octowoo_oc_image_path', true );
-            if ( $oc_image_path !== '' && $this->imageMigratorInstance() !== null ) {
-                $new_thumb = $this->imageMigratorInstance()->importByOcPath( $oc_image_path );
-                if ( $new_thumb && $new_thumb > 0 ) {
-                    // Apply to primary product as well so it is not missing next time.
-                    set_post_thumbnail( $source_id, $new_thumb );
-                    set_post_thumbnail( $target_id, $new_thumb );
-                }
-            }
-        }
+        // ── NO image import here ────────────────────────────────────────────
+        // The translated post shares the English parent's '_thumbnail_id' and
+        // '_product_image_gallery' (copied above). It must NOT attempt to
+        // re-download images from the remote OpenCart host: each missing-thumbnail
+        // product blocked for up to ~40s on download_url()/wp_remote_get timeouts,
+        // making the Arabic pass crawl at ~45s/product. Image (re)import is the job
+        // of the product/image migrators (use "Re-run Products + Images"), not the
+        // translation pass, which must stay pure-DB and fast.
+
 
         // ── product_type term (simple / variable / …) ──────────────────────
         $type_terms = wp_get_object_terms( $source_id, 'product_type', [ 'fields' => 'names' ] );
