@@ -587,7 +587,7 @@ class WpmlIntegration extends AbstractMigrator {
 
         // ── Bulk load postmeta + posts (2 queries for entire batch) ───────────
         $batch_ids = array_map( fn( $r ) => (int) $r['wc_id'], $rows );
-        $meta_keys = [ $title_meta_key, $content_meta_key, '_octowoo_short_description' . $sfx ];
+        $meta_keys = [ $title_meta_key, $content_meta_key, '_octowoo_short_description' . $sfx, '_sku' ];
         $id_ph     = implode( ',', array_fill( 0, count( $batch_ids ), '%d' ) );
         $key_ph    = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
 
@@ -663,7 +663,11 @@ class WpmlIntegration extends AbstractMigrator {
                 update_post_meta( $existing_id, '_octowoo_translation_of',   $primary_id );
                 update_post_meta( $existing_id, '_octowoo_translation_lang',  $this->secondary_lang );
                 update_post_meta( $primary_id,  '_octowoo_has_translation',   1 );
-                $this->logger->info( "[multilingual] Updating product #{$existing_id} ← #{$primary_id}" );
+                $u_sku  = (string) ( $meta[ $primary_id ]['_sku'] ?? '' );
+                $this->logger->info( sprintf(
+                    '[multilingual] Updated product #%d ← #%d | SKU: %s | %s',
+                    $existing_id, $primary_id, $u_sku !== '' ? $u_sku : '—', $primary->post_title
+                ) );
                 $processed++;
             } else {
                 // ── Create new translation ────────────────────────────────────
@@ -692,9 +696,11 @@ class WpmlIntegration extends AbstractMigrator {
                 $t5 = microtime( true );
 
                 $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
+                $c_sku = (string) ( $meta[ $primary_id ]['_sku'] ?? '' );
                 $this->logger->info( sprintf(
-                    '[multilingual] Created product #%d (%s) ← #%d | timing(ms): insert=%d copy=%d link=%d yoast=%d meta=%d TOTAL=%d',
+                    '[multilingual] Created product #%d (%s) ← #%d | SKU: %s | %s | timing(ms): insert=%d copy=%d link=%d yoast=%d meta=%d TOTAL=%d',
                     $new_id, $this->secondary_lang, $primary_id,
+                    $c_sku !== '' ? $c_sku : '—', $primary->post_title,
                     $ms( $t0, $t1 ), $ms( $t1, $t2 ), $ms( $t2, $t3 ),
                     $ms( $t3, $t4 ), $ms( $t4, $t5 ), $ms( $t0, $t5 )
                 ) );

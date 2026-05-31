@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.57
+* Diagnostic - Multilingual log lines now include the product SKU and name (e.g. "SKU: 1101890 | Apple iPad Pro 11") alongside the timing breakdown, so each entry is human-readable instead of just post IDs.
+
+
 2026-05-31 - version 2.5.56
 * Diagnostic - Added millisecond timing breakdown to the multilingual product pass. Each created product now logs insert/copy/link/yoast/meta timings, and each chunk logs its remote-OC prefetch + SEO-map setup time, so the remaining per-product slowness can be pinpointed exactly. Temporary instrumentation — will be removed once the bottleneck is identified.
 
