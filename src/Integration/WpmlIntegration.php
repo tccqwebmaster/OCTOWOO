@@ -103,6 +103,11 @@ class WpmlIntegration extends AbstractMigrator {
      */
     private array $tag_xlate_cache = [];
 
+    /** name → product_tag term_id (direct-DB find-or-create cache). */
+    private array $tag_term_cache = [];
+    /** name → [term_id, slug] for primary-language product_tag lookups. */
+    private array $pri_tag_cache = [];
+
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
     public function migrate(): array {
@@ -1349,44 +1354,35 @@ class WpmlIntegration extends AbstractMigrator {
                             : [];
 
                         $sec_term_ids = [];
+                        $tg_insert = 0.0; $tg_link = 0.0; // per-call timing accumulators
                         foreach ( $sec_tag_names as $idx => $sec_tag_name ) {
-                            // Tags are SHARED across products. Resolve each unique
-                            // secondary-language tag name only once per request — the
-                            // create / slug-fix / WPML-link / WPML-register work below
-                            // is idempotent, so repeating it for every product that
-                            // happens to carry the same tag was pure waste (and the
-                            // WPML do_action is one of the most expensive calls here).
                             if ( isset( $this->tag_xlate_cache[ $sec_tag_name ] ) ) {
                                 $sec_term_ids[] = $this->tag_xlate_cache[ $sec_tag_name ];
                                 continue;
                             }
 
-                            // Create (or find existing) secondary-language tag term.
-                            $result = wp_insert_term( $sec_tag_name, 'product_tag' );
-                            if ( is_wp_error( $result ) && $result->get_error_code() === 'term_exists' ) {
-                                $sec_tid = (int) $result->get_error_data( 'term_exists' );
-                            } elseif ( ! is_wp_error( $result ) ) {
-                                $sec_tid = (int) $result['term_id'];
-                            } else {
-                                continue;
-                            }
+                            // Create (or find) the Arabic tag term via DIRECT DB —
+                            // no wp_insert_term, so WPML's created_term re-sync never fires.
+                            $ti0    = microtime( true );
+                            $sec_tid = $this->findOrCreateTagTerm( $sec_tag_name );
+                            $tg_insert += microtime( true ) - $ti0;
+                            if ( $sec_tid <= 0 ) { continue; }
 
-                            // Find the matching primary-language WC tag term by position.
-                            // If found, force the secondary-language term to share the same slug
-                            // so URLs use clean primary-language text instead of encoded characters,
-                            // and link the two in WPML via DIRECT icl_translations writes (fast).
+                            // Share the English slug + link the two languages, all via
+                            // direct icl_translations writes (fast, no WPML hooks).
+                            $tl0 = microtime( true );
                             if ( isset( $pri_tag_names[ $idx ] ) ) {
-                                $pri_term = get_term_by( 'name', $pri_tag_names[ $idx ], 'product_tag' );
-                                if ( $pri_term && ! is_wp_error( $pri_term ) ) {
-                                    $this->fixTranslationTermSlug( $sec_tid, $pri_term->slug );
-                                    $this->fastLinkTagTranslation( (int) $pri_term->term_id, $sec_tid );
+                                [ $pri_tid, $pri_slug ] = $this->findPrimaryTagByName( $pri_tag_names[ $idx ] );
+                                if ( $pri_tid > 0 ) {
+                                    if ( $pri_slug !== '' ) { $this->fixTranslationTermSlug( $sec_tid, $pri_slug ); }
+                                    $this->fastLinkTagTranslation( $pri_tid, $sec_tid );
+                                } elseif ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+                                    $this->fastLinkTagTranslation( $sec_tid, $sec_tid );
                                 }
                             } elseif ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
-                                // No primary counterpart — register the Arabic tag as a
-                                // standalone secondary-language term in its own group,
-                                // again via a direct write rather than a WPML re-sync hook.
                                 $this->fastLinkTagTranslation( $sec_tid, $sec_tid );
                             }
+                            $tg_link += microtime( true ) - $tl0;
 
                             $this->tag_xlate_cache[ $sec_tag_name ] = $sec_tid;
                             $sec_term_ids[] = $sec_tid;
@@ -1395,6 +1391,15 @@ class WpmlIntegration extends AbstractMigrator {
                         if ( ! empty( $sec_term_ids ) ) {
                             wp_set_object_terms( $target_id, $sec_term_ids, 'product_tag', false );
                             $sec_tags_assigned = true;
+                        }
+
+                        // TIMING (v2.5.60): log tag-loop breakdown if it was slow.
+                        if ( ( $tg_insert + $tg_link ) > 2 ) {
+                            $this->logger->info( sprintf(
+                                '[multilingual] tag-loop #%d: %d tags, findOrCreate=%dms link=%dms (path=direct-db v2.5.60)',
+                                $target_id, count( $sec_tag_names ),
+                                (int) round( $tg_insert * 1000 ), (int) round( $tg_link * 1000 )
+                            ) );
                         }
                     }
                 }
@@ -1924,6 +1929,67 @@ class WpmlIntegration extends AbstractMigrator {
      * WPML hook. The English row is only created if absent — never overwritten —
      * so the English tag never drops out of its own language filter.
      */
+    /**
+     * Find or create a product_tag term via DIRECT DB writes — no wp_insert_term,
+     * so WPML's created_term hook (which re-syncs the whole taxonomy when it's
+     * flagged out of sync, ~2s each) never fires. Cached per request by name.
+     */
+    private function findOrCreateTagTerm( string $name ): int {
+        global $wpdb;
+        $name = trim( $name );
+        if ( $name === '' ) { return 0; }
+        if ( isset( $this->tag_term_cache[ $name ] ) ) { return $this->tag_term_cache[ $name ]; }
+
+        $tid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT t.term_id FROM {$wpdb->terms} t
+             INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+             WHERE t.name = %s AND tt.taxonomy = 'product_tag' LIMIT 1",
+            $name
+        ) );
+        if ( $tid > 0 ) { return $this->tag_term_cache[ $name ] = $tid; }
+
+        // Create directly. Slug is provisional (fixTranslationTermSlug overwrites it
+        // with the English slug when a counterpart exists); keep it unique meanwhile.
+        $slug = $this->toSlug( $name );
+        if ( $slug === '' ) { $slug = 'tag-' . substr( md5( $name ), 0, 8 ); }
+        $base = $slug; $n = 2;
+        while ( (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->terms} WHERE slug = %s", $slug ) ) > 0 ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $slug = $base . '-' . $n; $n++;
+            if ( $n > 50 ) { $slug = $base . '-' . substr( md5( $name . microtime() ), 0, 6 ); break; }
+        }
+
+        $wpdb->insert( $wpdb->terms, [ 'name' => $name, 'slug' => $slug, 'term_group' => 0 ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $new_tid = (int) $wpdb->insert_id;
+        if ( $new_tid <= 0 ) { return 0; }
+        $wpdb->insert( $wpdb->term_taxonomy, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            'term_id' => $new_tid, 'taxonomy' => 'product_tag', 'description' => '', 'parent' => 0, 'count' => 0,
+        ] );
+        clean_term_cache( $new_tid, 'product_tag' );
+        return $this->tag_term_cache[ $name ] = $new_tid;
+    }
+
+    /**
+     * Resolve a primary-language product_tag by name to [term_id, slug] via direct
+     * DB lookup (cached). Replaces get_term_by('name', …) which WPML filters/slows.
+     *
+     * @return array{0:int,1:string}  [term_id, slug] or [0,''] if not found.
+     */
+    private function findPrimaryTagByName( string $name ): array {
+        global $wpdb;
+        $name = trim( $name );
+        if ( $name === '' ) { return [ 0, '' ]; }
+        if ( isset( $this->pri_tag_cache[ $name ] ) ) { return $this->pri_tag_cache[ $name ]; }
+
+        $row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT t.term_id, t.slug FROM {$wpdb->terms} t
+             INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+             WHERE t.name = %s AND tt.taxonomy = 'product_tag' LIMIT 1",
+            $name
+        ) );
+        $out = $row ? [ (int) $row->term_id, (string) $row->slug ] : [ 0, '' ];
+        return $this->pri_tag_cache[ $name ] = $out;
+    }
+
     private function fastLinkTagTranslation( int $en_term_id, int $ar_term_id ): void {
         global $wpdb;
         if ( $en_term_id <= 0 || $ar_term_id <= 0 ) { return; }
