@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.61
+* Cleanup - Removed the temporary timing instrumentation now that the multilingual tag bottleneck is fixed (confirmed ~130s/product → ~0.5s/product). Product log lines keep the SKU + name for readability; the verbose timing(ms)/breakdown lines are gone. No behavior change.
+
+
 2026-05-31 - version 2.5.60
 * Fixed - Made the product-tag path fully direct-DB. wp_insert_term() and get_term_by() were replaced with direct wp_terms/wp_term_taxonomy find-or-create and direct lookups, so WPML's created_term re-sync (the residual ~90s when taxonomies are out of sync) no longer fires. Combined with the v2.5.59 direct icl_translations linking, the entire tag section now touches the database directly with zero WPML hooks. Added a one-line tag-loop timing breakdown (findOrCreate vs link) so the result is verifiable.
 

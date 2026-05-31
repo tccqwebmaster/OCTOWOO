@@ -265,30 +265,17 @@ class WpmlIntegration extends AbstractMigrator {
             );
 
             if ( ! empty( $rows ) ) {
-                // TIMING (v2.5.56): measure remote-OC setup cost per chunk.
-                $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
-                $ts0 = microtime( true );
-
                 // Prefetch tags from OC (lightweight string query only).
                 $oc_ids = array_filter( array_map( fn( $r ) => (int) $r['oc_id'], $rows ) );
                 if ( $oc_ids ) {
                     $this->prefetchSecLangTagsForProducts( $oc_ids );
                 }
-                $ts1 = microtime( true );
-
-                $seo_map = $this->fetchSecondaryLangSeoMap();
-                $ts2 = microtime( true );
-
-                $this->logger->info( sprintf(
-                    '[multilingual] Chunk setup timing(ms): fetched %d rows, prefetchTags=%d, seoMap=%d',
-                    count( $rows ), $ms( $ts0, $ts1 ), $ms( $ts1, $ts2 )
-                ) );
 
                 [ $p, $s, $f ] = $this->translatePostsFromRows(
                     $rows, 'product',
                     '_octowoo_name' . $sfx,
                     '_octowoo_description' . $sfx,
-                    $seo_map
+                    $this->fetchSecondaryLangSeoMap()
                 );
                 $processed += $p; $skipped += $s; $failed += $f;
 
@@ -676,21 +663,12 @@ class WpmlIntegration extends AbstractMigrator {
                 $processed++;
             } else {
                 // ── Create new translation ────────────────────────────────────
-                // TIMING INSTRUMENTATION (v2.5.56): break down where each product's
-                // time goes so we can pinpoint any slow step. Remove once resolved.
-                $t0 = microtime( true );
                 $new_id = $this->createTranslatedPost( $primary, $sec_title, $sec_content, $post_type, $sec_excerpt );
                 if ( ! $new_id ) { $failed++; continue; }
-                $t1 = microtime( true );
 
                 $this->copyProductDataToTranslation( $primary_id, $new_id );
-                $t2 = microtime( true );
-
                 $this->linkPostTranslation( $primary_id, $new_id, $post_type );
-                $t3 = microtime( true );
-
                 $this->applyYoastPostMeta( $primary_id, $new_id );
-                $t4 = microtime( true );
 
                 if ( isset( $sec_seo_map[ (int) $row['oc_id'] ] ) ) {
                     $this->queueSecondaryLangRedirect( $new_id, $sec_seo_map[ (int) $row['oc_id'] ] );
@@ -698,16 +676,12 @@ class WpmlIntegration extends AbstractMigrator {
                 update_post_meta( $new_id, '_octowoo_translation_of',   $primary_id );
                 update_post_meta( $new_id, '_octowoo_translation_lang',  $this->secondary_lang );
                 update_post_meta( $primary_id, '_octowoo_has_translation', 1 );
-                $t5 = microtime( true );
 
-                $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
                 $c_sku = (string) ( $meta[ $primary_id ]['_sku'] ?? '' );
                 $this->logger->info( sprintf(
-                    '[multilingual] Created product #%d (%s) ← #%d | SKU: %s | %s | timing(ms): insert=%d copy=%d link=%d yoast=%d meta=%d TOTAL=%d',
+                    '[multilingual] Created product #%d (%s) ← #%d | SKU: %s | %s',
                     $new_id, $this->secondary_lang, $primary_id,
-                    $c_sku !== '' ? $c_sku : '—', $primary->post_title,
-                    $ms( $t0, $t1 ), $ms( $t1, $t2 ), $ms( $t2, $t3 ),
-                    $ms( $t3, $t4 ), $ms( $t4, $t5 ), $ms( $t0, $t5 )
+                    $c_sku !== '' ? $c_sku : '—', $primary->post_title
                 ) );
                 $processed++;
             }
@@ -1250,9 +1224,6 @@ class WpmlIntegration extends AbstractMigrator {
      *   – Brand taxonomy terms (whichever plugin is active)
      */
     private function copyProductDataToTranslation( int $source_id, int $target_id ): void {
-        // TIMING (v2.5.58): sub-breakdown to find the slow section inside copy().
-        $cs = microtime( true );
-
         // ── WooCommerce core product meta ──────────────────────────────────
         $wc_meta_keys = [
             '_sku', '_regular_price', '_price', '_sale_price',
@@ -1271,7 +1242,6 @@ class WpmlIntegration extends AbstractMigrator {
             // update_post_meta handles '' safely (clears the meta).
             update_post_meta( $target_id, $key, $value );
         }
-        $c_meta = microtime( true );
 
         // ── NO image import here ────────────────────────────────────────────
         // The translated post shares the English parent's '_thumbnail_id' and
@@ -1288,7 +1258,6 @@ class WpmlIntegration extends AbstractMigrator {
         if ( ! is_wp_error( $type_terms ) && ! empty( $type_terms ) ) {
             wp_set_object_terms( $target_id, $type_terms, 'product_type' );
         }
-        $c_type = microtime( true );
 
         // ── product_cat terms → resolve to secondary-language translated category terms ─
         // Without this the translated product has no category at all, so the
@@ -1303,7 +1272,6 @@ class WpmlIntegration extends AbstractMigrator {
             }
             wp_set_object_terms( $target_id, $translated_cat_ids, 'product_cat' );
         }
-        $c_cat = microtime( true );
 
         // ── product_tag terms ──────────────────────────────────────────────
         // Prefer secondary-language tag strings from OpenCart so the translated
@@ -1354,7 +1322,6 @@ class WpmlIntegration extends AbstractMigrator {
                             : [];
 
                         $sec_term_ids = [];
-                        $tg_insert = 0.0; $tg_link = 0.0; // per-call timing accumulators
                         foreach ( $sec_tag_names as $idx => $sec_tag_name ) {
                             if ( isset( $this->tag_xlate_cache[ $sec_tag_name ] ) ) {
                                 $sec_term_ids[] = $this->tag_xlate_cache[ $sec_tag_name ];
@@ -1363,14 +1330,11 @@ class WpmlIntegration extends AbstractMigrator {
 
                             // Create (or find) the Arabic tag term via DIRECT DB —
                             // no wp_insert_term, so WPML's created_term re-sync never fires.
-                            $ti0    = microtime( true );
                             $sec_tid = $this->findOrCreateTagTerm( $sec_tag_name );
-                            $tg_insert += microtime( true ) - $ti0;
                             if ( $sec_tid <= 0 ) { continue; }
 
                             // Share the English slug + link the two languages, all via
                             // direct icl_translations writes (fast, no WPML hooks).
-                            $tl0 = microtime( true );
                             if ( isset( $pri_tag_names[ $idx ] ) ) {
                                 [ $pri_tid, $pri_slug ] = $this->findPrimaryTagByName( $pri_tag_names[ $idx ] );
                                 if ( $pri_tid > 0 ) {
@@ -1382,7 +1346,6 @@ class WpmlIntegration extends AbstractMigrator {
                             } elseif ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
                                 $this->fastLinkTagTranslation( $sec_tid, $sec_tid );
                             }
-                            $tg_link += microtime( true ) - $tl0;
 
                             $this->tag_xlate_cache[ $sec_tag_name ] = $sec_tid;
                             $sec_term_ids[] = $sec_tid;
@@ -1391,15 +1354,6 @@ class WpmlIntegration extends AbstractMigrator {
                         if ( ! empty( $sec_term_ids ) ) {
                             wp_set_object_terms( $target_id, $sec_term_ids, 'product_tag', false );
                             $sec_tags_assigned = true;
-                        }
-
-                        // TIMING (v2.5.60): log tag-loop breakdown if it was slow.
-                        if ( ( $tg_insert + $tg_link ) > 2 ) {
-                            $this->logger->info( sprintf(
-                                '[multilingual] tag-loop #%d: %d tags, findOrCreate=%dms link=%dms (path=direct-db v2.5.60)',
-                                $target_id, count( $sec_tag_names ),
-                                (int) round( $tg_insert * 1000 ), (int) round( $tg_link * 1000 )
-                            ) );
                         }
                     }
                 }
@@ -1419,7 +1373,6 @@ class WpmlIntegration extends AbstractMigrator {
                 wp_set_object_terms( $target_id, $translated_tag_ids, 'product_tag', false );
             }
         }
-        $c_tag = microtime( true );
 
         // ── Brand / manufacturer taxonomy ──────────────────────────────────
         // Resolve primary-language brand term IDs → secondary-language translated term IDs.
@@ -1435,19 +1388,6 @@ class WpmlIntegration extends AbstractMigrator {
                 }
                 wp_set_object_terms( $target_id, $translated_brand_ids, $brand_tax );
             }
-        }
-        $c_brand = microtime( true );
-
-        // TIMING (v2.5.58): log sub-breakdown only when copy() was slow (>3s),
-        // to pinpoint the offending section without spamming the log.
-        if ( ( $c_brand - $cs ) > 3 ) {
-            $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
-            $this->logger->info( sprintf(
-                '[multilingual] copy() breakdown #%d ms: meta=%d type=%d cat=%d tag=%d brand=%d',
-                $target_id,
-                $ms( $cs, $c_meta ), $ms( $c_meta, $c_type ), $ms( $c_type, $c_cat ),
-                $ms( $c_cat, $c_tag ), $ms( $c_tag, $c_brand )
-            ) );
         }
     }
 
