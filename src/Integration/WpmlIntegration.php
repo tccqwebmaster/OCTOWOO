@@ -1245,6 +1245,9 @@ class WpmlIntegration extends AbstractMigrator {
      *   – Brand taxonomy terms (whichever plugin is active)
      */
     private function copyProductDataToTranslation( int $source_id, int $target_id ): void {
+        // TIMING (v2.5.58): sub-breakdown to find the slow section inside copy().
+        $cs = microtime( true );
+
         // ── WooCommerce core product meta ──────────────────────────────────
         $wc_meta_keys = [
             '_sku', '_regular_price', '_price', '_sale_price',
@@ -1263,6 +1266,7 @@ class WpmlIntegration extends AbstractMigrator {
             // update_post_meta handles '' safely (clears the meta).
             update_post_meta( $target_id, $key, $value );
         }
+        $c_meta = microtime( true );
 
         // ── NO image import here ────────────────────────────────────────────
         // The translated post shares the English parent's '_thumbnail_id' and
@@ -1279,6 +1283,7 @@ class WpmlIntegration extends AbstractMigrator {
         if ( ! is_wp_error( $type_terms ) && ! empty( $type_terms ) ) {
             wp_set_object_terms( $target_id, $type_terms, 'product_type' );
         }
+        $c_type = microtime( true );
 
         // ── product_cat terms → resolve to secondary-language translated category terms ─
         // Without this the translated product has no category at all, so the
@@ -1293,6 +1298,7 @@ class WpmlIntegration extends AbstractMigrator {
             }
             wp_set_object_terms( $target_id, $translated_cat_ids, 'product_cat' );
         }
+        $c_cat = microtime( true );
 
         // ── product_tag terms ──────────────────────────────────────────────
         // Prefer secondary-language tag strings from OpenCart so the translated
@@ -1420,6 +1426,7 @@ class WpmlIntegration extends AbstractMigrator {
                 wp_set_object_terms( $target_id, $translated_tag_ids, 'product_tag', false );
             }
         }
+        $c_tag = microtime( true );
 
         // ── Brand / manufacturer taxonomy ──────────────────────────────────
         // Resolve primary-language brand term IDs → secondary-language translated term IDs.
@@ -1435,6 +1442,19 @@ class WpmlIntegration extends AbstractMigrator {
                 }
                 wp_set_object_terms( $target_id, $translated_brand_ids, $brand_tax );
             }
+        }
+        $c_brand = microtime( true );
+
+        // TIMING (v2.5.58): log sub-breakdown only when copy() was slow (>3s),
+        // to pinpoint the offending section without spamming the log.
+        if ( ( $c_brand - $cs ) > 3 ) {
+            $ms = fn( $a, $b ) => (int) round( ( $b - $a ) * 1000 );
+            $this->logger->info( sprintf(
+                '[multilingual] copy() breakdown #%d ms: meta=%d type=%d cat=%d tag=%d brand=%d',
+                $target_id,
+                $ms( $cs, $c_meta ), $ms( $c_meta, $c_type ), $ms( $c_type, $c_cat ),
+                $ms( $c_cat, $c_tag ), $ms( $c_tag, $c_brand )
+            ) );
         }
     }
 

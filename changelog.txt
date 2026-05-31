@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.58
+* Diagnostic - Added sub-timing inside copyProductDataToTranslation() (meta/type/cat/tag/brand) — confirmed via v2.5.57 logs to be the sole bottleneck (~130s/product). Logs a breakdown line whenever copy() exceeds 3s, pinpointing the exact slow taxonomy section before the targeted fix.
+
+
 2026-05-31 - version 2.5.57
 * Diagnostic - Multilingual log lines now include the product SKU and name (e.g. "SKU: 1101890 | Apple iPad Pro 11") alongside the timing breakdown, so each entry is human-readable instead of just post IDs.
 
