@@ -1244,7 +1244,8 @@ class OctoWoo_CLI extends WP_CLI_Command {
         }
 
         $config = get_option( 'octowoo_settings', [] );
-        $purger = new \OctoWoo\Core\DataPurger( $config );
+        $logger = new \OctoWoo\Core\Logger( 'cli-reset-cats-' . date( 'YmdHis' ) );
+        $purger = new \OctoWoo\Core\DataPurger( $logger, $config );
 
         $ref = new \ReflectionClass( $purger );
         $m   = $ref->getMethod( 'purgeCategories' );

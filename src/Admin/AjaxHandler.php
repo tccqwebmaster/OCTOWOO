@@ -2131,7 +2131,8 @@ class AjaxHandler {
         @set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
         @ini_set( 'memory_limit', '512M' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors,WordPress.PHP.IniSet
 
-        $purger  = new \OctoWoo\Core\DataPurger( AdminPage::getConfig() );
+        $cleanup_logger = new \OctoWoo\Core\Logger( 'cleanup-' . gmdate( 'YmdHis' ) );
+        $purger  = new \OctoWoo\Core\DataPurger( $cleanup_logger, AdminPage::getConfig() );
         $results = [];
 
         // 1. Duplicate categories (product_cat).

@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.75
+* Fixed - DataPurger was constructed with the config array as the first argument, but its constructor expects a Logger first (then config). This caused a fatal TypeError in the new reset_categories CLI command AND in the Full Cleanup admin button. Both now pass a Logger correctly. (The reset crashed before deleting anything, so no data was affected.)
+
 2026-06-01 - version 2.5.74
 * Fixed - linkTermTranslation now has a NAME-BASED language guard: it refuses to register an Arabic-named term as the English original (and aborts when caller inputs look reversed). This prevents the catastrophic case where tangled inputs caused all English categories to be flipped to Arabic.
 * Fixed - Force term purge now also deletes the matching wp_icl_translations rows, so resetting a taxonomy leaves no orphan WPML rows to tangle the next migration.
