@@ -1399,4 +1399,126 @@ class OctoWoo_CLI extends WP_CLI_Command {
         }
     }
 
+    /**
+     * Ensure EVERY English (primary) category has a linked Arabic (secondary) twin.
+     *
+     * Creates the Arabic twin with the Arabic NAME from the OpenCart source (via the
+     * term's _octowoo_oc_id), the SAME slug as the English term (correct for WPML —
+     * translations share a slug, the language is separated by URL prefix, so NO SEO
+     * loss and NO '-ar' suffix needed), and a proper WPML translation link. Falls back
+     * to the English name only if the source has no Arabic. Idempotent. Dry-run default.
+     *
+     * ## OPTIONS
+     *
+     * [--apply]
+     * : Actually create/link the Arabic twins.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo ensure_category_translations
+     *     wp octowoo ensure_category_translations --apply
+     *
+     * @when after_wp_load
+     */
+    public function ensure_category_translations( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply  = isset( $assoc_args['apply'] );
+        $config = \OctoWoo\Admin\AdminPage::getConfig();
+        $primary   = $config['multilingual']['primary_locale']   ?? 'en';
+        $secondary = $config['multilingual']['secondary_locale'] ?? 'ar';
+        $tax = 'product_cat';
+        $et  = 'tax_' . $tax;
+        $icl = $wpdb->prefix . 'icl_translations';
+
+        if ( ! $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { WP_CLI::error( 'WPML table not found.' ); } // phpcs:ignore WordPress.DB
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Ensure Arabic Category Twins          ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( "Primary: {$primary} | Secondary: {$secondary} | Same slug (WPML-correct, no SEO change)" );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( '' );
+
+        // OpenCart secondary-language names by OC category id.
+        $db_config = $config['db'] ?? []; $db_config['source'] = $config['source'] ?? 'remote';
+        $oc_names = [];
+        try {
+            $oc = new \OctoWoo\Core\DatabaseConnector( $db_config );
+            $oc_pfx = $config['db']['prefix'] ?? 'oc_';
+            $sec_lang_id = (int) ( $config['multilingual']['language_id_secondary'] ?? 2 );
+            $oc_rows = $oc->fetchAll( "SELECT category_id, name FROM `{$oc_pfx}category_description` WHERE language_id = {$sec_lang_id}" );
+            foreach ( $oc_rows as $r ) { $oc_names[ (int) $r['category_id'] ] = trim( (string) $r['name'] ); }
+            WP_CLI::line( 'OC Arabic category names loaded: ' . count( $oc_names ) );
+        } catch ( \Throwable $e ) {
+            WP_CLI::warning( 'Could not load OC Arabic names (' . $e->getMessage() . '). Falling back to English names where needed.' );
+        }
+        WP_CLI::line( '' );
+
+        $pri_terms = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT t.term_id, t.name, t.slug, tt.term_taxonomy_id AS tt_id, tt.parent, icl.trid
+             FROM `{$icl}` icl
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = icl.element_id
+             JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+             WHERE icl.element_type=%s AND icl.language_code=%s",
+            $et, $primary
+        ) );
+
+        $created = 0; $already = 0;
+        $bar = \WP_CLI\Utils\make_progress_bar( 'Ensuring Arabic twins', max( 1, count( $pri_terms ) ) );
+
+        foreach ( $pri_terms as $pt ) {
+            $has_sec = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "SELECT COUNT(*) FROM `{$icl}` WHERE trid=%d AND element_type=%s AND language_code=%s",
+                (int) $pt->trid, $et, $secondary ) );
+            if ( $has_sec > 0 ) { $already++; $bar->tick(); continue; }
+
+            $oc_id = (int) get_term_meta( (int) $pt->term_id, '_octowoo_oc_id', true );
+            $ar_name = ( $oc_id && ! empty( $oc_names[ $oc_id ] ) ) ? $oc_names[ $oc_id ] : $pt->name;
+
+            $sec_parent = 0;
+            if ( (int) $pt->parent > 0 ) {
+                $parent_tt = (int) $wpdb->get_var( $wpdb->prepare( "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id=%d AND taxonomy=%s", (int) $pt->parent, $tax ) ); // phpcs:ignore WordPress.DB
+                if ( $parent_tt ) {
+                    $ptrid = (int) $wpdb->get_var( $wpdb->prepare( "SELECT trid FROM `{$icl}` WHERE element_id=%d AND element_type=%s LIMIT 1", $parent_tt, $et ) ); // phpcs:ignore WordPress.DB
+                    if ( $ptrid ) {
+                        $sec_parent = (int) $wpdb->get_var( $wpdb->prepare( "SELECT tt.term_id FROM `{$icl}` i JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id=i.element_id WHERE i.trid=%d AND i.element_type=%s AND i.language_code=%s LIMIT 1", $ptrid, $et, $secondary ) ); // phpcs:ignore WordPress.DB
+                    }
+                }
+            }
+
+            WP_CLI::line( sprintf( '   + %-34s → %s', $pt->name, $ar_name ) );
+            if ( ! $apply ) { $created++; $bar->tick(); continue; }
+
+            $wpdb->insert( $wpdb->terms, [ 'name' => $ar_name, 'slug' => $pt->slug ], [ '%s', '%s' ] ); // phpcs:ignore WordPress.DB
+            $new_term_id = (int) $wpdb->insert_id;
+            if ( $new_term_id <= 0 ) { $bar->tick(); continue; }
+            $wpdb->insert( $wpdb->term_taxonomy, [ // phpcs:ignore WordPress.DB
+                'term_id' => $new_term_id, 'taxonomy' => $tax, 'description' => '', 'parent' => $sec_parent, 'count' => 0,
+            ], [ '%d', '%s', '%s', '%d', '%d' ] );
+            $new_tt_id = (int) $wpdb->insert_id;
+            update_term_meta( $new_term_id, '_octowoo_oc_id', $oc_id );
+            update_term_meta( $new_term_id, '_octowoo_translation_lang', $secondary );
+
+            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+                 VALUES (%s,%d,%d,%s,%s)
+                 ON DUPLICATE KEY UPDATE language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
+                $et, $new_tt_id, (int) $pt->trid, $secondary, $primary ) );
+            $created++;
+            $bar->tick();
+        }
+        $bar->finish();
+
+        if ( $apply ) {
+            clean_taxonomy_cache( $tax );
+            WP_CLI::success( sprintf( 'Done. Created %d Arabic twins; %d already had one. %s and %s category counts should now match.',
+                $created, $already, $primary, $secondary ) );
+        } else {
+            WP_CLI::warning( sprintf( 'DRY-RUN: would create %d Arabic twins (%d already linked). Re-run with --apply.', $created, $already ) );
+        }
+    }
+
 }
