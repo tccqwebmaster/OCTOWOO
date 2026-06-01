@@ -1155,7 +1155,7 @@ class OctoWoo_CLI extends WP_CLI_Command {
 
         // Secondary-flagged terms whose name has NO Arabic characters AND no primary twin of the same name.
         $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
-            "SELECT t.term_id, t.name, t.slug, tt.term_taxonomy_id AS tt_id, icl.id AS icl_id, icl.trid
+            "SELECT t.term_id, t.name, t.slug, tt.term_taxonomy_id AS tt_id, icl.translation_id AS icl_id, icl.trid
              FROM `{$icl}` icl
              JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = icl.element_id
              JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
@@ -1193,7 +1193,7 @@ class OctoWoo_CLI extends WP_CLI_Command {
             $wpdb->update( // phpcs:ignore WordPress.DB
                 $icl,
                 [ 'language_code' => $primary, 'source_language_code' => null, 'trid' => $new_trid ],
-                [ 'id' => (int) $r->icl_id ]
+                [ 'translation_id' => (int) $r->icl_id ]
             );
             $done++;
             $bar->tick();

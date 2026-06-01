@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.69
+* Fixed - fix_term_language used the wrong primary-key column ('id') for wp_icl_translations, which is 'translation_id'. The query errored and reported 0. Corrected to translation_id in both the SELECT and the UPDATE.
+
 2026-05-31 - version 2.5.68
 * Added - 'wp octowoo fix_term_language' CLI command to repair terms that the multilingual pass mislabeled as the secondary language. Finds secondary-flagged terms whose name has no secondary-language (Arabic) characters and that have no primary-language twin, and flips their WPML language_code back to primary (each becomes a standalone primary-language term on its own trid). Nothing is deleted and no products move — this RESTORES mislabeled English categories rather than removing them. Dry-run by default.
 
