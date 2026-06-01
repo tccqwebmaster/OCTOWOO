@@ -697,7 +697,7 @@ class WpmlIntegration extends AbstractMigrator {
         if ( $this->adapter === 'wpml' ) {
             $icl = $wpdb->prefix . 'icl_translations';
             $row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT id, language_code, trid FROM `{$icl}` WHERE element_id=%d AND element_type=%s LIMIT 1",
+                "SELECT translation_id, language_code, trid FROM `{$icl}` WHERE element_id=%d AND element_type=%s LIMIT 1",
                 $trans_id, 'post_' . $post_type
             ), ARRAY_A );
             $primary_trid = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -706,7 +706,7 @@ class WpmlIntegration extends AbstractMigrator {
                 if ( $row['language_code'] !== $this->secondary_lang || (int) $row['trid'] !== $primary_trid ) {
                     $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                         [ 'language_code' => $this->secondary_lang, 'source_language_code' => $this->primary_lang, 'trid' => $primary_trid ],
-                        [ 'id' => (int) $row['id'] ]
+                        [ 'translation_id' => (int) $row['translation_id'] ]
                     );
                 }
             } elseif ( $primary_trid ) {

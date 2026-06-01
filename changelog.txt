@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.72
+* Fixed - verifyAndFixTranslationLanguage() queried wp_icl_translations using column 'id' (which does not exist; the PK is 'translation_id'), throwing a DB error for every page/post and preventing those translation language rows from being verified/fixed. Corrected the SELECT and the UPDATE WHERE to translation_id. Swept the whole codebase to confirm no other icl_translations query uses the wrong column.
+
 2026-06-01 - version 2.5.71
 * Fixed - Category (term) translation linking now uses DIRECT icl_translations writes, exactly like the working product path (linkPostTranslation), instead of WPML's do_action('wpml_set_element_language_details') hooks. The hook path was slow (full taxonomy re-sync per term) and unreliable (re-labeled English terms as Arabic on re-runs). The direct path is deterministic and idempotent: the primary English row is created only if absent and never flipped if already correct, and the Arabic term is linked into the same trid via INSERT … ON DUPLICATE KEY UPDATE. This makes category translation behave like product translation — fast, no duplication, English stays English on re-run.
 
