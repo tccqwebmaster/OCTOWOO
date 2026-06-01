@@ -908,4 +908,96 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::success( "Removed {$deleted} orphan {$secondary} stubs. {$secondary} term count should now match {$primary}." );
     }
 
+    /**
+     * Repair leftover 'ow-t-…' temporary term slugs back to clean slugs from the term name.
+     *
+     * The multilingual pass uses a temporary 'ow-t-{id}-{time}' slug while updating a
+     * translated term, then overwrites it. When that overwrite failed on a re-run, the
+     * temp slug stuck. This converts every 'ow-t-…' slug to a clean sanitized slug from
+     * the term's name (skipping any that would collide with an existing clean slug).
+     *
+     * Runs in the terminal with no execution-time limit — unlike the admin button,
+     * which can hit a PHP timeout ("request failed") on large catalogs.
+     *
+     * DRY-RUN BY DEFAULT. Pass --apply to write the slug changes.
+     *
+     * ## OPTIONS
+     *
+     * [--taxonomy=<tax>]
+     * : Limit to one taxonomy. Default: product_cat + the active brand taxonomy.
+     *
+     * [--apply]
+     * : Actually write the slug fixes. Without this, only reports.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo fix_slugs
+     *     wp octowoo fix_slugs --apply
+     *
+     * @when after_wp_load
+     */
+    public function fix_slugs( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply = isset( $assoc_args['apply'] );
+        $taxes = [];
+        if ( ! empty( $assoc_args['taxonomy'] ) ) {
+            $taxes[] = sanitize_key( $assoc_args['taxonomy'] );
+        } else {
+            $taxes[] = 'product_cat';
+            foreach ( [ 'product_brand', 'pwb-brand', 'yith_product_brand', 'product_manufacturer' ] as $bt ) {
+                if ( taxonomy_exists( $bt ) ) { $taxes[] = $bt; break; }
+            }
+        }
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Repair ow-t- Temp Slugs              ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( 'Taxonomies: ' . implode( ', ', $taxes ) );
+        WP_CLI::line( '' );
+
+        $fixed = 0; $skipped = 0;
+        foreach ( $taxes as $tax ) {
+            $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "SELECT t.term_id, t.slug, t.name FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE tt.taxonomy = %s AND t.slug LIKE %s",
+                $tax, $wpdb->esc_like( 'ow-t-' ) . '%'
+            ) );
+
+            WP_CLI::line( sprintf( '[%s] %d terms with ow-t- slugs', $tax, count( $rows ) ) );
+
+            foreach ( $rows as $r ) {
+                $clean = sanitize_title( $r->name );
+                if ( $clean === '' || $clean === $r->slug ) { $skipped++; continue; }
+
+                // Skip if a different term already owns the clean slug (would collide).
+                $owner = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                    "SELECT term_id FROM {$wpdb->terms} WHERE slug = %s AND term_id <> %d LIMIT 1",
+                    $clean, $r->term_id ) );
+                if ( $owner > 0 ) {
+                    WP_CLI::line( sprintf( '    skip #%d "%s" → "%s" (slug taken by #%d)', $r->term_id, $r->slug, $clean, $owner ) );
+                    $skipped++; continue;
+                }
+
+                WP_CLI::line( sprintf( '    fix  #%d  %s → %s   (%s)', $r->term_id, $r->slug, $clean, $r->name ) );
+                if ( $apply ) {
+                    $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => (int) $r->term_id ] ); // phpcs:ignore WordPress.DB
+                    clean_term_cache( (int) $r->term_id, $tax );
+                }
+                $fixed++;
+            }
+        }
+
+        WP_CLI::line( '' );
+        if ( $apply ) {
+            WP_CLI::success( "Fixed {$fixed} slugs, skipped {$skipped} (collisions/empty)." );
+        } else {
+            WP_CLI::warning( "DRY-RUN: would fix {$fixed} slugs, skip {$skipped}. Re-run with --apply." );
+        }
+    }
+
 }

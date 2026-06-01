@@ -2111,6 +2111,13 @@ class AjaxHandler {
      */
     private function actionFullCleanup(): void {
         global $wpdb;
+
+        // Large catalogs (1000s of terms) make this multi-step cleanup exceed the
+        // default PHP execution time / memory, which the browser sees as
+        // "request failed". Match the other heavy handlers in this class.
+        @set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+        @ini_set( 'memory_limit', '512M' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors,WordPress.PHP.IniSet
+
         $purger  = new \OctoWoo\Core\DataPurger( AdminPage::getConfig() );
         $results = [];
 

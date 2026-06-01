@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.65
+* Fixed - "Full Cleanup" admin button failed ("request failed") on large catalogs because the handler lacked an execution-time/memory raise that every other heavy handler in the class already has. Added set_time_limit(0) + 512M like the others.
+* Added - 'wp octowoo fix_slugs' CLI command — repairs leftover 'ow-t-…' temporary term slugs back to clean slugs from the term name, in the terminal with no web timeout. Dry-run by default; skips collisions. Use --apply to write.
+
 2026-05-31 - version 2.5.64
 * Added - 'wp octowoo audit_translations' CLI command to diagnose and clean orphan secondary-language (Arabic) term stubs — the cause of Arabic showing far more terms than English (e.g. product_cat Arabic 287 vs English 96). Finds secondary-language terms whose translation group has no primary-language parent AND that carry no products, shows counts + a sample, and (with --apply) removes only those orphan stubs. Terms with products are never touched. Dry-run by default.
 
