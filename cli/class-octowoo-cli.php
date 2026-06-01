@@ -1288,7 +1288,7 @@ class OctoWoo_CLI extends WP_CLI_Command {
         @set_time_limit( 0 );
 
         $apply  = isset( $assoc_args['apply'] );
-        $config = get_option( 'octowoo_settings', [] );
+        $config = \OctoWoo\Admin\AdminPage::getConfig();
 
         WP_CLI::line( '' );
         WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
@@ -1298,7 +1298,9 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::line( '' );
 
         // OpenCart source: product_id → [category_id,...]
-        $oc = new \OctoWoo\Core\DatabaseConnector( $config['db'] ?? [] );
+        $db_config           = $config['db'] ?? [];
+        $db_config['source'] = $config['source'] ?? 'remote';
+        $oc = new \OctoWoo\Core\DatabaseConnector( $db_config );
         $oc_pfx = $config['db']['prefix'] ?? 'oc_';
         $rows = $oc->fetchAll( "SELECT product_id, category_id FROM `{$oc_pfx}product_to_category`" );
         if ( empty( $rows ) ) {

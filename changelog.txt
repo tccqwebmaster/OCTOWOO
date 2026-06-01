@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.77
+* Fixed - relink_categories read OpenCart DB credentials from the wrong option key (get_option('octowoo_settings')), which is empty, causing "Database Name empty" fatal. It now loads config via AdminPage::getConfig() (the real key is 'octowoo_config', merged with defaults) and injects the source flag like MigrationManager — so it connects to OpenCart the same way the migrate command does.
+
 2026-06-01 - version 2.5.76
 * Added - 'wp octowoo relink_categories' CLI command to re-attach products to their categories from the OpenCart source WITHOUT re-importing products. Needed after reset_categories + category re-import, which recreate category terms but leave products unassigned. Language-aware: English products link to English category terms; Arabic twin products link to the Arabic translation of the same category (falls back to the English term if no Arabic twin exists). Pure DB lookups, dry-run by default.
 
