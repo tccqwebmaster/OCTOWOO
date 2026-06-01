@@ -1007,33 +1007,58 @@ class OctoWoo_CLI extends WP_CLI_Command {
             WP_CLI::line( sprintf( '[%s] %d ow-t- terms to process', $tax, count( $rows ) ) );
 
             foreach ( $rows as $r ) {
+                // Determine the duplicate's WPML language (if registered).
+                $dup_lang = $has_icl ? (string) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                    "SELECT language_code FROM `{$icl}` WHERE element_type=%s AND element_id=%d LIMIT 1",
+                    'tax_' . $tax, $r->tt_id ) ) : '';
+
                 // Find a clean (non ow-t-) term with the SAME name = the real original.
+                // SAFETY: when both are WPML-registered, require the SAME language so we
+                // never attach (e.g.) Arabic products to an English category term.
                 $orig = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB
-                    "SELECT t.term_id, t.slug, tt.term_taxonomy_id AS tt_id
+                    "SELECT t.term_id, t.slug, tt.term_taxonomy_id AS tt_id,
+                            (SELECT language_code FROM `{$icl}` WHERE element_type=%s AND element_id=tt.term_taxonomy_id LIMIT 1) AS lang
                      FROM {$wpdb->terms} t
                      JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                      WHERE tt.taxonomy = %s AND t.name = %s AND t.slug NOT LIKE %s
                      ORDER BY tt.count DESC, t.term_id ASC LIMIT 1",
-                    $tax, $r->name, $wpdb->esc_like( 'ow-t-' ) . '%'
+                    'tax_' . $tax, $tax, $r->name, $wpdb->esc_like( 'ow-t-' ) . '%'
                 ) );
+
+                // If both languages are known and differ, do NOT merge — flag instead.
+                if ( $orig && $has_icl && $dup_lang !== '' && ! empty( $orig->lang ) && $dup_lang !== $orig->lang ) {
+                    WP_CLI::warning( sprintf( '    SKIP merge #%d (%s) → #%d (%s): language mismatch, review manually.',
+                        $r->term_id, $dup_lang, $orig->term_id, $orig->lang ) );
+                    $skipped++;
+                    continue;
+                }
 
                 if ( $orig ) {
                     // DUPLICATE → merge into original and delete.
-                    WP_CLI::line( sprintf( '    merge #%d (count=%d) → original #%d "%s" [%s]',
-                        $r->term_id, $r->count, $orig->term_id, $orig->slug, $r->name ) );
+                    // Count ACTUAL relationship rows on the duplicate (the cached
+                    // tt.count can be stale/0 under WPML even when links exist), so
+                    // we always move whatever is really attached.
+                    $real_links = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                        "SELECT COUNT(*) FROM {$wpdb->term_relationships} WHERE term_taxonomy_id=%d", $r->tt_id ) );
+
+                    WP_CLI::line( sprintf( '    merge #%d (count=%d, real links=%d) → original #%d "%s" [%s]',
+                        $r->term_id, $r->count, $real_links, $orig->term_id, $orig->slug, $r->name ) );
+
+                    $reassigned += $real_links;
+
                     if ( $apply ) {
-                        if ( (int) $r->count > 0 ) {
+                        if ( $real_links > 0 ) {
                             $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB
                                 "UPDATE IGNORE {$wpdb->term_relationships} SET term_taxonomy_id=%d WHERE term_taxonomy_id=%d",
                                 $orig->tt_id, $r->tt_id ) );
+                            // Remove any leftover rows that collided (object already on original).
                             $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_relationships} WHERE term_taxonomy_id=%d", $r->tt_id ) ); // phpcs:ignore WordPress.DB
-                            $reassigned += (int) $r->count;
                         }
                         if ( $has_icl ) {
                             $wpdb->query( $wpdb->prepare( "DELETE FROM `{$icl}` WHERE element_type=%s AND element_id=%d", 'tax_' . $tax, $r->tt_id ) ); // phpcs:ignore WordPress.DB
                         }
                         wp_delete_term( (int) $r->term_id, $tax );
-                        if ( (int) $r->count > 0 ) { wp_update_term_count_now( [ (int) $orig->tt_id ], $tax ); }
+                        wp_update_term_count_now( [ (int) $orig->tt_id ], $tax );
                     }
                     $merged++;
                 } else {

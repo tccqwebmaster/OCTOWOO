@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.67
+* Fixed - fix_slugs merge now counts and moves ACTUAL term_relationships rows instead of trusting the cached tt.count (which is stale/0 under WPML), so products on a duplicate are never orphaned when it is deleted. Dry-run now reports the real number of links that will move.
+* Added - WPML language guard: a ow-t- duplicate is only merged into an original of the SAME language. If the duplicate and candidate original are in different languages, the merge is SKIPPED and flagged for manual review — preventing Arabic products from being attached to an English category term.
+
 2026-05-31 - version 2.5.66
 * Fixed - ow-t- slug cleanup was about to produce percent-encoded slugs (e.g. %d8%a7%d9%84...) because both the Full Cleanup button and fix_slugs used sanitize_title(), which URL-encodes Arabic. Both now use the Arabic-preserving slug format (matching AbstractMigrator::toSlug), keeping readable Arabic URLs.
 * Fixed - fix_slugs now correctly treats ow-t- terms that duplicate an existing clean-named term as DUPLICATES: it merges their products into the original and deletes the stub, instead of merely renaming the duplicate's slug (which left the duplicate alive). Only genuinely unique ow-t- terms get an in-place slug repair. SEO of the original term is preserved.
