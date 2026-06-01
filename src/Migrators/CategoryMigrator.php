@@ -245,14 +245,16 @@ class CategoryMigrator extends AbstractMigrator {
             }
         }
 
-        if ( ! $existing_wc_id && $wc_parent === 0 ) {
+        if ( ! $existing_wc_id ) {
             // Check 3: name with ANY parent (catches terms that were reparented
-            // after initial creation with pending_parent_oc_id).
+            // after initial creation, AND prevents a re-run from creating a second
+            // copy of an existing category under a slightly different/empty parent —
+            // the cause of duplicate 'ow-t-…' category stubs on WPML re-runs).
             $existing_term_any = term_exists( $name, 'product_cat' );
             if ( ! empty( $existing_term_any['term_id'] ) ) {
                 $existing_wc_id = (int) $existing_term_any['term_id'];
                 $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing_wc_id );
-                $this->logger->info( "[categories] Found WC term #{$existing_wc_id} by name (any parent) for OC #{$oc_id} – backfilled id_map." );
+                $this->logger->info( "[categories] Found WC term #{$existing_wc_id} by name (any parent) for OC #{$oc_id} – reusing, no duplicate created." );
             }
         }
 

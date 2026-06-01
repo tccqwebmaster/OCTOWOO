@@ -196,14 +196,29 @@ class ManufacturerMigrator extends AbstractMigrator {
         // Fallback 3: by name in taxonomy — prevents creating a duplicate when the
         // term exists but never had OctoWoo meta (e.g. manually created brands or
         // a prior run that set name but not meta).
+        //
+        // IMPORTANT (idempotency): get_term_by() resolves in the CURRENT WPML
+        // language context, so on a re-run it can fail to see a term that already
+        // exists in a different language and we would wrongly create a duplicate.
+        // We therefore look the name up with a DIRECT, language-agnostic query
+        // across the whole taxonomy and reuse the existing term (lowest id) if any.
         if ( ! $existing_wc_id ) {
-            $by_name = get_term_by( 'name', $name, $this->taxonomy );
-            if ( $by_name && ! is_wp_error( $by_name ) ) {
-                $existing_wc_id = (int) $by_name->term_id;
+            global $wpdb;
+            $by_name_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.term_id
+                 FROM {$wpdb->terms} t
+                 INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                 WHERE t.name = %s AND tt.taxonomy = %s
+                 ORDER BY tt.count DESC, t.term_id ASC
+                 LIMIT 1",
+                $name, $this->taxonomy
+            ) );
+            if ( $by_name_id > 0 ) {
+                $existing_wc_id = $by_name_id;
                 $this->saveManufacturerMap( $oc_id, $existing_wc_id );
                 update_term_meta( $existing_wc_id, '_octowoo_oc_manufacturer_id', $oc_id );
                 update_term_meta( $existing_wc_id, '_octowoo_oc_id', $oc_id );
-                $this->logger->info( "[manufacturers] Found existing brand #{$existing_wc_id} by name '{$name}' for OC #{$oc_id} – backfilled id_map." );
+                $this->logger->info( "[manufacturers] Found existing brand #{$existing_wc_id} by name '{$name}' (any language) for OC #{$oc_id} – reusing, no duplicate created." );
             }
         }
 
