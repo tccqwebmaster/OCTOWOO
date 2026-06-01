@@ -327,6 +327,20 @@ class DataPurger {
             $wpdb->query( "DELETE FROM {$wpdb->termmeta} WHERE term_id IN ({$id_csv})" ); // phpcs:ignore WordPress.DB.PreparedSQL
 
             // 3. Remove taxonomy registration rows.
+            // First capture the term_taxonomy_ids so we can clean their WPML rows.
+            $tt_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy
+            ) ) );
+            // 3a. Remove WPML translation rows for these terms (prevents orphan
+            //     icl_translations rows that tangle the next migration's linking).
+            $icl = $wpdb->prefix . 'icl_translations';
+            if ( ! empty( $tt_ids ) && $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $tt_csv = implode( ',', $tt_ids );
+                $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL
+                    "DELETE FROM `{$icl}` WHERE element_type = %s AND element_id IN ({$tt_csv})",
+                    'tax_' . $taxonomy
+                ) );
+            }
             $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_taxonomy} WHERE taxonomy = %s", $taxonomy ) ); // phpcs:ignore WordPress.DB.PreparedSQL
 
             // 4. Remove term rows that are no longer referenced by any other taxonomy.

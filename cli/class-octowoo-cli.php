@@ -1204,4 +1204,59 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::line( "Re-check: {$primary} count should rise by ~{$done}, {$secondary} drop by the same." );
     }
 
+    /**
+     * Reset ONLY product categories (clean slate) — deletes every product_cat term,
+     * its relationships, meta, and WPML rows, and clears the category id_map. Nothing
+     * else is touched (products, brands, orders, customers all remain).
+     *
+     * Requires --confirm to run. Without it, only reports how many would be deleted.
+     *
+     * ## OPTIONS
+     *
+     * [--confirm]
+     * : Required to actually delete.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo reset_categories
+     *     wp octowoo reset_categories --confirm
+     *
+     * @when after_wp_load
+     */
+    public function reset_categories( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} WHERE taxonomy='product_cat'" ); // phpcs:ignore WordPress.DB
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Reset Product Categories (only)      ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( "Current product_cat terms: {$count}" );
+        WP_CLI::line( 'Deletes ONLY category terms (+ their WPML rows + id_map).' );
+        WP_CLI::line( 'Products, brands, orders, customers are NOT touched.' );
+        WP_CLI::line( '' );
+
+        if ( ! isset( $assoc_args['confirm'] ) ) {
+            WP_CLI::warning( "Dry: would delete {$count} category terms. Re-run with --confirm to proceed." );
+            return;
+        }
+
+        $config = get_option( 'octowoo_settings', [] );
+        $purger = new \OctoWoo\Core\DataPurger( $config );
+
+        $ref = new \ReflectionClass( $purger );
+        $m   = $ref->getMethod( 'purgeCategories' );
+        $m->setAccessible( true );
+        $deleted = (int) $m->invoke( $purger, true ); // force = true
+
+        clean_taxonomy_cache( 'product_cat' );
+        flush_rewrite_rules( false );
+
+        $remaining = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->term_taxonomy} WHERE taxonomy='product_cat'" ); // phpcs:ignore WordPress.DB
+        WP_CLI::success( "Reset complete. Deleted {$deleted} category terms. Remaining: {$remaining}." );
+        WP_CLI::line( 'Next: wp octowoo migrate --migrators=categories   (clean re-import)' );
+    }
+
 }

@@ -1,5 +1,10 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.74
+* Fixed - linkTermTranslation now has a NAME-BASED language guard: it refuses to register an Arabic-named term as the English original (and aborts when caller inputs look reversed). This prevents the catastrophic case where tangled inputs caused all English categories to be flipped to Arabic.
+* Fixed - Force term purge now also deletes the matching wp_icl_translations rows, so resetting a taxonomy leaves no orphan WPML rows to tangle the next migration.
+* Added - 'wp octowoo reset_categories' CLI command: cleanly deletes ONLY product_cat terms (+ their WPML rows + id_map + transients), leaving products/brands/orders/customers untouched. Requires --confirm. For rebuilding categories from a clean slate.
+
 2026-06-01 - version 2.5.73
 * Fixed - linkTermTranslation could throw "Duplicate entry 'TRID-en' for key 'trid_lang'" when repairing a mislabeled primary term whose trid already contained a primary-language row. The repair now moves the term to its OWN fresh trid before flipping its language (no in-place collision). Also added a guard so that if another element already occupies (trid, secondary_lang), it is moved to its own trid first — so the secondary term can take its slot without violating the trid_lang unique key. Category translation linking is now fully collision-safe and idempotent.
 

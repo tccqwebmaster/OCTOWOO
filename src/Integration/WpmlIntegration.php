@@ -2004,6 +2004,27 @@ class WpmlIntegration extends AbstractMigrator {
             $sec_tt = (int) $sec_term->term_taxonomy_id;
             if ( $pri_tt <= 0 || $sec_tt <= 0 ) { return; }
 
+            // SAFETY GUARD (added after a linker bug flipped all English categories
+            // to Arabic): never register a term in a language that contradicts its
+            // own NAME. The "primary" slot must not hold an Arabic-named term, and
+            // the "secondary" slot must not hold a purely-English-named term. If the
+            // inputs are swapped/tangled, abort this link rather than corrupt the
+            // language assignment. This makes the linker safe even on messy data.
+            $has_arabic = static function ( string $s ): bool {
+                return (bool) preg_match( '/[\x{0600}-\x{06FF}]/u', $s );
+            };
+            $pri_is_arabic = $has_arabic( (string) $primary_term->name );
+            $sec_is_arabic = $has_arabic( (string) $sec_term->name );
+
+            // If primary (English) slot has an Arabic name, or the two terms are the
+            // same, the caller's mapping is wrong — do not touch language data.
+            if ( $primary_term_id === $translated_term_id ) { return; }
+            if ( $this->primary_lang === 'en' && $pri_is_arabic && ! $sec_is_arabic ) {
+                // Inputs are reversed (Arabic passed as primary, English as secondary).
+                $this->logger->warning( "[multilingual] Skipped term link: primary #{$primary_term_id} is Arabic-named but mapped as {$this->primary_lang}. Inputs look reversed — not flipping languages." );
+                return;
+            }
+
             // 1) Ensure the PRIMARY term has a source row (language=primary,
             //    source_language_code=NULL). Create with a fresh trid only if absent;
             //    NEVER flip an existing correct English row.
