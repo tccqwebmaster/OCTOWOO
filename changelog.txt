@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.71
+* Fixed - Category (term) translation linking now uses DIRECT icl_translations writes, exactly like the working product path (linkPostTranslation), instead of WPML's do_action('wpml_set_element_language_details') hooks. The hook path was slow (full taxonomy re-sync per term) and unreliable (re-labeled English terms as Arabic on re-runs). The direct path is deterministic and idempotent: the primary English row is created only if absent and never flipped if already correct, and the Arabic term is linked into the same trid via INSERT … ON DUPLICATE KEY UPDATE. This makes category translation behave like product translation — fast, no duplication, English stays English on re-run.
+
 2026-05-31 - version 2.5.70
 * Fixed - ROOT CAUSE of English categories being mislabeled as Arabic on every category run. The migrator relied on WPML's ambient "current language" at wp_insert_term() time to assign the language; on an Arabic-admin site (or when the language switch did not persist into the background PHP process) WPML assigned new English terms to Arabic, and re-running re-corrupted the data each time. Added ensureTermPrimaryLanguage() which writes the icl_translations row DIRECTLY in the primary language after every create/link/update, guaranteeing English terms stay English regardless of WPML's ambient context. Applied in CategoryMigrator create + term_exists + update paths.
 

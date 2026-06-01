@@ -1989,28 +1989,53 @@ class WpmlIntegration extends AbstractMigrator {
         $element_type = "tax_{$taxonomy}";
 
         if ( $this->adapter === 'wpml' ) {
-            // Get existing trid FIRST (WPML may have auto-assigned one during
-            // wp_insert_term) to avoid creating a duplicate translation group.
-            $existing_trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
-            // Only re-register primary term if it's not already correctly set as primary language.
-            // Re-registering an already-correct English term can reset it, causing it to
-            // disappear from the English language filter (drops from English 290 → 42).
-            $current_lang = apply_filters( 'wpml_element_language_code', null, [
-                'element_id'   => (int) $primary_term->term_taxonomy_id,
-                'element_type' => $element_type,
-            ] );
-            if ( $current_lang !== $this->primary_lang ) {
-                // Not yet registered as primary — set it now.
-                $this->wpmlSetTermLanguage( $primary_term, $element_type, $this->primary_lang, $existing_trid, true );
+            // DIRECT icl_translations writes — same proven approach as products
+            // (linkPostTranslation). The previous do_action('wpml_set_element_
+            // language_details') path was slow (triggered full taxonomy re-sync per
+            // term) and unreliable (re-labeled English terms as Arabic on re-runs).
+            // Direct writes are deterministic and idempotent.
+            global $wpdb;
+            $icl = $wpdb->prefix . 'icl_translations';
+            if ( ! $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { return; } // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+
+            $pri_tt = (int) $primary_term->term_taxonomy_id;
+            $sec_term = get_term( $translated_term_id, $taxonomy );
+            if ( ! $sec_term || is_wp_error( $sec_term ) ) { return; }
+            $sec_tt = (int) $sec_term->term_taxonomy_id;
+            if ( $pri_tt <= 0 || $sec_tt <= 0 ) { return; }
+
+            // 1) Ensure the PRIMARY term has a source row (language=primary,
+            //    source_language_code=NULL). Create with a fresh trid only if absent;
+            //    NEVER flip an existing correct English row (that is what dropped
+            //    English from the language filter before).
+            $pri_row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT translation_id, trid, language_code FROM `{$icl}` WHERE element_type=%s AND element_id=%d LIMIT 1",
+                $element_type, $pri_tt
+            ) );
+            if ( ! $pri_row ) {
+                $trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->insert( $icl, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    'element_type' => $element_type, 'element_id' => $pri_tt, 'trid' => $trid,
+                    'language_code' => $this->primary_lang, 'source_language_code' => null,
+                ], [ '%s', '%d', '%d', '%s', '%s' ] );
+            } else {
+                $trid = (int) $pri_row->trid;
+                // Repair only if the primary row is in the wrong language.
+                if ( $pri_row->language_code !== $this->primary_lang ) {
+                    $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        [ 'language_code' => $this->primary_lang, 'source_language_code' => null ],
+                        [ 'translation_id' => (int) $pri_row->translation_id ], [ '%s', '%s' ], [ '%d' ] );
+                }
             }
-            // Re-fetch after potential update for canonical trid.
-            $trid = $this->wpmlGetTridForTerm( $primary_term, $element_type );
-            if ( ! $trid ) { $trid = $existing_trid; }
-            $translated_term = get_term( $translated_term_id, $taxonomy );
-            if ( $translated_term && ! is_wp_error( $translated_term ) ) {
-                // is_primary = false → source_language_code = $this->primary_lang.
-                $this->wpmlSetTermLanguage( $translated_term, $element_type, $this->secondary_lang, $trid, false );
-            }
+
+            // 2) Link the SECONDARY term into the same trid as a translation
+            //    (language=secondary, source_language_code=primary).
+            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
+                 VALUES (%s,%d,%d,%s,%s)
+                 ON DUPLICATE KEY UPDATE trid=VALUES(trid), language_code=VALUES(language_code), source_language_code=VALUES(source_language_code)",
+                $element_type, $sec_tt, $trid, $this->secondary_lang, $this->primary_lang
+            ) );
 
         } elseif ( $this->adapter === 'polylang' ) {
             $this->polylangSetTermLanguage( $primary_term_id,    $this->primary_lang );
