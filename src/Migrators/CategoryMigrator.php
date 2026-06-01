@@ -322,6 +322,7 @@ class CategoryMigrator extends AbstractMigrator {
                 if ( $existing && ! is_wp_error( $existing ) ) {
                     $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $existing->term_id );
                     $this->addTermMeta( $existing->term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
+                    $this->ensureTermPrimaryLanguage( (int) $existing->term_id, 'product_cat' );
                     $this->logger->info( "[categories] Linked existing WC term #{$existing->term_id} to OC #{$oc_id} (term_exists)." );
                     $this->reparentPendingChildren( $oc_id, (int) $existing->term_id );
                     return true;
@@ -339,6 +340,7 @@ class CategoryMigrator extends AbstractMigrator {
 
         $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
         $this->checkpoint->saveIdMap( self::MAP_KEY, $oc_id, $wc_term_id );
+        $this->ensureTermPrimaryLanguage( $wc_term_id, 'product_cat' );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
 
         $this->logger->info( sprintf(
@@ -413,6 +415,7 @@ class CategoryMigrator extends AbstractMigrator {
         }
 
         $this->addTermMeta( $wc_term_id, $oc_id, $desc, $sec_desc, $image, $pending_parent_oc_id );
+        $this->ensureTermPrimaryLanguage( $wc_term_id, 'product_cat' );
         $this->reparentPendingChildren( $oc_id, $wc_term_id );
         $this->logger->info( sprintf(
             '[categories] ↺ Updated category | WC term #%d | OC #%d | Name: "%s"',

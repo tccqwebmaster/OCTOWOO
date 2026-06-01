@@ -151,6 +151,70 @@ abstract class AbstractMigrator {
     }
 
     /**
+     * GUARANTEE a freshly-created/linked term is registered in the PRIMARY language.
+     *
+     * Relying on WPML's ambient "current language" at wp_insert_term() time is
+     * fragile: on an Arabic-admin site, or when the switch did not persist into the
+     * current PHP process, WPML assigns the new English term to Arabic — which is
+     * exactly how English categories ended up mislabeled as Arabic (and re-mislabeled
+     * on every re-run). This writes the icl_translations row directly so the term is
+     * ALWAYS in the primary language, regardless of WPML's ambient context.
+     *
+     * Idempotent: if a primary-language row already exists it is left as-is; a row
+     * in the wrong language for this exact term is corrected to primary.
+     */
+    protected function ensureTermPrimaryLanguage( int $term_id, string $taxonomy ): void {
+        if ( ! defined( 'ICL_SITEPRESS_VERSION' ) || $term_id <= 0 ) {
+            return;
+        }
+        global $wpdb;
+
+        $icl = $wpdb->prefix . 'icl_translations';
+        if ( ! $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            return;
+        }
+
+        $tt_id = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT term_taxonomy_id FROM {$wpdb->term_taxonomy} WHERE term_id = %d AND taxonomy = %s",
+            $term_id, $taxonomy
+        ) );
+        if ( $tt_id <= 0 ) {
+            return;
+        }
+
+        $et      = 'tax_' . $taxonomy;
+        $primary = $this->primaryLocale();
+
+        $existing = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            "SELECT translation_id, language_code, trid FROM `{$icl}` WHERE element_type = %s AND element_id = %d LIMIT 1",
+            $et, $tt_id
+        ) );
+
+        if ( ! $existing ) {
+            // No row — create one in the primary language with its own trid.
+            $trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert( $icl, [ // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                'element_type'         => $et,
+                'element_id'           => $tt_id,
+                'trid'                 => $trid,
+                'language_code'        => $primary,
+                'source_language_code' => null,
+            ], [ '%s', '%d', '%d', '%s', '%s' ] );
+            return;
+        }
+
+        // Row exists but is in the WRONG language for a primary-language source term —
+        // correct it (and make it a source row, not a translation).
+        if ( $existing->language_code !== $primary ) {
+            $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                [ 'language_code' => $primary, 'source_language_code' => null ],
+                [ 'translation_id' => (int) $existing->translation_id ],
+                [ '%s', '%s' ], [ '%d' ]
+            );
+        }
+    }
+
+    /**
      * Sanitise a string value for use as a WordPress post slug.
      * Preserves Arabic characters (does NOT transliterate them).
      */

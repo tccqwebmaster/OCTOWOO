@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.70
+* Fixed - ROOT CAUSE of English categories being mislabeled as Arabic on every category run. The migrator relied on WPML's ambient "current language" at wp_insert_term() time to assign the language; on an Arabic-admin site (or when the language switch did not persist into the background PHP process) WPML assigned new English terms to Arabic, and re-running re-corrupted the data each time. Added ensureTermPrimaryLanguage() which writes the icl_translations row DIRECTLY in the primary language after every create/link/update, guaranteeing English terms stay English regardless of WPML's ambient context. Applied in CategoryMigrator create + term_exists + update paths.
+
 2026-05-31 - version 2.5.69
 * Fixed - fix_term_language used the wrong primary-key column ('id') for wp_icl_translations, which is 'translation_id'. The query errored and reported 0. Corrected to translation_id in both the SELECT and the UPDATE.
 
