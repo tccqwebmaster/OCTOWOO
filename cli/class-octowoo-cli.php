@@ -936,6 +936,37 @@ class OctoWoo_CLI extends WP_CLI_Command {
      *
      * @when after_wp_load
      */
+    /**
+     * Clean up leftover 'ow-t-…' temporary-slug terms.
+     *
+     * These are duplicate translation stubs from repeated runs. For each one we look
+     * for an existing "clean" term with the SAME NAME in the same taxonomy:
+     *
+     *   • If a clean original exists (the normal case) → the ow-t- term is a
+     *     DUPLICATE: any products on it are moved to the original, its WPML row is
+     *     removed, and the duplicate term is deleted. The original (with its real
+     *     slug and SEO) is kept untouched.
+     *   • If NO clean original exists (the ow-t- term is the only copy of that name)
+     *     → its slug is repaired in place using the Arabic-preserving slug format
+     *     (NOT percent-encoded), so the URL stays readable.
+     *
+     * Runs in the terminal with no execution-time limit. DRY-RUN by default.
+     *
+     * ## OPTIONS
+     *
+     * [--taxonomy=<tax>]
+     * : Limit to one taxonomy. Default: product_cat + the active brand taxonomy.
+     *
+     * [--apply]
+     * : Actually perform the merge/repair. Without this, only reports.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo fix_slugs --taxonomy=product_cat
+     *     wp octowoo fix_slugs --taxonomy=product_cat --apply
+     *
+     * @when after_wp_load
+     */
     public function fix_slugs( array $args, array $assoc_args ): void {
         global $wpdb;
         @set_time_limit( 0 );
@@ -951,53 +982,97 @@ class OctoWoo_CLI extends WP_CLI_Command {
             }
         }
 
+        $icl     = $wpdb->prefix . 'icl_translations';
+        $has_icl = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ); // phpcs:ignore WordPress.DB
+
         WP_CLI::line( '' );
         WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
-        WP_CLI::line( '║   OctoWoo — Repair ow-t- Temp Slugs              ║' );
+        WP_CLI::line( '║   OctoWoo — Clean ow-t- Duplicate Stubs          ║' );
         WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
         WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
         WP_CLI::line( 'Taxonomies: ' . implode( ', ', $taxes ) );
         WP_CLI::line( '' );
 
-        $fixed = 0; $skipped = 0;
+        $merged = 0; $repaired = 0; $reassigned = 0; $skipped = 0;
+
         foreach ( $taxes as $tax ) {
             $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
-                "SELECT t.term_id, t.slug, t.name FROM {$wpdb->terms} t
+                "SELECT t.term_id, t.slug, t.name, tt.term_taxonomy_id AS tt_id, tt.count
+                 FROM {$wpdb->terms} t
                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                  WHERE tt.taxonomy = %s AND t.slug LIKE %s",
                 $tax, $wpdb->esc_like( 'ow-t-' ) . '%'
             ) );
 
-            WP_CLI::line( sprintf( '[%s] %d terms with ow-t- slugs', $tax, count( $rows ) ) );
+            WP_CLI::line( sprintf( '[%s] %d ow-t- terms to process', $tax, count( $rows ) ) );
 
             foreach ( $rows as $r ) {
-                $clean = sanitize_title( $r->name );
-                if ( $clean === '' || $clean === $r->slug ) { $skipped++; continue; }
+                // Find a clean (non ow-t-) term with the SAME name = the real original.
+                $orig = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                    "SELECT t.term_id, t.slug, tt.term_taxonomy_id AS tt_id
+                     FROM {$wpdb->terms} t
+                     JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
+                     WHERE tt.taxonomy = %s AND t.name = %s AND t.slug NOT LIKE %s
+                     ORDER BY tt.count DESC, t.term_id ASC LIMIT 1",
+                    $tax, $r->name, $wpdb->esc_like( 'ow-t-' ) . '%'
+                ) );
 
-                // Skip if a different term already owns the clean slug (would collide).
-                $owner = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
-                    "SELECT term_id FROM {$wpdb->terms} WHERE slug = %s AND term_id <> %d LIMIT 1",
-                    $clean, $r->term_id ) );
-                if ( $owner > 0 ) {
-                    WP_CLI::line( sprintf( '    skip #%d "%s" → "%s" (slug taken by #%d)', $r->term_id, $r->slug, $clean, $owner ) );
-                    $skipped++; continue;
+                if ( $orig ) {
+                    // DUPLICATE → merge into original and delete.
+                    WP_CLI::line( sprintf( '    merge #%d (count=%d) → original #%d "%s" [%s]',
+                        $r->term_id, $r->count, $orig->term_id, $orig->slug, $r->name ) );
+                    if ( $apply ) {
+                        if ( (int) $r->count > 0 ) {
+                            $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                                "UPDATE IGNORE {$wpdb->term_relationships} SET term_taxonomy_id=%d WHERE term_taxonomy_id=%d",
+                                $orig->tt_id, $r->tt_id ) );
+                            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->term_relationships} WHERE term_taxonomy_id=%d", $r->tt_id ) ); // phpcs:ignore WordPress.DB
+                            $reassigned += (int) $r->count;
+                        }
+                        if ( $has_icl ) {
+                            $wpdb->query( $wpdb->prepare( "DELETE FROM `{$icl}` WHERE element_type=%s AND element_id=%d", 'tax_' . $tax, $r->tt_id ) ); // phpcs:ignore WordPress.DB
+                        }
+                        wp_delete_term( (int) $r->term_id, $tax );
+                        if ( (int) $r->count > 0 ) { wp_update_term_count_now( [ (int) $orig->tt_id ], $tax ); }
+                    }
+                    $merged++;
+                } else {
+                    // UNIQUE → repair slug in place using Arabic-preserving format.
+                    $clean = $this->cleanSlug( $r->name );
+                    if ( $clean === '' || $clean === $r->slug ) { $skipped++; continue; }
+                    $owner = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                        "SELECT term_id FROM {$wpdb->terms} WHERE slug=%s AND term_id<>%d LIMIT 1", $clean, $r->term_id ) );
+                    if ( $owner > 0 ) { $skipped++; continue; }
+                    WP_CLI::line( sprintf( '    repair #%d  %s → %s   (%s)', $r->term_id, $r->slug, $clean, $r->name ) );
+                    if ( $apply ) {
+                        $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => (int) $r->term_id ] ); // phpcs:ignore WordPress.DB
+                        clean_term_cache( (int) $r->term_id, $tax );
+                    }
+                    $repaired++;
                 }
-
-                WP_CLI::line( sprintf( '    fix  #%d  %s → %s   (%s)', $r->term_id, $r->slug, $clean, $r->name ) );
-                if ( $apply ) {
-                    $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => (int) $r->term_id ] ); // phpcs:ignore WordPress.DB
-                    clean_term_cache( (int) $r->term_id, $tax );
-                }
-                $fixed++;
             }
         }
 
         WP_CLI::line( '' );
         if ( $apply ) {
-            WP_CLI::success( "Fixed {$fixed} slugs, skipped {$skipped} (collisions/empty)." );
+            WP_CLI::success( sprintf( 'Done. Merged %d duplicates (reassigned %d product links), repaired %d unique slugs, skipped %d.',
+                $merged, $reassigned, $repaired, $skipped ) );
         } else {
-            WP_CLI::warning( "DRY-RUN: would fix {$fixed} slugs, skip {$skipped}. Re-run with --apply." );
+            WP_CLI::warning( sprintf( 'DRY-RUN: would merge %d duplicates (reassign %d product links), repair %d unique slugs, skip %d. Re-run with --apply.',
+                $merged, $reassigned, $repaired, $skipped ) );
         }
+    }
+
+    /**
+     * Arabic/Unicode-preserving slug — same approach as AbstractMigrator::toSlug,
+     * so we never produce percent-encoded slugs like sanitize_title() does.
+     */
+    private function cleanSlug( string $text ): string {
+        $slug = mb_strtolower( trim( $text ), 'UTF-8' );
+        $slug = preg_replace( '/[\s\x{200B}\x{200C}\x{200D}\x{FEFF}]+/u', '-', $slug );
+        $slug = preg_replace( '/[^\p{L}\p{N}\-\.]/u', '', $slug );
+        $slug = preg_replace( '/-{2,}/', '-', $slug );
+        return trim( (string) $slug, '-' );
     }
 
 }

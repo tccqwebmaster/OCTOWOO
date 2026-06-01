@@ -2109,6 +2109,19 @@ class AjaxHandler {
      * Handles duplicate categories, duplicate brands, and orphan WPML terms.
      * Safe to run multiple times — idempotent.
      */
+    /**
+     * Arabic/Unicode-preserving slug (mirrors AbstractMigrator::toSlug).
+     * sanitize_title() percent-encodes Arabic into %d8%a7… which is ugly and bad
+     * for SEO; this keeps readable Arabic letters.
+     */
+    private function cleanArabicSlug( string $text ): string {
+        $slug = mb_strtolower( trim( $text ), 'UTF-8' );
+        $slug = preg_replace( '/[\s\x{200B}\x{200C}\x{200D}\x{FEFF}]+/u', '-', $slug );
+        $slug = preg_replace( '/[^\p{L}\p{N}\-\.]/u', '', $slug );
+        $slug = preg_replace( '/-{2,}/', '-', $slug );
+        return trim( (string) $slug, '-' );
+    }
+
     private function actionFullCleanup(): void {
         global $wpdb;
 
@@ -2194,7 +2207,7 @@ class AjaxHandler {
                 $wpdb->esc_like( 'ow-t-' ) . '%'
             ), ARRAY_A );
             foreach ( (array) $broken as $row ) {
-                $clean = sanitize_title( $row['name'] );
+                $clean = $this->cleanArabicSlug( $row['name'] );
                 if ( $clean && $clean !== $row['slug'] ) {
                     $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => (int) $row['term_id'] ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                     clean_term_cache( (int) $row['term_id'], $tax );

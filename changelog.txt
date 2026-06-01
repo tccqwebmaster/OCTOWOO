@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.66
+* Fixed - ow-t- slug cleanup was about to produce percent-encoded slugs (e.g. %d8%a7%d9%84...) because both the Full Cleanup button and fix_slugs used sanitize_title(), which URL-encodes Arabic. Both now use the Arabic-preserving slug format (matching AbstractMigrator::toSlug), keeping readable Arabic URLs.
+* Fixed - fix_slugs now correctly treats ow-t- terms that duplicate an existing clean-named term as DUPLICATES: it merges their products into the original and deletes the stub, instead of merely renaming the duplicate's slug (which left the duplicate alive). Only genuinely unique ow-t- terms get an in-place slug repair. SEO of the original term is preserved.
+
 2026-05-31 - version 2.5.65
 * Fixed - "Full Cleanup" admin button failed ("request failed") on large catalogs because the handler lacked an execution-time/memory raise that every other heavy handler in the class already has. Added set_time_limit(0) + 512M like the others.
 * Added - 'wp octowoo fix_slugs' CLI command — repairs leftover 'ow-t-…' temporary term slugs back to clean slugs from the term name, in the terminal with no web timeout. Dry-run by default; skips collisions. Use --apply to write.
