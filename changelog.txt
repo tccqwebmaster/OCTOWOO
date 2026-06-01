@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.64
+* Added - 'wp octowoo audit_translations' CLI command to diagnose and clean orphan secondary-language (Arabic) term stubs — the cause of Arabic showing far more terms than English (e.g. product_cat Arabic 287 vs English 96). Finds secondary-language terms whose translation group has no primary-language parent AND that carry no products, shows counts + a sample, and (with --apply) removes only those orphan stubs. Terms with products are never touched. Dry-run by default.
+
 2026-05-31 - version 2.5.63
 * Fixed - dedupe_terms is now strictly safe. It groups by name AND slug together, so only genuine duplicates (identical name + identical slug) are merged. Any group where a slug is shared across different brand/category names — i.e. scrambled data from an earlier bad run — is SKIPPED and reported for manual review rather than auto-merged, preventing accidental merging of distinct brands. Removed the slug-transfer step (members already share a slug) and fixed the keeper recount.
 

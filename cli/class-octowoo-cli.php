@@ -792,4 +792,120 @@ class OctoWoo_CLI extends WP_CLI_Command {
         }
     }
 
+    /**
+     * Audit (and optionally clean) orphan secondary-language term stubs.
+     *
+     * On a healthy WPML site every primary-language (English) term has exactly one
+     * secondary-language (Arabic) translation, so the counts should match. When the
+     * multilingual pass was run repeatedly it created extra Arabic term rows that are
+     * NOT linked to any English parent ("orphan stubs") — which is why Arabic shows
+     * far more terms than English. This command finds them.
+     *
+     * An Arabic term is an ORPHAN when it is EITHER:
+     *   • flagged secondary-language in icl_translations but its trid has no
+     *     primary-language row (its English parent is missing/never linked), OR
+     *   • carries no product (count 0) AND has an auto 'ow-t-…' slug AND no
+     *     product relationships — a leftover stub from a re-run.
+     *
+     * Orphans with products assigned are NEVER touched (they would be real data).
+     *
+     * DRY-RUN BY DEFAULT. Pass --apply to delete the orphan stubs.
+     *
+     * ## OPTIONS
+     *
+     * [--taxonomy=<tax>]
+     * : Taxonomy to audit. Default: product_cat.
+     *
+     * [--apply]
+     * : Delete the orphan stubs. Without this, only reports counts + samples.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo audit_translations --taxonomy=product_cat
+     *     wp octowoo audit_translations --taxonomy=product_cat --apply
+     *
+     * @when after_wp_load
+     */
+    public function audit_translations( array $args, array $assoc_args ): void {
+        global $wpdb;
+
+        $apply = isset( $assoc_args['apply'] );
+        $tax   = ! empty( $assoc_args['taxonomy'] ) ? sanitize_key( $assoc_args['taxonomy'] ) : 'product_cat';
+        $icl   = $wpdb->prefix . 'icl_translations';
+        $et    = 'tax_' . $tax;
+
+        if ( ! $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { // phpcs:ignore WordPress.DB
+            WP_CLI::error( 'WPML icl_translations table not found — nothing to audit.' );
+        }
+
+        $settings  = get_option( 'octowoo_settings', [] );
+        $primary   = $settings['multilingual']['primary_locale']   ?? 'en';
+        $secondary = $settings['multilingual']['secondary_locale'] ?? 'ar';
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Audit Orphan Translation Stubs       ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( "Taxonomy: {$tax} | Primary: {$primary} | Secondary: {$secondary}" );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( '' );
+
+        // Counts by language.
+        $by_lang = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT language_code, COUNT(*) c FROM `{$icl}` WHERE element_type=%s GROUP BY language_code", $et ) );
+        foreach ( $by_lang as $r ) { WP_CLI::line( "  {$r->language_code}: {$r->c} terms" ); }
+        WP_CLI::line( '' );
+
+        // Orphan = secondary-language row whose trid has NO primary-language row,
+        // AND the term has no products (count 0).
+        $orphans = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT tt.term_id, t.name, t.slug, tt.count, icl.element_id AS tt_id, icl.trid
+             FROM `{$icl}` icl
+             INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = icl.element_id
+             INNER JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+             WHERE icl.element_type = %s
+               AND icl.language_code = %s
+               AND tt.count = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM `{$icl}` p
+                   WHERE p.trid = icl.trid AND p.language_code = %s
+               )",
+            $et, $secondary, $primary
+        ) );
+
+        $n = count( $orphans );
+        WP_CLI::line( "Orphan {$secondary} stubs (no English parent, 0 products): {$n}" );
+        WP_CLI::line( '' );
+
+        // Show a sample so the user can sanity-check before deleting.
+        $sample = array_slice( $orphans, 0, 15 );
+        foreach ( $sample as $o ) {
+            WP_CLI::line( sprintf( '   #%d  count=%d  slug=%s  name=%s', $o->term_id, $o->count, $o->slug, $o->name ) );
+        }
+        if ( $n > count( $sample ) ) { WP_CLI::line( '   … (' . ( $n - count( $sample ) ) . ' more)' ); }
+        WP_CLI::line( '' );
+
+        if ( ! $apply ) {
+            WP_CLI::warning( "DRY-RUN: {$n} orphan stubs would be deleted. Review the sample above, then re-run with --apply." );
+            return;
+        }
+
+        $deleted = 0;
+        $bar = \WP_CLI\Utils\make_progress_bar( 'Deleting orphan stubs', max( 1, $n ) );
+        foreach ( $orphans as $o ) {
+            // Double-guard: never delete if it somehow has relationships.
+            $rel = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "SELECT COUNT(*) FROM {$wpdb->term_relationships} WHERE term_taxonomy_id = %d", $o->tt_id ) );
+            if ( $rel > 0 ) { $bar->tick(); continue; }
+
+            $wpdb->query( $wpdb->prepare( "DELETE FROM `{$icl}` WHERE element_type=%s AND element_id=%d", $et, $o->tt_id ) ); // phpcs:ignore WordPress.DB
+            wp_delete_term( (int) $o->term_id, $tax );
+            $deleted++;
+            $bar->tick();
+        }
+        $bar->finish();
+
+        WP_CLI::success( "Removed {$deleted} orphan {$secondary} stubs. {$secondary} term count should now match {$primary}." );
+    }
+
 }
