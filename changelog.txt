@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.68
+* Added - 'wp octowoo fix_term_language' CLI command to repair terms that the multilingual pass mislabeled as the secondary language. Finds secondary-flagged terms whose name has no secondary-language (Arabic) characters and that have no primary-language twin, and flips their WPML language_code back to primary (each becomes a standalone primary-language term on its own trid). Nothing is deleted and no products move — this RESTORES mislabeled English categories rather than removing them. Dry-run by default.
+
 2026-05-31 - version 2.5.67
 * Fixed - fix_slugs merge now counts and moves ACTUAL term_relationships rows instead of trusting the cached tt.count (which is stale/0 under WPML), so products on a duplicate are never orphaned when it is deleted. Dry-run now reports the real number of links that will move.
 * Added - WPML language guard: a ow-t- duplicate is only merged into an original of the SAME language. If the duplicate and candidate original are in different languages, the merge is SKIPPED and flagged for manual review — preventing Arabic products from being attached to an English category term.

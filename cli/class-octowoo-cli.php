@@ -1100,4 +1100,108 @@ class OctoWoo_CLI extends WP_CLI_Command {
         return trim( (string) $slug, '-' );
     }
 
+    /**
+     * Relabel terms that were mislabeled as the secondary language back to primary.
+     *
+     * The multilingual pass mislabeled some PRIMARY-language (English) terms as
+     * SECONDARY (Arabic) in WPML — e.g. a category named "Graphics Cards" sitting in
+     * the Arabic language bucket with no English parent. This finds secondary-flagged
+     * terms whose NAME contains NO secondary-language (Arabic) characters AND that
+     * have no same-named primary-language twin, and flips their icl_translations
+     * language_code back to the primary language. Each is moved to its OWN new trid
+     * (it becomes a standalone primary-language term), so nothing is merged or deleted.
+     *
+     * NOTHING is deleted; no products move. DRY-RUN by default.
+     *
+     * ## OPTIONS
+     *
+     * [--taxonomy=<tax>]
+     * : Taxonomy to fix. Default: product_cat.
+     *
+     * [--apply]
+     * : Write the language changes. Without this, only reports.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo fix_term_language --taxonomy=product_cat
+     *     wp octowoo fix_term_language --taxonomy=product_cat --apply
+     *
+     * @when after_wp_load
+     */
+    public function fix_term_language( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply = isset( $assoc_args['apply'] );
+        $tax   = ! empty( $assoc_args['taxonomy'] ) ? sanitize_key( $assoc_args['taxonomy'] ) : 'product_cat';
+        $icl   = $wpdb->prefix . 'icl_translations';
+        $et    = 'tax_' . $tax;
+
+        if ( ! $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ) ) { // phpcs:ignore WordPress.DB
+            WP_CLI::error( 'WPML icl_translations table not found.' );
+        }
+
+        $settings  = get_option( 'octowoo_settings', [] );
+        $primary   = $settings['multilingual']['primary_locale']   ?? 'en';
+        $secondary = $settings['multilingual']['secondary_locale'] ?? 'ar';
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Relabel Mislabeled Terms             ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( "Taxonomy: {$tax} | Primary: {$primary} | Secondary: {$secondary}" );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( '' );
+
+        // Secondary-flagged terms whose name has NO Arabic characters AND no primary twin of the same name.
+        $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT t.term_id, t.name, t.slug, tt.term_taxonomy_id AS tt_id, icl.id AS icl_id, icl.trid
+             FROM `{$icl}` icl
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = icl.element_id
+             JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+             WHERE icl.element_type = %s
+               AND icl.language_code = %s
+               AND t.name NOT REGEXP '[ء-ي]'
+               AND NOT EXISTS (
+                   SELECT 1 FROM `{$icl}` e
+                   JOIN {$wpdb->term_taxonomy} ett ON ett.term_taxonomy_id = e.element_id
+                   JOIN {$wpdb->terms} et ON et.term_id = ett.term_id
+                   WHERE e.element_type = %s AND e.language_code = %s AND et.name = t.name
+               )",
+            $et, $secondary, $et, $primary
+        ) );
+
+        $n = count( $rows );
+        WP_CLI::line( "Mislabeled {$secondary}→{$primary} terms (English-named, no {$primary} twin): {$n}" );
+        WP_CLI::line( '' );
+        foreach ( array_slice( $rows, 0, 20 ) as $r ) {
+            WP_CLI::line( sprintf( '   #%d  %s  (%s)', $r->term_id, $r->slug, $r->name ) );
+        }
+        if ( $n > 20 ) { WP_CLI::line( '   … (' . ( $n - 20 ) . ' more)' ); }
+        WP_CLI::line( '' );
+
+        if ( ! $apply ) {
+            WP_CLI::warning( "DRY-RUN: {$n} terms would be relabeled to {$primary} (own new trid). Nothing deleted. Re-run with --apply." );
+            return;
+        }
+
+        $done = 0;
+        $bar = \WP_CLI\Utils\make_progress_bar( "Relabeling to {$primary}", max( 1, $n ) );
+        foreach ( $rows as $r ) {
+            // Give each its own fresh trid as a standalone primary-language term.
+            $new_trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB
+            $wpdb->update( // phpcs:ignore WordPress.DB
+                $icl,
+                [ 'language_code' => $primary, 'source_language_code' => null, 'trid' => $new_trid ],
+                [ 'id' => (int) $r->icl_id ]
+            );
+            $done++;
+            $bar->tick();
+        }
+        $bar->finish();
+
+        WP_CLI::success( "Relabeled {$done} terms to {$primary}. They are now standalone {$primary} categories (no data lost)." );
+        WP_CLI::line( "Re-check: {$primary} count should rise by ~{$done}, {$secondary} drop by the same." );
+    }
+
 }
