@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.73
+* Fixed - linkTermTranslation could throw "Duplicate entry 'TRID-en' for key 'trid_lang'" when repairing a mislabeled primary term whose trid already contained a primary-language row. The repair now moves the term to its OWN fresh trid before flipping its language (no in-place collision). Also added a guard so that if another element already occupies (trid, secondary_lang), it is moved to its own trid first — so the secondary term can take its slot without violating the trid_lang unique key. Category translation linking is now fully collision-safe and idempotent.
+
 2026-06-01 - version 2.5.72
 * Fixed - verifyAndFixTranslationLanguage() queried wp_icl_translations using column 'id' (which does not exist; the PK is 'translation_id'), throwing a DB error for every page/post and preventing those translation language rows from being verified/fixed. Corrected the SELECT and the UPDATE WHERE to translation_id. Swept the whole codebase to confirm no other icl_translations query uses the wrong column.
 

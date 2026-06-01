@@ -2006,8 +2006,7 @@ class WpmlIntegration extends AbstractMigrator {
 
             // 1) Ensure the PRIMARY term has a source row (language=primary,
             //    source_language_code=NULL). Create with a fresh trid only if absent;
-            //    NEVER flip an existing correct English row (that is what dropped
-            //    English from the language filter before).
+            //    NEVER flip an existing correct English row.
             $pri_row = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 "SELECT translation_id, trid, language_code FROM `{$icl}` WHERE element_type=%s AND element_id=%d LIMIT 1",
                 $element_type, $pri_tt
@@ -2018,18 +2017,33 @@ class WpmlIntegration extends AbstractMigrator {
                     'element_type' => $element_type, 'element_id' => $pri_tt, 'trid' => $trid,
                     'language_code' => $this->primary_lang, 'source_language_code' => null,
                 ], [ '%s', '%d', '%d', '%s', '%s' ] );
-            } else {
+            } elseif ( $pri_row->language_code === $this->primary_lang ) {
+                // Already correct primary row — reuse its trid untouched.
                 $trid = (int) $pri_row->trid;
-                // Repair only if the primary row is in the wrong language.
-                if ( $pri_row->language_code !== $this->primary_lang ) {
-                    $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                        [ 'language_code' => $this->primary_lang, 'source_language_code' => null ],
-                        [ 'translation_id' => (int) $pri_row->translation_id ], [ '%s', '%s' ], [ '%d' ] );
-                }
+            } else {
+                // Primary row is mislabeled (e.g. flagged 'ar'). We must flip it to
+                // primary, but its current trid may ALREADY contain a primary-language
+                // row (unique key trid_lang) — flipping in place would collide. So move
+                // this row to its OWN fresh trid, then flip language. This makes the
+                // term a standalone primary-language original without clobbering anyone.
+                $trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update( $icl, // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    [ 'language_code' => $this->primary_lang, 'source_language_code' => null, 'trid' => $trid ],
+                    [ 'translation_id' => (int) $pri_row->translation_id ], [ '%s', '%s', '%d' ], [ '%d' ] );
             }
 
-            // 2) Link the SECONDARY term into the same trid as a translation
-            //    (language=secondary, source_language_code=primary).
+            // 2) Link the SECONDARY term into the same trid as a translation.
+            //    Guard against the trid_lang unique key: if some OTHER row already
+            //    occupies (trid, secondary_lang), detach it first so this term can
+            //    take the secondary slot for this group.
+            $occupant = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT translation_id FROM `{$icl}` WHERE trid=%d AND language_code=%s AND element_id<>%d LIMIT 1",
+                $trid, $this->secondary_lang, $sec_tt ) );
+            if ( $occupant > 0 ) {
+                // Move the stray occupant to its own trid so it is not lost.
+                $alt_trid = 1 + (int) $wpdb->get_var( "SELECT COALESCE(MAX(trid),0) FROM `{$icl}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                $wpdb->update( $icl, [ 'trid' => $alt_trid, 'source_language_code' => null ], [ 'translation_id' => $occupant ], [ '%d', '%s' ], [ '%d' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
             $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 "INSERT INTO `{$icl}` (element_type, element_id, trid, language_code, source_language_code)
                  VALUES (%s,%d,%d,%s,%s)
