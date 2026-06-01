@@ -689,7 +689,7 @@ class OctoWoo_CLI extends WP_CLI_Command {
 
         $icl          = $wpdb->prefix . 'icl_translations';
         $has_icl      = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ); // phpcs:ignore WordPress.DB
-        $total_groups = 0; $total_removed = 0; $total_slug_moves = 0; $total_reassigned = 0;
+        $total_groups = 0; $total_removed = 0; $total_reassigned = 0;
 
         foreach ( $taxes as $tax ) {
             // Pull every term in this taxonomy with its name, slug, and product count.
@@ -702,40 +702,55 @@ class OctoWoo_CLI extends WP_CLI_Command {
                 $tax
             ) );
 
-            // Group by name.
+            // Group by name+slug TOGETHER. We only treat rows as duplicates when
+            // they agree on BOTH — that is a true duplicate created by re-runs.
+            // Rows that share a name but have different slugs (or share a slug across
+            // different names) indicate scrambled data from an earlier bad run and
+            // are NEVER auto-merged here — merging them would destroy distinct brands.
             $groups = [];
             foreach ( $rows as $r ) {
-                $groups[ $r->name ][] = $r;
+                $key = $r->name . "\x00" . $r->slug;
+                $groups[ $key ][] = $r;
             }
 
-            foreach ( $groups as $name => $members ) {
+            // Also detect slugs shared across DIFFERENT names — flag, never touch.
+            $slug_names = [];
+            foreach ( $rows as $r ) { $slug_names[ $r->slug ][ $r->name ] = true; }
+
+            foreach ( $groups as $key => $members ) {
                 if ( count( $members ) < 2 ) { continue; }
+
+                [ $grp_name, $grp_slug ] = explode( "\x00", $key, 2 );
+
+                // Safety: if this slug is used by more than one distinct name, the
+                // data is scrambled — skip and report for manual review.
+                if ( isset( $slug_names[ $grp_slug ] ) && count( $slug_names[ $grp_slug ] ) > 1 ) {
+                    WP_CLI::warning( sprintf(
+                        'SKIPPED [%s] "%s": slug "%s" is shared by %d different names — scrambled data, not auto-merging. Review manually.',
+                        $tax, $grp_name, $grp_slug, count( $slug_names[ $grp_slug ] )
+                    ) );
+                    continue;
+                }
+
                 $total_groups++;
 
                 // Keeper = highest count (already sorted DESC), tie broken by lowest term_id.
                 $keeper = $members[0];
                 $dups   = array_slice( $members, 1 );
 
-                WP_CLI::line( sprintf( '• [%s] "%s" — %d copies, keeping #%d (count=%d, slug=%s)',
-                    $tax, $name, count( $members ), $keeper->term_id, $keeper->count, $keeper->slug ) );
+                WP_CLI::line( sprintf( '• [%s] "%s" — %d identical copies (slug=%s), keeping #%d (count=%d)',
+                    $tax, $grp_name, count( $members ), $grp_slug, $keeper->term_id, $keeper->count ) );
 
                 foreach ( $dups as $d ) {
-                    // Never remove a duplicate that still has products unless we first
-                    // move its products to the keeper.
+                    // All members share the same slug, so there is no slug to transfer;
+                    // we simply reassign any product links to the keeper, then delete.
                     $reassign = (int) $d->count;
 
-                    // SEO: if the keeper has an auto 'ow-t-' slug and the dup has a clean one, take it.
-                    $slug_move = false;
-                    if ( strpos( $keeper->slug, 'ow-t-' ) === 0 && strpos( $d->slug, 'ow-t-' ) !== 0 ) {
-                        $slug_move = true;
-                    }
+                    WP_CLI::line( sprintf( '    └ remove #%d (count=%d)%s',
+                        $d->term_id, $d->count,
+                        $reassign > 0 ? "  [reassign {$reassign} products → keeper #{$keeper->term_id}]" : '' ) );
 
-                    WP_CLI::line( sprintf( '    └ remove #%d (count=%d, slug=%s)%s%s',
-                        $d->term_id, $d->count, $d->slug,
-                        $reassign > 0 ? "  [reassign {$reassign} products → keeper]" : '',
-                        $slug_move ? '  [give its clean slug to keeper]' : '' ) );
-
-                    if ( ! $apply ) { $total_removed++; $total_reassigned += $reassign; $total_slug_moves += $slug_move ? 1 : 0; continue; }
+                    if ( ! $apply ) { $total_removed++; $total_reassigned += $reassign; continue; }
 
                     // 1) Re-point any object relationships from dup → keeper.
                     if ( $reassign > 0 ) {
@@ -749,43 +764,31 @@ class OctoWoo_CLI extends WP_CLI_Command {
                         $total_reassigned += $reassign;
                     }
 
-                    // 2) Transfer clean slug to keeper if warranted (free the dup's slug first).
-                    if ( $slug_move ) {
-                        $clean = $d->slug;
-                        $wpdb->update( $wpdb->terms, [ 'slug' => $clean . '-old-' . $d->term_id ], [ 'term_id' => $d->term_id ] ); // phpcs:ignore WordPress.DB
-                        $wpdb->update( $wpdb->terms, [ 'slug' => $clean ], [ 'term_id' => $keeper->term_id ] ); // phpcs:ignore WordPress.DB
-                        $keeper->slug = $clean;
-                        $total_slug_moves++;
-                    }
-
-                    // 3) Remove WPML translation rows for the dup.
+                    // 2) Remove WPML translation rows for the dup.
                     if ( $has_icl ) {
                         $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB
                             "DELETE FROM {$icl} WHERE element_type = %s AND element_id = %d",
                             'tax_' . $tax, $d->tt_id ) );
                     }
 
-                    // 4) Delete the duplicate term (now empty).
+                    // 3) Delete the duplicate term.
                     wp_delete_term( (int) $d->term_id, $tax );
                     $total_removed++;
-                }
-            }
 
-            if ( $apply ) {
-                // Recount the keeper terms so admin counts are accurate.
-                $keep_ids = array_map( fn( $m ) => (int) $m[0]->term_id, array_filter( $groups, fn( $g ) => count( $g ) > 0 ) );
-                if ( $keep_ids ) { wp_update_term_count_now( array_map( fn( $m ) => (int) $m[0]->tt_id, array_filter( $groups, fn($g)=>count($g)>0 ) ), $tax ); }
+                    // Recount the keeper so the admin count is accurate.
+                    if ( $reassign > 0 ) { wp_update_term_count_now( [ (int) $keeper->tt_id ], $tax ); }
+                }
             }
         }
 
         WP_CLI::line( '' );
         if ( $apply ) {
-            WP_CLI::success( sprintf( 'De-dupe complete. %d duplicate groups, %d terms removed, %d slugs preserved to keeper, %d product links reassigned.',
-                $total_groups, $total_removed, $total_slug_moves, $total_reassigned ) );
+            WP_CLI::success( sprintf( 'De-dupe complete. %d true-duplicate groups, %d terms removed, %d product links reassigned. Scrambled/inconsistent groups were skipped (see warnings above).',
+                $total_groups, $total_removed, $total_reassigned ) );
             WP_CLI::line( 'Recommended next: flush caches and re-check WPML → Taxonomy Translation.' );
         } else {
-            WP_CLI::warning( sprintf( 'DRY-RUN: would remove %d duplicates across %d groups (preserve %d clean slugs, reassign %d product links). Re-run with --apply to perform it.',
-                $total_removed, $total_groups, $total_slug_moves, $total_reassigned ) );
+            WP_CLI::warning( sprintf( 'DRY-RUN: would remove %d true duplicates across %d groups (reassign %d product links). Groups with mismatched name/slug were SKIPPED for manual review. Re-run with --apply to perform the safe merges only.',
+                $total_removed, $total_groups, $total_reassigned ) );
         }
     }
 

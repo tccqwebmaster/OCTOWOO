@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-05-31 - version 2.5.63
+* Fixed - dedupe_terms is now strictly safe. It groups by name AND slug together, so only genuine duplicates (identical name + identical slug) are merged. Any group where a slug is shared across different brand/category names — i.e. scrambled data from an earlier bad run — is SKIPPED and reported for manual review rather than auto-merged, preventing accidental merging of distinct brands. Removed the slug-transfer step (members already share a slug) and fixed the keeper recount.
+
 2026-05-31 - version 2.5.62
 * Fixed - Root-cause idempotency fix for duplicate brands/categories on re-run. Brand lookup now matches existing terms by name across ALL languages via a direct query (get_term_by only saw the current WPML language, so re-runs created duplicates). Category name-fallback now matches an existing term under ANY parent even when a parent is set, preventing duplicate 'ow-t-…' category stubs on WPML re-runs. Re-running the migration now reuses existing terms instead of multiplying them.
 * Added - 'wp octowoo dedupe_terms' CLI command to clean up existing duplicate categories/brands safely and WITHOUT SEO loss. Dry-run by default; keeps the populated term (highest product count), reassigns any product links to the keeper, transfers a clean slug to the keeper when the duplicate held it (so existing URLs/redirects survive), cleans up WPML icl_translations rows, and removes only the empty duplicates. Use --apply to execute, --taxonomy to scope.
