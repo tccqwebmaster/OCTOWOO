@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.76
+* Added - 'wp octowoo relink_categories' CLI command to re-attach products to their categories from the OpenCart source WITHOUT re-importing products. Needed after reset_categories + category re-import, which recreate category terms but leave products unassigned. Language-aware: English products link to English category terms; Arabic twin products link to the Arabic translation of the same category (falls back to the English term if no Arabic twin exists). Pure DB lookups, dry-run by default.
+
 2026-06-01 - version 2.5.75
 * Fixed - DataPurger was constructed with the config array as the first argument, but its constructor expects a Logger first (then config). This caused a fatal TypeError in the new reset_categories CLI command AND in the Full Cleanup admin button. Both now pass a Logger correctly. (The reset crashed before deleting anything, so no data was affected.)
 

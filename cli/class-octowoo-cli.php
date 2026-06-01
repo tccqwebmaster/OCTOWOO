@@ -1260,4 +1260,141 @@ class OctoWoo_CLI extends WP_CLI_Command {
         WP_CLI::line( 'Next: wp octowoo migrate --migrators=categories   (clean re-import)' );
     }
 
+    /**
+     * Re-link products to their categories from the OpenCart source — WITHOUT
+     * re-importing products. Use this after reset_categories + a category re-import,
+     * which recreates category terms but leaves products unassigned.
+     *
+     * For each row in OpenCart's product_to_category, it finds the WC product (by
+     * _octowoo_oc_id) and the WC category term (by its _octowoo_oc_id) and assigns
+     * the product to that category. Pure DB lookups; no remote downloads.
+     *
+     * DRY-RUN by default. Pass --apply to write the assignments.
+     *
+     * ## OPTIONS
+     *
+     * [--apply]
+     * : Actually assign categories. Without this, only reports counts.
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo relink_categories
+     *     wp octowoo relink_categories --apply
+     *
+     * @when after_wp_load
+     */
+    public function relink_categories( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply  = isset( $assoc_args['apply'] );
+        $config = get_option( 'octowoo_settings', [] );
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Re-link Products → Categories         ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( '' );
+
+        // OpenCart source: product_id → [category_id,...]
+        $oc = new \OctoWoo\Core\DatabaseConnector( $config['db'] ?? [] );
+        $oc_pfx = $config['db']['prefix'] ?? 'oc_';
+        $rows = $oc->fetchAll( "SELECT product_id, category_id FROM `{$oc_pfx}product_to_category`" );
+        if ( empty( $rows ) ) {
+            WP_CLI::error( 'No product_to_category rows found in the OpenCart database.' );
+        }
+        $oc_map = [];
+        foreach ( $rows as $r ) { $oc_map[ (int) $r['product_id'] ][] = (int) $r['category_id']; }
+
+        // Build OC category_id → WC term_id (from term meta), once.
+        $cat_rows = $wpdb->get_results( // phpcs:ignore WordPress.DB
+            "SELECT tm.meta_value AS oc_id, tm.term_id
+             FROM {$wpdb->termmeta} tm
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id AND tt.taxonomy='product_cat'
+             WHERE tm.meta_key='_octowoo_oc_id'"
+        );
+        $cat_map = [];
+        foreach ( $cat_rows as $cr ) { $cat_map[ (int) $cr->oc_id ] = (int) $cr->term_id; }
+
+        // Build OC product_id → WC post_id (from post meta), once.
+        $prod_rows = $wpdb->get_results( // phpcs:ignore WordPress.DB
+            "SELECT pm.meta_value AS oc_id, pm.post_id
+             FROM {$wpdb->postmeta} pm
+             JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type='product'
+             WHERE pm.meta_key='_octowoo_oc_id'"
+        );
+        $prod_map = [];
+        foreach ( $prod_rows as $pr ) { $prod_map[ (int) $pr->oc_id ][] = (int) $pr->post_id; }
+
+        // For WPML language-correct linking: map each English category term_id to its
+        // Arabic translation term_id (same trid). English products link to English
+        // terms; Arabic twin products link to the Arabic term of the same category.
+        $icl = $wpdb->prefix . 'icl_translations';
+        $has_icl = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$icl}'" ); // phpcs:ignore WordPress.DB
+        $secondary = $config['multilingual']['secondary_locale'] ?? 'ar';
+        $en_to_ar_term = [];
+        if ( $has_icl ) {
+            $pairs = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "SELECT en_tt.term_id AS en_term, ar_tt.term_id AS ar_term
+                 FROM `{$icl}` en
+                 JOIN `{$icl}` ar ON ar.trid = en.trid AND ar.element_type = en.element_type AND ar.language_code = %s
+                 JOIN {$wpdb->term_taxonomy} en_tt ON en_tt.term_taxonomy_id = en.element_id
+                 JOIN {$wpdb->term_taxonomy} ar_tt ON ar_tt.term_taxonomy_id = ar.element_id
+                 WHERE en.element_type = 'tax_product_cat' AND en.language_code = 'en'",
+                $secondary
+            ) );
+            foreach ( $pairs as $p ) { $en_to_ar_term[ (int) $p->en_term ] = (int) $p->ar_term; }
+        }
+        // Which post IDs are Arabic twins (carry _octowoo_translation_of)?
+        $ar_posts = array_map( 'intval', (array) $wpdb->get_col( // phpcs:ignore WordPress.DB
+            "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_octowoo_translation_of'"
+        ) );
+        $ar_posts = array_flip( $ar_posts );
+
+        WP_CLI::line( sprintf( 'OC products with categories: %d | WC categories mapped: %d | WC products mapped: %d | EN→AR cat pairs: %d',
+            count( $oc_map ), count( $cat_map ), count( $prod_map ), count( $en_to_ar_term ) ) );
+        WP_CLI::line( '' );
+
+        $linked = 0; $missing_cat = 0; $missing_prod = 0;
+        $bar = \WP_CLI\Utils\make_progress_bar( 'Linking', max( 1, count( $oc_map ) ) );
+
+        foreach ( $oc_map as $oc_pid => $oc_cat_ids ) {
+            $wc_post_ids = $prod_map[ $oc_pid ] ?? [];
+            if ( empty( $wc_post_ids ) ) { $missing_prod++; $bar->tick(); continue; }
+
+            $en_terms = [];
+            foreach ( array_unique( $oc_cat_ids ) as $cid ) {
+                if ( isset( $cat_map[ $cid ] ) ) { $en_terms[] = $cat_map[ $cid ]; }
+                else { $missing_cat++; }
+            }
+            if ( empty( $en_terms ) ) { $bar->tick(); continue; }
+
+            foreach ( $wc_post_ids as $pid ) {
+                if ( isset( $ar_posts[ $pid ] ) ) {
+                    // Arabic twin → use Arabic category terms where available, else English.
+                    $terms = [];
+                    foreach ( $en_terms as $t ) { $terms[] = $en_to_ar_term[ $t ] ?? $t; }
+                } else {
+                    $terms = $en_terms;
+                }
+                if ( $apply ) {
+                    wp_set_object_terms( $pid, array_values( array_unique( $terms ) ), 'product_cat', false );
+                }
+                $linked++;
+            }
+            $bar->tick();
+        }
+        $bar->finish();
+
+        WP_CLI::line( '' );
+        if ( $apply ) {
+            WP_CLI::success( sprintf( 'Linked %d products to categories. (%d OC categories had no WC term, %d OC products had no WC post.)',
+                $linked, $missing_cat, $missing_prod ) );
+        } else {
+            WP_CLI::warning( sprintf( 'DRY-RUN: would link %d products. (%d OC categories unmapped, %d OC products unmapped.) Re-run with --apply.',
+                $linked, $missing_cat, $missing_prod ) );
+        }
+    }
+
 }
