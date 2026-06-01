@@ -1521,4 +1521,95 @@ class OctoWoo_CLI extends WP_CLI_Command {
         }
     }
 
+    /**
+     * Resolve orphan Arabic categories (no English partner) two safe ways:
+     *   • RE-LINK an orphan Arabic term that shares the SAME slug as an English term
+     *     (its real twin that lost its link) into the English term's trid. Never deleted.
+     *   • DELETE an orphan Arabic term only when it has NO products (count 0) AND no
+     *     English term shares its slug (a broken junk stub).
+     * Orphans with products but no English-slug match are KEPT and reported.
+     * Dry-run by default; --apply to perform.
+     *
+     * ## OPTIONS
+     *
+     * [--apply]
+     * : Perform the re-link/delete.
+     *
+     * @when after_wp_load
+     */
+    public function pair_orphan_categories( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply  = isset( $assoc_args['apply'] );
+        $config = \OctoWoo\Admin\AdminPage::getConfig();
+        $primary   = $config['multilingual']['primary_locale']   ?? 'en';
+        $secondary = $config['multilingual']['secondary_locale'] ?? 'ar';
+        $tax = 'product_cat'; $et = 'tax_' . $tax;
+        $icl = $wpdb->prefix . 'icl_translations';
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Pair / Clean Orphan Arabic Cats       ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( '' );
+
+        $orphans = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT a.translation_id, a.trid, t.term_id, t.name, t.slug, tt.term_taxonomy_id AS tt_id, tt.count
+             FROM `{$icl}` a
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = a.element_id
+             JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+             WHERE a.element_type=%s AND a.language_code=%s
+               AND NOT EXISTS ( SELECT 1 FROM `{$icl}` b WHERE b.trid=a.trid AND b.language_code<>a.language_code )",
+            $et, $secondary
+        ) );
+
+        $relinked = 0; $deleted = 0; $skipped = 0;
+
+        foreach ( $orphans as $o ) {
+            $en = $wpdb->get_row( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                "SELECT t.term_id, tt.term_taxonomy_id AS tt_id, icl.trid
+                 FROM {$wpdb->terms} t
+                 JOIN {$wpdb->term_taxonomy} tt ON tt.term_id=t.term_id AND tt.taxonomy=%s
+                 JOIN `{$icl}` icl ON icl.element_id=tt.term_taxonomy_id AND icl.element_type=%s AND icl.language_code=%s
+                 WHERE t.slug=%s LIMIT 1",
+                $tax, $et, $primary, $o->slug
+            ) );
+
+            if ( $en ) {
+                WP_CLI::line( sprintf( '   link  AR #%d "%s" (count=%d) → EN #%d  [slug %s]', $o->term_id, $o->name, $o->count, $en->term_id, $o->slug ) );
+                if ( $apply ) {
+                    $occupied = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$icl}` WHERE trid=%d AND element_type=%s AND language_code=%s", (int) $en->trid, $et, $secondary ) ); // phpcs:ignore WordPress.DB
+                    if ( $occupied > 0 ) { WP_CLI::line( '       (skip: English already has another Arabic twin)' ); $skipped++; }
+                    else {
+                        $wpdb->update( $icl, // phpcs:ignore WordPress.DB
+                            [ 'trid' => (int) $en->trid, 'language_code' => $secondary, 'source_language_code' => $primary ],
+                            [ 'translation_id' => (int) $o->translation_id ], [ '%d', '%s', '%s' ], [ '%d' ] );
+                        $relinked++;
+                    }
+                } else { $relinked++; }
+            } else {
+                if ( (int) $o->count > 0 ) {
+                    WP_CLI::line( sprintf( '   KEEP  AR #%d "%s" (count=%d) — products but no EN twin; review', $o->term_id, $o->name, $o->count ) );
+                    $skipped++;
+                } else {
+                    WP_CLI::line( sprintf( '   del   AR #%d "%s" (count=0, slug=%s) — junk stub', $o->term_id, $o->name, $o->slug ) );
+                    if ( $apply ) {
+                        $wpdb->query( $wpdb->prepare( "DELETE FROM `{$icl}` WHERE element_type=%s AND element_id=%d", $et, (int) $o->tt_id ) ); // phpcs:ignore WordPress.DB
+                        wp_delete_term( (int) $o->term_id, $tax );
+                    }
+                    $deleted++;
+                }
+            }
+        }
+
+        if ( $apply ) {
+            clean_taxonomy_cache( $tax );
+            WP_CLI::success( sprintf( 'Done. Re-linked %d real Arabic twins, deleted %d junk stubs, skipped %d.', $relinked, $deleted, $skipped ) );
+        } else {
+            WP_CLI::warning( sprintf( 'DRY-RUN: would re-link %d, delete %d junk, skip %d. Re-run with --apply.', $relinked, $deleted, $skipped ) );
+        }
+    }
+
 }

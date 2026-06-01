@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.79
+* Added - 'wp octowoo pair_orphan_categories' CLI command. Resolves orphan Arabic categories (no English partner): RE-LINKS an orphan Arabic term to the English term that shares its exact slug (its real twin that lost its link — never deleted, even with thousands of products), and DELETES only orphan Arabic terms that have zero products AND no English slug match (broken junk stubs). Orphans with products but no slug match are kept and reported for manual review. Dry-run by default.
+
 2026-06-01 - version 2.5.78
 * Added - 'wp octowoo ensure_category_translations' CLI command. For every English category lacking an Arabic twin, it creates the Arabic term using the real Arabic name from the OpenCart source (oc_category_description, secondary language id), sharing the SAME slug as the English term (the WPML-correct approach — translations share a slug, language separated by URL prefix, so no SEO change and no need for an -ar suffix), parents it to the Arabic parent where possible, and links it via direct icl_translations into the same trid. Idempotent (skips categories that already have an Arabic twin), dry-run by default. This makes English and Arabic category counts match with proper Arabic names.
 
