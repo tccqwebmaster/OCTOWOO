@@ -1,5 +1,10 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.86
+* Added - MARKETPLACE (Blocker 3): automated unit-test suite. New phpunit.xml + tests/bootstrap.php + tests/Unit covering the most safety-critical logic — Arabic/Unicode-preserving slugs (regression guard against percent-encoding), the dedupe scramble-detection (prevents merging two different brands that share a slug), and the WPML reversed-input guard (prevents the catastrophic language flip; now verified language-agnostic). Run with `composer install && composer test`.
+* Added - New src/Core/TaxonomyTools.php: a pure, dependency-free helper holding that critical logic (cleanSlug, hasArabic, isScrambledGroup, isTempSlug, reversedInputCheck) so migrators, WP-CLI, and AJAX cleanup all share one tested implementation. AbstractMigrator::toSlug() now delegates to it. cleanSlug includes an mbstring fallback so it never fatals on minimal PHP builds.
+* Changed - composer.json version synced to current and PHP requirement raised to 8.0 to match the plugin header.
+
 2026-06-01 - version 2.5.85
 * Changed - MARKETPLACE (Blocker 5): replaced 6 raw error_log() calls (asset enqueue, settings save, recovery checkpoint reset, cron boot, SQL import) with a new WP_DEBUG-gated Logger::debugLog() helper, so a production install no longer writes unconditionally to the server error log. Diagnostics are preserved for developers who enable WP_DEBUG.
 * Fixed - WORLDWIDE: the WPML term-link "reversed inputs" safety guard was hardcoded to English-primary stores (primary_lang === 'en'). It now detects a name/language script mismatch generically, so the guard protects stores with any primary language (German, French, etc.) and only steps aside for a non-Arabic-script primary whose primary term is Arabic-named while the secondary is not.

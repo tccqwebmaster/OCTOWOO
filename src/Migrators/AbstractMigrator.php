@@ -219,17 +219,12 @@ abstract class AbstractMigrator {
      * Preserves Arabic characters (does NOT transliterate them).
      */
     protected function toSlug( string $text ): string {
-        // Preserve Arabic/Unicode characters as-is — matching OpenCart slug format.
-        // sanitize_title() URL-encodes Arabic ("ساعة" → "%d8%b3%d8%a7%d8%b9%d8%a9")
-        // producing ugly URLs. We keep Unicode letters/digits, replace spaces with
-        // hyphens, and strip only truly unsafe characters.
-        $slug = trim( $text );
-        $slug = mb_strtolower( $slug, 'UTF-8' );
-        $slug = preg_replace( '/[\s\x{200B}\x{200C}\x{200D}\x{FEFF}]+/u', '-', $slug );
-        $slug = preg_replace( '/[^\p{L}\p{N}\-\.]/u', '', $slug );
-        $slug = preg_replace( '/-{2,}/', '-', $slug );
-        $slug = trim( $slug, '-' );
-        return $slug ?: 'item-' . wp_rand( 1000, 9999 );
+        // Pure, unit-tested slug logic lives in TaxonomyTools::cleanSlug() so the
+        // migrators, CLI, and cleanup handlers all behave identically. The random
+        // fallback for empty input stays here (it needs wp_rand and must not be
+        // part of the deterministic, testable core).
+        $slug = \OctoWoo\Core\TaxonomyTools::cleanSlug( $text );
+        return $slug !== '' ? $slug : 'item-' . wp_rand( 1000, 9999 );
     }
 
     /**
