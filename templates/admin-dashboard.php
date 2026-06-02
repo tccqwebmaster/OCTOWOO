@@ -426,6 +426,19 @@ if ( $_ow_show_wizard ) {
                 </div>
             </div>
 
+            <!-- ── GROUP C2: Safety / Restore points ──────────────────────────── -->
+            <div style="margin-bottom:10px;padding:10px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;color:#15803d;letter-spacing:.5px;"><?php esc_html_e( 'Safety — Restore points', 'octowoo' ); ?></p>
+                <p style="margin:0 0 8px;font-size:11px;color:#666;"><?php esc_html_e( 'Before each cleanup/reset, a snapshot of your categories and brands is saved automatically. If an operation removed something it should not have, restore the most recent snapshot here. This is a safety net — not a replacement for a full database backup.', 'octowoo' ); ?></p>
+                <div class="ow-actions" style="gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="ow-btn-list-restore" class="ow-btn ow-btn-secondary"
+                        title="<?php esc_attr_e( 'List the automatic restore snapshots saved before destructive operations.', 'octowoo' ); ?>">
+                        🛟 <?php esc_html_e( 'View Restore Points', 'octowoo' ); ?>
+                    </button>
+                </div>
+                <div id="ow-restore-panel" style="display:none;margin-top:10px;font-size:12px;line-height:1.7;"></div>
+            </div>
+
             <!-- ── GROUP D: Controls (running migration) ─────────────────────── -->
             <div class="ow-actions" style="gap:6px;">
                 <button type="button" id="ow-btn-abort" class="ow-btn ow-btn-danger" disabled

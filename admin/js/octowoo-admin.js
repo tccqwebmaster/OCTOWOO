@@ -117,6 +117,13 @@
         return $toast;
     }
 
+    /** Minimal HTML escaper for safe innerHTML interpolation. */
+    function escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
     /**
      * In-page confirm dialog (async, returns Promise<bool>).
      * Replaces window.confirm() throughout the codebase.
@@ -185,6 +192,57 @@
         });
     }
 
+    /**
+     * Restore points (Blocker 6 UI): list automatic snapshots and offer one-click
+     * restore of the rows that a destructive operation removed.
+     */
+    function listRestorePoints() {
+        var $btn   = $('#ow-btn-list-restore');
+        var $panel = $('#ow-restore-panel');
+        $btn.prop('disabled', true).text('Loading…');
+        $panel.show().html('<em style="color:#888;">Loading restore points…</em>');
+        $.post(octoWoo.ajaxUrl, { action: 'octowoo_list_restore_points', nonce: octoWoo.nonce })
+        .done(function (r) {
+            if (!r || !r.success) { $panel.html('<span style="color:#b91c1c;">Could not load restore points.</span>'); return; }
+            var snaps = (r.data && r.data.snapshots) || [];
+            if (!snaps.length) { $panel.html('<em style="color:#888;">No restore points yet. One is created automatically before each cleanup/reset.</em>'); return; }
+            var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+                + '<thead><tr style="text-align:left;color:#666;">'
+                + '<th style="padding:4px 6px;">When (UTC)</th><th style="padding:4px 6px;">Operation</th>'
+                + '<th style="padding:4px 6px;">Terms</th><th style="padding:4px 6px;"></th></tr></thead><tbody>';
+            snaps.forEach(function (s) {
+                html += '<tr style="border-top:1px solid #e5e7eb;">'
+                    + '<td style="padding:4px 6px;white-space:nowrap;">' + escHtml(s.created) + '</td>'
+                    + '<td style="padding:4px 6px;">' + escHtml((s.label || '').replace(/^octowoo_/, '')) + '</td>'
+                    + '<td style="padding:4px 6px;">' + (s.terms | 0) + '</td>'
+                    + '<td style="padding:4px 6px;"><button type="button" class="button ow-restore-one" data-file="' + escHtml(s.file) + '">Restore</button></td>'
+                    + '</tr>';
+            });
+            html += '</tbody></table>';
+            $panel.html(html);
+        })
+        .fail(function () { $panel.html('<span style="color:#b91c1c;">Request failed.</span>'); })
+        .always(function () { $btn.prop('disabled', false).text('🛟 View Restore Points'); });
+    }
+
+    function restoreOnePoint(file) {
+        owConfirm(
+            'Restore this snapshot? Missing categories/brands, their product links and translation links will be re-inserted. Existing data is NOT overwritten or duplicated.',
+            'Yes, restore', 'Cancel'
+        ).then(function (ok) {
+            if (!ok) { return; }
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_restore_point', nonce: octoWoo.nonce, file: file })
+            .done(function (r) {
+                if (r && r.success) {
+                    showToast('✅ ' + (r.data.message || 'Restore complete.'), 'success', 9000);
+                } else {
+                    showToast((r && r.data && r.data.message) || 'Restore failed.', 'error');
+                }
+            })
+            .fail(function () { showToast('Request failed.', 'error'); });
+        });
+    }
+
     /* ════════════════════════════════════════════════════════════════════
        INIT
     ════════════════════════════════════════════════════════════════════ */
@@ -246,6 +304,10 @@
             .always(function(){$b.prop('disabled',false).text('Fix Category Slugs');});
         });
         $('#ow-btn-cleanup-ml-terms').on('click', cleanupMlTerms);
+        $('#ow-btn-list-restore').on('click', listRestorePoints);
+        $(document).on('click', '.ow-restore-one', function () {
+            restoreOnePoint($(this).data('file'));
+        });
         $('#ow-btn-rerun-seo').on('click', rerunSeoMigrator);
         $('#ow-btn-repair-order-items').on('click', repairOrderItems);
         $('#ow-btn-repair-categories').on('click', repairCategories);

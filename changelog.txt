@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.83
+* Added - Restore Points UI (completes Blocker 6). A new "Safety — Restore points" panel on the dashboard lists the automatic snapshots saved before each destructive operation and offers one-click Restore for each. Restore re-inserts only the rows that were removed (categories/brands, their product links, and WPML translation links) without overwriting or duplicating existing data. Added a small escHtml() helper for safe rendering.
+
 2026-06-01 - version 2.5.82
 * Added - MARKETPLACE SAFETY (Blocker 6): destructive-operation safety net. Before any data-changing taxonomy action (Full Reset, Full Cleanup, Fix Orphan Categories, De-duplicate Terms, Audit Purge, Fix Category Slugs) the plugin now (1) requires an explicit "I have a backup" confirmation and (2) automatically writes a JSON restore snapshot of the affected terms, term_taxonomy, product relationships, and WPML icl_translations rows to wp-content/uploads/octowoo-logs/restore/. New RestorePoint class (capture/listSnapshots/restore) can re-insert deleted rows to undo an accidental run. Two new admin-only AJAX actions (octowoo_list_restore_points, octowoo_restore_point) expose listing and one-click restore. Snapshot capture is strictly read-only so it can never itself damage data; snapshot/restore are best-effort and never block a legitimate operation.
 * Fixed - dispatcher had unreachable code after the WPML-links case and no default branch; added a proper default 'Unknown action' response.
