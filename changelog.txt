@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.80
+* Fixed - CRITICAL: dashboard "Full Cleanup" and the brand de-duplicate action grouped terms by name only, which could MERGE two genuinely different brands that happened to share a slug (scrambled data), destroying a real brand. Ported the CLI's scramble-skip guard to both the AjaxHandler actionDedupTerms() and the brand block of actionFullCleanup(): a name-group is only merged when no slug in it is also used by a DIFFERENT name elsewhere in the taxonomy; scrambled groups are skipped and reported for manual review. Brand removal count and skipped-group count are now surfaced in the result message.
+* Dev - Added DASHBOARD_AUDIT.md mapping every Recovery/Fix button to its JS handler and backend action, with the plan to convert the remaining CLI-only fixes (reset_categories, relink_categories, ensure_category_translations, pair_orphan_categories, fix_term_language) into dashboard buttons and to make heavy operations run without depending on background cron.
+
 2026-06-01 - version 2.5.79
 * Added - 'wp octowoo pair_orphan_categories' CLI command. Resolves orphan Arabic categories (no English partner): RE-LINKS an orphan Arabic term to the English term that shares its exact slug (its real twin that lost its link — never deleted, even with thousands of products), and DELETES only orphan Arabic terms that have zero products AND no English slug match (broken junk stubs). Orphans with products but no slug match are kept and reported for manual review. Dry-run by default.
 

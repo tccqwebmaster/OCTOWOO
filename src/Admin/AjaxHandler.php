@@ -2144,6 +2144,7 @@ class AjaxHandler {
         // 2. Duplicate brands.
         $brand_taxonomies = [ 'pwb-brand', 'yith_product_brand', 'product_brand', 'pa_brand', 'brand' ];
         $brand_removed    = 0;
+        $brand_skipped    = 0;
         foreach ( $brand_taxonomies as $tax ) {
             if ( ! taxonomy_exists( $tax ) ) { continue; }
             $dupes = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -2155,14 +2156,32 @@ class AjaxHandler {
                 $tax
             ), ARRAY_A );
             foreach ( (array) $dupes as $dupe ) {
-                $all_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                    "SELECT t.term_id FROM {$wpdb->terms} t
+                $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT t.term_id, t.slug FROM {$wpdb->terms} t
                      JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                      WHERE LOWER(t.name) = LOWER(%s) AND tt.taxonomy = %s
                      ORDER BY tt.count DESC, t.term_id ASC",
                     $dupe['name'], $tax
-                ) );
-                if ( count( $all_ids ) < 2 ) { continue; }
+                ), ARRAY_A );
+                if ( count( $rows ) < 2 ) { continue; }
+
+                // SAFETY GUARD: skip scrambled groups (a slug here also used by a
+                // DIFFERENT name = distinct brands wrongly sharing a slug). Merging
+                // those would destroy real brands. Same guard as actionDedupTerms.
+                $scrambled = false;
+                foreach ( $rows as $r ) {
+                    if ( strpos( $r['slug'], 'ow-t-' ) === 0 ) { continue; }
+                    $other = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                        "SELECT COUNT(*) FROM {$wpdb->terms} t2
+                         JOIN {$wpdb->term_taxonomy} tt2 ON tt2.term_id=t2.term_id AND tt2.taxonomy=%s
+                         WHERE t2.slug=%s AND LOWER(t2.name) <> LOWER(%s)",
+                        $tax, $r['slug'], $dupe['name']
+                    ) );
+                    if ( $other > 0 ) { $scrambled = true; break; }
+                }
+                if ( $scrambled ) { $brand_skipped++; continue; }
+
+                $all_ids     = array_map( static function ( $r ) { return (int) $r['term_id']; }, $rows );
                 $keep_id     = (int) $all_ids[0];
                 $delete_ids  = array_slice( $all_ids, 1 );
                 foreach ( $delete_ids as $del_id ) {
@@ -2226,12 +2245,14 @@ class AjaxHandler {
 
         wp_send_json_success( [
             'message'         => sprintf(
-                'Cleanup complete. Duplicate brands removed: %d. Orphan WPML terms removed: %d. Temp slugs fixed: %d.',
+                'Cleanup complete. Duplicate brands removed: %d%s. Orphan WPML terms removed: %d. Temp slugs fixed: %d.',
                 $brand_removed,
+                $brand_skipped > 0 ? sprintf( ' (%d scrambled groups skipped for manual review)', $brand_skipped ) : '',
                 $orphans_removed,
                 $slug_fixed
             ),
             'brands_removed'  => $brand_removed,
+            'brands_skipped'  => $brand_skipped,
             'orphans_removed' => $orphans_removed,
             'slugs_fixed'     => $slug_fixed,
         ] );
@@ -3190,6 +3211,7 @@ class AjaxHandler {
         global $wpdb;
         $taxonomy = sanitize_key( $_POST['taxonomy'] ?? 'product_brand' ); // phpcs:ignore WordPress.Security.NonceVerification
         $removed  = 0;
+        $skipped  = 0;
 
         // Find names that appear more than once.
         $dupes = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -3207,17 +3229,41 @@ class AjaxHandler {
 
         foreach ( $dupes as $dupe ) {
             // Keep the one with the most products (or lowest term_id as fallback).
-            $all_ids = $wpdb->get_col( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-                "SELECT t.term_id FROM {$wpdb->terms} t
+            $rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                "SELECT t.term_id, t.slug FROM {$wpdb->terms} t
                  JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = t.term_id
                  WHERE LOWER(t.name) = LOWER(%s) AND tt.taxonomy = %s
                  ORDER BY tt.count DESC, t.term_id ASC",
                 $dupe['name'], $taxonomy
-            ) );
+            ), ARRAY_A );
 
-            if ( count( $all_ids ) < 2 ) { continue; }
+            if ( count( $rows ) < 2 ) { continue; }
 
-            $keep_id  = (int) $all_ids[0]; // keep highest-count term
+            // SAFETY GUARD (ported from CLI v2.5.63): only merge terms that are TRUE
+            // duplicates — same name AND the same slug (or a clean ow-t variant of it).
+            // If a slug in this name-group is ALSO used by a different name elsewhere in
+            // the taxonomy, the data is scrambled (Arabic name on an unrelated English
+            // slug). Merging scrambled terms destroys distinct brands — so SKIP and let
+            // the admin review. This is the bug that previously merged different brands.
+            $slugs = array_values( array_unique( array_map(
+                static function ( $r ) { return preg_replace( '/^ow-t-\d+-\d+$/', '', $r['slug'] ) === '' ? 'ow-t' : $r['slug']; },
+                $rows
+            ) ) );
+            $scrambled = false;
+            foreach ( $rows as $r ) {
+                if ( strpos( $r['slug'], 'ow-t-' ) === 0 ) { continue; } // temp slug is fine
+                $other_name = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+                    "SELECT COUNT(*) FROM {$wpdb->terms} t2
+                     JOIN {$wpdb->term_taxonomy} tt2 ON tt2.term_id=t2.term_id AND tt2.taxonomy=%s
+                     WHERE t2.slug=%s AND LOWER(t2.name) <> LOWER(%s)",
+                    $taxonomy, $r['slug'], $dupe['name']
+                ) );
+                if ( $other_name > 0 ) { $scrambled = true; break; }
+            }
+            if ( $scrambled ) { $skipped++; continue; }
+
+            $all_ids    = array_map( static function ( $r ) { return (int) $r['term_id']; }, $rows );
+            $keep_id    = (int) $all_ids[0]; // keep highest-count term
             $delete_ids = array_slice( $all_ids, 1 );
 
             foreach ( $delete_ids as $del_id ) {
@@ -3253,8 +3299,10 @@ class AjaxHandler {
         );
 
         wp_send_json_success( [
-            'message' => "Removed {$removed} duplicate {$taxonomy} terms. Products re-assigned to kept terms.",
+            'message' => "Removed {$removed} duplicate {$taxonomy} terms. Products re-assigned to kept terms."
+                . ( $skipped > 0 ? " Skipped {$skipped} scrambled group(s) (different brands sharing a slug) for manual review." : '' ),
             'removed' => $removed,
+            'skipped' => $skipped,
         ] );
     }
 
