@@ -3,9 +3,9 @@ Contributors: octowoo
 Tags: opencart, migration, import, woocommerce, opencart-to-woocommerce
 Requires at least: 5.8
 Tested up to: 6.8
-Requires PHP: 7.4
+Requires PHP: 8.0
 Requires Plugins: woocommerce
-Stable tag: 2.5.43
+Stable tag: 2.5.80
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 WC requires at least: 6.0
