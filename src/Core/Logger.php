@@ -3,7 +3,9 @@
  * Migration logger.
  *
  * Writes structured log entries to:
- *   (a) A rotating log file in /logs/ (one file per calendar day).
+ *   (a) A rotating log file under wp-content/uploads/octowoo-logs/ (one file per
+ *       calendar day), kept OUTSIDE the plugin folder so logs survive updates and
+ *       are not web-accessible (index.html + .htaccess deny are written on create).
  *   (b) The wp_{prefix}octowoo_logs database table.
  *
  * Supports levels: DEBUG < INFO < WARNING < ERROR < SUCCESS.
@@ -145,6 +147,10 @@ class Logger {
     private function writeToFile( array $entry ): void {
         $file = $this->getLogFilePath();
 
+        // Defensive: ensure the log directory exists and is web-protected even if
+        // the activator did not run (e.g. plugin files replaced in place on update).
+        self::ensureLogDir();
+
         $context_str = ! empty( $entry['context'] )
             ? ' | ' . wp_json_encode( $entry['context'], JSON_UNESCAPED_UNICODE )
             : '';
@@ -162,6 +168,34 @@ class Logger {
         // Suppress errors on read-only filesystems (e.g. QIT sandbox, some hosts).
         // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents,WordPress.PHP.NoSilencedErrors.Discouraged
         @file_put_contents( $file, $line, FILE_APPEND | LOCK_EX );
+    }
+
+    /**
+     * Create the log directory (if missing) and drop in protection files so logs
+     * are never web-accessible. Idempotent and best-effort (read-only FS safe).
+     */
+    public static function ensureLogDir(): void {
+        $dir = OCTOWOO_LOG_DIR;
+        if ( ! is_dir( $dir ) ) {
+            if ( ! function_exists( 'wp_mkdir_p' ) || ! @wp_mkdir_p( $dir ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+                return;
+            }
+        }
+        // index.html: prevent directory listing.
+        $index = $dir . 'index.html';
+        if ( ! file_exists( $index ) ) {
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents,WordPress.PHP.NoSilencedErrors.Discouraged
+            @file_put_contents( $index, '<!-- Silence is golden. -->' );
+        }
+        // .htaccess: deny direct access on Apache (logs can contain store data).
+        $htaccess = $dir . '.htaccess';
+        if ( ! file_exists( $htaccess ) ) {
+            $rules = "# OctoWoo logs — deny all web access\n"
+                . "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n"
+                . "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n";
+            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents,WordPress.PHP.NoSilencedErrors.Discouraged
+            @file_put_contents( $htaccess, $rules );
+        }
     }
 
     /**

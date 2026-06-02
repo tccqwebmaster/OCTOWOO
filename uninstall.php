@@ -28,15 +28,38 @@ foreach ( $tables as $table ) {
 // Remove all plugin options.
 $wpdb->query( "DELETE FROM `{$wpdb->options}` WHERE `option_name` LIKE 'octowoo_%'" );
 
-// Remove log files.
-$log_dir = plugin_dir_path( __FILE__ ) . 'logs/';
-if ( is_dir( $log_dir ) ) {
-    $files = glob( $log_dir . '*.log' );
-    if ( $files ) {
-        foreach ( $files as $file ) {
-            if ( is_file( $file ) ) {
-                @unlink( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
-            }
+// Remove plugin transients (both normal and timeout rows).
+$wpdb->query( "DELETE FROM `{$wpdb->options}` WHERE `option_name` LIKE '\_transient\_octowoo\_%' OR `option_name` LIKE '\_transient\_timeout\_octowoo\_%'" );
+
+// Unschedule any pending Action Scheduler / WP-Cron events we registered.
+foreach ( [ 'octowoo_run_chunk', 'octowoo_cron_import', 'octowoo_process_queue' ] as $hook ) {
+    $ts = wp_next_scheduled( $hook );
+    while ( $ts ) {
+        wp_unschedule_event( $ts, $hook );
+        $ts = wp_next_scheduled( $hook );
+    }
+    if ( function_exists( 'as_unschedule_all_actions' ) ) {
+        as_unschedule_all_actions( $hook );
+    }
+}
+
+// Remove log files from BOTH the new uploads location and the legacy in-plugin
+// folder. Never touches anything outside our own log directories.
+$log_dirs = [];
+$uploads  = function_exists( 'wp_upload_dir' ) ? wp_upload_dir( null, false ) : null;
+if ( is_array( $uploads ) && ! empty( $uploads['basedir'] ) ) {
+    $log_dirs[] = trailingslashit( $uploads['basedir'] ) . 'octowoo-logs/';
+}
+$log_dirs[] = plugin_dir_path( __FILE__ ) . 'logs/'; // legacy.
+
+foreach ( $log_dirs as $log_dir ) {
+    if ( ! is_dir( $log_dir ) ) {
+        continue;
+    }
+    foreach ( (array) glob( $log_dir . '*' ) as $file ) {
+        if ( is_file( $file ) ) {
+            @unlink( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors,WordPress.WP.AlternativeFunctions
         }
     }
+    @rmdir( $log_dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors,WordPress.WP.AlternativeFunctions
 }

@@ -411,15 +411,21 @@ class Validator {
     private function checkLogDirectory(): array {
         $log_dir = OCTOWOO_LOG_DIR;
 
+        // Attempt to create it on the fly so a fresh install passes without a
+        // separate activator run (e.g. updated in place).
+        if ( ! is_dir( $log_dir ) && class_exists( '\OctoWoo\Core\Logger' ) ) {
+            \OctoWoo\Core\Logger::ensureLogDir();
+        }
+
         if ( is_dir( $log_dir ) && is_writable( $log_dir ) ) {
             return $this->result( self::STATUS_PASS, __( 'Log directory is writable.', 'octowoo' ) );
         }
 
         return $this->result(
             self::STATUS_WARNING,
-            __( 'Log directory is not writable. File logging will be disabled.', 'octowoo' ),
+            __( 'Log directory is not writable. File logging will be disabled (database logging is unaffected).', 'octowoo' ),
             $log_dir,
-            __( 'Run the plugin activator once or ensure the web server can write to the /logs/ directory.', 'octowoo' )
+            __( 'Ensure the web server can write to the wp-content/uploads/octowoo-logs/ directory.', 'octowoo' )
         );
     }
 

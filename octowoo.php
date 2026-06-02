@@ -9,7 +9,7 @@
  *                    Rank Math SEO, and more) into WooCommerce. Supports batch processing,
  *                    resume, dry-run, background mode (Action Scheduler), cron auto-import,
  *                    WP-CLI, settings export/import, email reports, and an add-on hook system.
- * Version:           2.5.80
+ * Version:           2.5.81
  * Requires at least: 5.8
  * Requires PHP:      8.0
  * Requires Plugins:  woocommerce
@@ -27,11 +27,34 @@
 defined( 'ABSPATH' ) || exit;
 
 // ── Plugin constants ──────────────────────────────────────────────────────────
-define( 'OCTOWOO_VERSION',    '2.5.80' );
+define( 'OCTOWOO_VERSION',    '2.5.81' );
 define( 'OCTOWOO_FILE',       __FILE__ );
 define( 'OCTOWOO_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'OCTOWOO_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
-define( 'OCTOWOO_LOG_DIR',    OCTOWOO_PLUGIN_DIR . 'logs/' );
+
+/**
+ * Log directory.
+ *
+ * Logs MUST live OUTSIDE the plugin folder: the plugin directory is wiped on
+ * every update (logs would be lost) and writing into wp-content/plugins/ is a
+ * security/permissions concern flagged by the WooCommerce Marketplace review.
+ *
+ * Primary location: wp-content/uploads/octowoo-logs/ (per-site on multisite).
+ * The directory is created and protected (index.html + .htaccess deny) by the
+ * activator and, defensively, on first write. If the uploads dir is somehow
+ * unavailable this early, fall back to the legacy in-plugin path so logging
+ * never fatals — DB logging remains the primary store regardless.
+ */
+if ( ! defined( 'OCTOWOO_LOG_DIR' ) ) {
+	$octowoo_uploads = function_exists( 'wp_upload_dir' ) ? wp_upload_dir( null, false ) : null;
+	if ( is_array( $octowoo_uploads ) && empty( $octowoo_uploads['error'] ) && ! empty( $octowoo_uploads['basedir'] ) ) {
+		define( 'OCTOWOO_LOG_DIR', trailingslashit( $octowoo_uploads['basedir'] ) . 'octowoo-logs/' );
+	} else {
+		// Last-resort fallback (read-only/early-boot edge cases).
+		define( 'OCTOWOO_LOG_DIR', OCTOWOO_PLUGIN_DIR . 'logs/' );
+	}
+	unset( $octowoo_uploads );
+}
 
 /**
  * PSR-4 autoloader.

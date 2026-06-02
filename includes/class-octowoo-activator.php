@@ -108,36 +108,29 @@ class OctoWoo_Activator {
     // ── Filesystem ────────────────────────────────────────────────────────────
 
     private static function create_log_dir(): void {
-        $log_dir = OCTOWOO_PLUGIN_DIR . 'logs/';
+        // Canonical creation + web-protection lives in Logger::ensureLogDir(), which
+        // uses OCTOWOO_LOG_DIR (now under wp-content/uploads/octowoo-logs/). Single
+        // source of truth so activation and runtime stay consistent.
+        if ( class_exists( '\OctoWoo\Core\Logger' ) ) {
+            \OctoWoo\Core\Logger::ensureLogDir();
+        }
 
-        // QIT and some hosting environments mount the plugin directory read-only.
-        // All filesystem operations are best-effort — failures are silent so the
-        // plugin activates cleanly even when the logs/ directory cannot be created.
-        if ( ! is_dir( $log_dir ) ) {
-            // wp_mkdir_p returns false on failure — no exception thrown.
-            if ( ! @wp_mkdir_p( $log_dir ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-                // Filesystem is read-only or permissions denied. Log to PHP error log
-                // but do not surface a PHP warning to the end user.
-                return;
+        // One-time migration: move any legacy logs from the old in-plugin folder
+        // (wp-content/plugins/octowoo/logs/) to the new uploads location, then
+        // remove the old folder so the plugin directory stays clean.
+        $legacy = OCTOWOO_PLUGIN_DIR . 'logs/';
+        $target = OCTOWOO_LOG_DIR;
+        if ( is_dir( $legacy ) && rtrim( $legacy, '/\\' ) !== rtrim( $target, '/\\' ) && is_dir( $target ) && is_writable( $target ) ) {
+            foreach ( (array) glob( $legacy . '*.log' ) as $old ) {
+                $dest = $target . basename( $old );
+                if ( ! file_exists( $dest ) ) {
+                    @rename( $old, $dest ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged,WordPress.WP.AlternativeFunctions
+                }
             }
-        }
-
-        // Only attempt to write protection files if the directory is writable.
-        if ( ! is_writable( $log_dir ) ) {
-            return;
-        }
-
-        // Prevent direct browsing.
-        $htaccess = $log_dir . '.htaccess';
-        if ( ! file_exists( $htaccess ) ) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-            @file_put_contents( $htaccess, "Options -Indexes\nDeny from all\n" ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-        }
-
-        $index = $log_dir . 'index.html';
-        if ( ! file_exists( $index ) ) {
-            // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-            @file_put_contents( $index, '' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+            // Remove leftover protection files + empty legacy dir (best-effort).
+            @unlink( $legacy . '.htaccess' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged,WordPress.WP.AlternativeFunctions
+            @unlink( $legacy . 'index.html' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged,WordPress.WP.AlternativeFunctions
+            @rmdir( $legacy ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged,WordPress.WP.AlternativeFunctions
         }
     }
 
