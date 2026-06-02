@@ -96,6 +96,9 @@ class AjaxHandler {
             'octowoo_clear_cron_lock',
             'octowoo_full_cleanup',
             'octowoo_repair_wpml_arabic_links',
+            // v2.5.82: restore points (destructive-op safety net).
+            'octowoo_list_restore_points',
+            'octowoo_restore_point',
         ];
 
         foreach ( $actions as $action ) {
@@ -128,6 +131,7 @@ class AjaxHandler {
         $admin_only = [
             'octowoo_reset_migration',
             'octowoo_drop_sql',
+            'octowoo_restore_point',
         ];
         $is_force_purge = ( $action === 'octowoo_purge_imported' )
             && ! empty( $_POST['force'] ); // phpcs:ignore WordPress.Security.NonceVerification
@@ -139,6 +143,40 @@ class AjaxHandler {
                 [ 'message' => __( 'This action requires Administrator permissions.', 'octowoo' ) ],
                 403
             );
+        }
+
+        // ── Blocker 6: destructive-operation safety net ───────────────────────
+        // These actions delete or relabel store taxonomy data. Require an explicit
+        // backup acknowledgement, then capture an automatic restore snapshot of the
+        // affected taxonomies BEFORE the operation runs. The snapshot is read-only
+        // to capture and lets the admin undo an accidental run.
+        $destructive_terms = [
+            'octowoo_reset_migration'   => [ 'product_cat', 'product_brand', 'product_tag' ],
+            'octowoo_full_cleanup'      => [ 'product_cat', 'product_brand' ],
+            'octowoo_dedup_terms'       => [ sanitize_key( $_POST['taxonomy'] ?? 'product_brand' ) ], // phpcs:ignore WordPress.Security.NonceVerification
+            'octowoo_cleanup_ml_terms'  => [ 'product_cat', 'product_brand' ],
+            'octowoo_audit_purge'       => [ 'product_cat', 'product_brand' ],
+            'octowoo_fix_term_slugs'    => [ 'product_cat', 'product_brand' ],
+        ];
+        if ( isset( $destructive_terms[ $action ] ) ) {
+            // (1) Backup gate — caller must pass backup_confirmed=1.
+            $confirmed = ! empty( $_POST['backup_confirmed'] ); // phpcs:ignore WordPress.Security.NonceVerification
+            if ( ! $confirmed ) {
+                wp_send_json_error( [
+                    'message'       => __( 'This operation changes or deletes catalog data. Please take a database backup first, then confirm to continue.', 'octowoo' ),
+                    'needs_backup'  => true,
+                    'action'        => $action,
+                ] );
+            }
+            // (2) Auto restore-point snapshot (best-effort; never blocks the op).
+            try {
+                $snap = \OctoWoo\Core\RestorePoint::capture( $destructive_terms[ $action ], $action );
+                if ( $snap ) {
+                    update_option( 'octowoo_last_restore_point', basename( $snap ), false );
+                }
+            } catch ( \Throwable $e ) {
+                // Snapshot failure must not prevent a legitimate operation.
+            }
         }
 
         // Lightweight request logging to aid debugging (non-blocking).
@@ -334,6 +372,24 @@ class AjaxHandler {
             case 'octowoo_repair_wpml_arabic_links':
                 $this->actionRepairWpmlArabicLinks();
                 break;
+
+            case 'octowoo_list_restore_points':
+                wp_send_json_success( [
+                    'snapshots' => \OctoWoo\Core\RestorePoint::listSnapshots(),
+                    'last'      => get_option( 'octowoo_last_restore_point', '' ),
+                ] );
+                break;
+
+            case 'octowoo_restore_point':
+                $fname = sanitize_file_name( wp_unslash( $_POST['file'] ?? '' ) ); // phpcs:ignore WordPress.Security.NonceVerification
+                if ( '' === $fname ) {
+                    wp_send_json_error( [ 'message' => __( 'No snapshot specified.', 'octowoo' ) ] );
+                }
+                $res = \OctoWoo\Core\RestorePoint::restore( $fname );
+                wp_send_json_success( $res );
+                break;
+
+            default:
                 wp_send_json_error( [ 'message' => 'Unknown action.' ], 400 );
         }
     }

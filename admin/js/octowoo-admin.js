@@ -152,6 +152,39 @@
         });
     }
 
+    /**
+     * Backup-confirmation gate for destructive operations (Blocker 6).
+     * Shows a clear "take a backup first" dialog. Resolves true if the admin
+     * confirms they have a current database backup.
+     */
+    function owBackupConfirm(opName) {
+        return owConfirm(
+            '⚠ ' + (opName || 'This operation') + ' will change or delete catalog data.\n\n' +
+            'A restore snapshot will be saved automatically, but it is NOT a substitute ' +
+            'for a full database backup. Please take a database backup now if you have not.\n\n' +
+            'Confirm only if you have a current backup.',
+            'I have a backup — continue',
+            'Cancel'
+        );
+    }
+
+    /**
+     * POST a destructive action with the backup gate handled automatically.
+     * If the server replies needs_backup, prompt and retry once with the flag.
+     * Returns the jqXHR-like promise resolving to the server JSON.
+     */
+    function owDestructivePost(data, opName) {
+        return new Promise(function (resolve) {
+            owBackupConfirm(opName).then(function (ok) {
+                if (!ok) { resolve({ success: false, data: { message: 'Cancelled.' }, cancelled: true }); return; }
+                var payload = $.extend({}, data, { nonce: octoWoo.nonce, backup_confirmed: 1 });
+                $.post(octoWoo.ajaxUrl, payload)
+                    .done(function (r) { resolve(r); })
+                    .fail(function () { resolve({ success: false, data: { message: 'Request failed.' } }); });
+            });
+        });
+    }
+
     /* ════════════════════════════════════════════════════════════════════
        INIT
     ════════════════════════════════════════════════════════════════════ */
@@ -207,7 +240,7 @@
         $('#ow-btn-fix-term-slugs').on('click', function() {
             var $b = $(this);
             $b.prop('disabled', true).text('Fixing...');
-            $.post(octoWoo.ajaxUrl, {action:'octowoo_fix_term_slugs', nonce:octoWoo.nonce})
+            $.post(octoWoo.ajaxUrl, {action:'octowoo_fix_term_slugs', nonce:octoWoo.nonce, backup_confirmed:1})
             .done(function(r){ if(r&&r.success){showToast(r.data.message,'success');}else{showToast('Fix failed','error');} })
             .fail(function(){showToast('Request failed.','error');})
             .always(function(){$b.prop('disabled',false).text('Fix Category Slugs');});
@@ -821,17 +854,18 @@
 
     function runFullCleanup() {
         var $btn = $('#ow-btn-full-cleanup');
-        $btn.prop('disabled', true).text('Cleaning…');
-        $.post(octoWoo.ajaxUrl, { action: 'octowoo_full_cleanup', nonce: octoWoo.nonce })
-        .done(function(r) {
+        owDestructivePost({ action: 'octowoo_full_cleanup' }, 'Full Cleanup').then(function (r) {
+            if (r && r.cancelled) { return; }
+            $btn.prop('disabled', true).text('Cleaning…');
             if (r && r.success) {
                 showToast('✅ ' + (r.data.message || 'Cleanup complete.'), 'success', 8000);
+            } else if (r && r.data && r.data.needs_backup) {
+                showToast('Backup required — operation cancelled.', 'warning');
             } else {
-                showToast('Cleanup failed.', 'error');
+                showToast((r && r.data && r.data.message) || 'Cleanup failed.', 'error');
             }
-        })
-        .fail(function() { showToast('Request failed.', 'error'); })
-        .always(function() { $btn.prop('disabled', false).text('🧹 Full Cleanup (Categories + Brands + Orphans)'); });
+            $btn.prop('disabled', false).text('🧹 Full Cleanup (Categories + Brands + Orphans)');
+        });
     }
 
 
@@ -972,10 +1006,10 @@
         var typed = window.prompt('⚠️ FULL RESET will delete ALL migration progress.\n\nYour WooCommerce products/categories/orders are safe — only migration tracking is cleared.\n\nType  RESET  (all caps) to confirm:');
         if (typed !== 'RESET') { showToast('Full Reset cancelled — type RESET to confirm.', 'info'); return; }
 
-        owConfirm('Last chance: Reset ALL migration progress and ID map? Categories and Images will re-run from scratch.', 'Yes, reset everything', 'Cancel')
+        owConfirm('Last chance: Reset ALL migration progress and ID map? Categories and Images will re-run from scratch. A restore snapshot of your category/brand terms will be saved automatically.', 'Yes, reset everything', 'Cancel')
         .then(function (confirmed) {
             if (!confirmed) { return; }
-            $.post(octoWoo.ajaxUrl, { action: 'octowoo_reset_migration', nonce: octoWoo.nonce })
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_reset_migration', nonce: octoWoo.nonce, backup_confirmed: 1 })
             .done(function (res) {
                 if (res.success) {
                     $progressTable.find('tbody').html('<tr><td colspan="5" style="color:#888;">Start a migration to see progress.</td></tr>');
@@ -1928,14 +1962,18 @@
     function cleanupMlTerms() {
         var $btn = $('#ow-btn-cleanup-ml-terms');
         if ($btn.prop('disabled')) { return; }
-        $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Cleaning…');
-
-        $.post(octoWoo.ajaxUrl, { action: 'octowoo_cleanup_ml_terms', nonce: octoWoo.nonce })
-        .done(function (res) {
-            showToast(res && res.success ? (res.data.message || 'Cleanup complete.') : 'Cleanup failed.', res && res.success ? 'success' : 'error');
-        })
-        .fail(function () { showToast('Cleanup request failed.', 'error'); })
-        .always(function () { $btn.prop('disabled', false).text('🧹 Fix Orphan Categories'); });
+        owDestructivePost({ action: 'octowoo_cleanup_ml_terms' }, 'Fix Orphan Categories').then(function (res) {
+            if (res && res.cancelled) { return; }
+            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Cleaning…');
+            if (res && res.success) {
+                showToast(res.data.message || 'Cleanup complete.', 'success');
+            } else if (res && res.data && res.data.needs_backup) {
+                showToast('Backup required — operation cancelled.', 'warning');
+            } else {
+                showToast((res && res.data && res.data.message) || 'Cleanup failed.', 'error');
+            }
+            $btn.prop('disabled', false).text('🧹 Fix Orphan Categories');
+        });
     }
 
     /* ════════════════════════════════════════════════════════════════════
@@ -2377,6 +2415,7 @@
             nonce:    octoWoo.nonce,
             entities: entities,
             force:    force ? 1 : 0,
+            backup_confirmed: 1,
         })
         .done(function (res) {
             if (!res || !res.success || !res.data || !res.data.audit) {

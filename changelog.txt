@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.82
+* Added - MARKETPLACE SAFETY (Blocker 6): destructive-operation safety net. Before any data-changing taxonomy action (Full Reset, Full Cleanup, Fix Orphan Categories, De-duplicate Terms, Audit Purge, Fix Category Slugs) the plugin now (1) requires an explicit "I have a backup" confirmation and (2) automatically writes a JSON restore snapshot of the affected terms, term_taxonomy, product relationships, and WPML icl_translations rows to wp-content/uploads/octowoo-logs/restore/. New RestorePoint class (capture/listSnapshots/restore) can re-insert deleted rows to undo an accidental run. Two new admin-only AJAX actions (octowoo_list_restore_points, octowoo_restore_point) expose listing and one-click restore. Snapshot capture is strictly read-only so it can never itself damage data; snapshot/restore are best-effort and never block a legitimate operation.
+* Fixed - dispatcher had unreachable code after the WPML-links case and no default branch; added a proper default 'Unknown action' response.
+
 2026-06-01 - version 2.5.81
 * Changed - MARKETPLACE: Log files now live in wp-content/uploads/octowoo-logs/ instead of inside the plugin folder. Writing into wp-content/plugins/ is disallowed by WooCommerce Marketplace review, and in-plugin logs were wiped on every update. The directory is auto-created and web-protected (index.html + .htaccess deny) by both the activator and, defensively, on first write (new Logger::ensureLogDir()). On activation, any existing legacy logs are migrated to the new location and the old folder is removed. System Check now auto-creates the directory and reports the new path. Uninstall now removes logs from both the new and legacy locations, plus plugin transients and any scheduled Action Scheduler/WP-Cron events. Database logging (the primary store) is unchanged.
 
