@@ -1,5 +1,9 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.88
+* Fixed - RE-RUN SAFETY: the Images step previously skipped entirely once marked "complete", so re-running after adding products in OpenCart (or after some images failed to download) never picked up the new/failed images. Now a re-run re-scans when the source has more images than were processed (new products) and supports a force_images flag to re-check everything for previously-failed downloads. Per-image dedup (by OpenCart path, then MD5 hash) means already-imported images are reused instantly — never re-downloaded — so re-scans are cheap and safe. This makes the common customer workflow (periodic OpenCart updates: new products, new images) work correctly without duplicating media.
+* Note - Verified ProductMigrator re-run idempotency: existing products are matched by id_map/_octowoo_oc_id (then SKU) and updated or skipped, never duplicated; a skipped product with no thumbnail still gets its image backfilled on re-run.
+
 2026-06-01 - version 2.5.87
 * Added - 'wp octowoo relink_brands' CLI command. Re-links products to their BRAND from the OpenCart source (oc_product.manufacturer_id → WC product_brand term matched by the brand's _octowoo_oc_id) without re-importing products. Links ORIGINAL products only (brands are English-only; Arabic twins inherit the brand from their original). Idempotent — appends the brand, never removes existing terms. Supports --only-missing (touch only products with no brand) and dry-run by default. Mirrors relink_categories.
 

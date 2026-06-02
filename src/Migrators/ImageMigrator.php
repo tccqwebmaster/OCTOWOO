@@ -67,10 +67,49 @@ class ImageMigrator extends AbstractMigrator {
             return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
         }
 
+        // A previous run marked images "complete". On a RE-RUN we must NOT blindly
+        // skip: the customer may have added new products/images in OpenCart since, or
+        // some images failed to download the first time (timeout/network). Re-scan and
+        // let the per-image dedup (by OC-path, then MD5) reuse everything already in the
+        // media library for free — only genuinely new or previously-failed images do
+        // real work. We only short-circuit when there is provably nothing new to do:
+        // the source image count has not grown beyond what we already processed.
+        // A `force_images` flag (set by the "Re-run Images" recovery button / CLI
+        // --force) always re-scans.
+        $force = ! empty( $this->config['migration']['force_images'] );
         $resume_id = $this->checkpoint->getLastId( 'images' );
-        if ( $resume_id === PHP_INT_MAX ) {
-            $this->logger->info( '[images] Already completed – skipping.' );
-            return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+        if ( $resume_id === PHP_INT_MAX && ! $force ) {
+            $pfx_chk   = $this->pfx();
+            $src_count = (int) $this->oc->fetchColumn(
+                "SELECT COUNT(*) FROM (
+                    SELECT DISTINCT image AS path FROM `{$pfx_chk}product` WHERE image != '' AND image IS NOT NULL
+                    UNION SELECT DISTINCT image FROM `{$pfx_chk}product_image` WHERE image != '' AND image IS NOT NULL
+                    UNION SELECT DISTINCT image FROM `{$pfx_chk}category` WHERE image != '' AND image IS NOT NULL
+                 ) AS octowoo_img"
+            );
+            $done_count = $this->checkpoint->getProcessedCount( 'images' );
+            if ( $src_count <= $done_count ) {
+                $this->logger->info( '[images] Already completed and no new source images – skipping. (Use Re-run Images / --force to re-scan for failed downloads.)' );
+                return [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
+            }
+            // New source images exist → reset the completion so the scan below runs.
+            $this->logger->info( sprintf( '[images] Re-run: source has %d images, %d processed previously — re-scanning for new/failed images.', $src_count, $done_count ) );
+            $this->checkpoint->init( 'images', $src_count );
+            $this->checkpoint->start( 'images' );
+        } elseif ( $force && $resume_id === PHP_INT_MAX ) {
+            $this->logger->info( '[images] Force re-scan requested — re-checking every source image (already-imported ones are reused, not re-downloaded).' );
+            // Reset offset so the loop re-scans from the start; per-image dedup
+            // (by OC-path then MD5) prevents any re-download of existing images.
+            $pfx_f   = $this->pfx();
+            $count_f = (int) $this->oc->fetchColumn(
+                "SELECT COUNT(*) FROM (
+                    SELECT DISTINCT image AS path FROM `{$pfx_f}product` WHERE image != '' AND image IS NOT NULL
+                    UNION SELECT DISTINCT image FROM `{$pfx_f}product_image` WHERE image != '' AND image IS NOT NULL
+                    UNION SELECT DISTINCT image FROM `{$pfx_f}category` WHERE image != '' AND image IS NOT NULL
+                 ) AS octowoo_img"
+            );
+            $this->checkpoint->init( 'images', $count_f );
+            $this->checkpoint->start( 'images' );
         }
 
         $stats      = [ 'processed' => 0, 'skipped' => 0, 'failed' => 0 ];
