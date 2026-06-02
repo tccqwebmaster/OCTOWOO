@@ -786,13 +786,21 @@
         isRunning = false;
         migrationEpoch++;
 
-        // Clear cron lock, then start in BACKGROUND mode.
-        // Background = Action Scheduler drives chunks via WP-Cron every minute.
-        // Browser can be closed — migration continues on the server.
-        // Progress is visible by re-opening the dashboard (polls automatically).
-        $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
-        .always(function() {
-            startBackgroundMigration_multilingual();
+        // Probe cron health first. On hosts where the WP-Cron loopback stalls
+        // (very common on managed hosting), background multilingual would freeze
+        // at "Chunk-start" — so run it in the browser foreground instead, exactly
+        // like the other Recovery buttons. Only use background when cron is alive.
+        owCronHealthGate(false).then(function (choice) {
+            if (choice === 'foreground') {
+                _recoveryReset();
+                startMigration(false, false, 'multilingual', 'Multilingual Recovery (Foreground)', true);
+                return;
+            }
+            // Clear cron lock, then start in BACKGROUND mode.
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_clear_cron_lock', nonce: octoWoo.nonce })
+            .always(function() {
+                startBackgroundMigration_multilingual();
+            });
         });
     }
 
@@ -1096,38 +1104,68 @@
     /* ════════════════════════════════════════════════════════════════════
        BACKGROUND MODE (Action Scheduler)
     ════════════════════════════════════════════════════════════════════ */
+    /**
+     * Probe whether background (cron) processing actually works on this host.
+     * Resolves 'background' to proceed with background, 'foreground' to fall back
+     * to the in-browser runner, or 'cancel'.
+     */
+    function owCronHealthGate(resume) {
+        return new Promise(function (resolve) {
+            $.post(octoWoo.ajaxUrl, { action: 'octowoo_cron_health', nonce: octoWoo.nonce })
+            .done(function (r) {
+                var healthy = r && r.success && r.data && r.data.healthy;
+                if (healthy) { resolve('background'); return; }
+                var reason = (r && r.data && r.data.reason) || 'Background scheduling may not run on this host.';
+                owConfirm(
+                    '⚠ ' + reason + '\n\nRecommended: run in this browser tab instead (foreground). Keep the tab open until it finishes — it cannot stall on cron. Proceed in the browser?',
+                    'Run in browser (recommended)', 'Try background anyway'
+                ).then(function (useForeground) {
+                    resolve(useForeground ? 'foreground' : 'background');
+                });
+            })
+            .fail(function () { resolve('background'); }); // probe failed → don't block.
+        });
+    }
+
     function startBackgroundMigration(resume) {
         if (isRunning) { return; }
 
-        var confirmMsg = resume
-            ? 'Resume migration in Background mode? WooCommerce Action Scheduler will continue the run.'
-            : 'Start migration in Background mode?\n\nBatches run in the background — you can close this tab. Check back for progress.';
+        owCronHealthGate(resume).then(function (choice) {
+            if (choice === 'foreground') {
+                // Fall back to the reliable in-browser chunk runner.
+                startMigration(resume, false, buildMigrators(), 'Foreground (cron fallback)', true);
+                return;
+            }
 
-        owConfirm(confirmMsg, resume ? 'Resume in background' : 'Start in background', 'Cancel')
-        .then(function (confirmed) {
-            if (!confirmed) { return; }
+            var confirmMsg = resume
+                ? 'Resume migration in Background mode? WooCommerce Action Scheduler will continue the run.'
+                : 'Start migration in Background mode?\n\nBatches run in the background — you can close this tab. Check back for progress.';
 
-            var migrators = buildMigrators();
-            var $btn = resume ? $('#ow-btn-resume-bg') : $('#ow-btn-start-bg');
-            $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Starting…');
+            owConfirm(confirmMsg, resume ? 'Resume in background' : 'Start in background', 'Cancel')
+            .then(function (confirmed) {
+                if (!confirmed) { return; }
 
-            $.post(octoWoo.ajaxUrl, {
-                action:       'octowoo_start_background',
-                nonce:        octoWoo.nonce,
-                resume:       resume ? 1 : 0,
-                run_id:       resume ? (currentRunId || octoWoo.activeRunId || '') : '',
-                migrators:    migrators,
-                on_duplicate: $('#ow-opt-on-duplicate').val() || 'skip',
-                dry_run:      $('#ow-opt-dry-run').is(':checked') ? 1 : 0,
-                demo_limit:   0,
-            })
-            .done(function (res) {
-                if (res.success) {
-                    currentRunId = res.data.run_id || currentRunId;
-                    var bgRunId = res.data.run_id || currentRunId;
-                    showToast('Background migration started (Run: ' + (bgRunId || '').substr(0, 8) + '…). Progress updates every few seconds.', 'success', 6000);
-                    setBannerInfo('⚙ Background migration running via Action Scheduler. You can close this tab — it will continue. Check back for progress.');
-                    startPolling();
+                var migrators = buildMigrators();
+                var $btn = resume ? $('#ow-btn-resume-bg') : $('#ow-btn-start-bg');
+                $btn.prop('disabled', true).html('<span class="ow-spinner dark"></span>&nbsp; Starting…');
+
+                $.post(octoWoo.ajaxUrl, {
+                    action:       'octowoo_start_background',
+                    nonce:        octoWoo.nonce,
+                    resume:       resume ? 1 : 0,
+                    run_id:       resume ? (currentRunId || octoWoo.activeRunId || '') : '',
+                    migrators:    migrators,
+                    on_duplicate: $('#ow-opt-on-duplicate').val() || 'skip',
+                    dry_run:      $('#ow-opt-dry-run').is(':checked') ? 1 : 0,
+                    demo_limit:   0,
+                })
+                .done(function (res) {
+                    if (res.success) {
+                        currentRunId = res.data.run_id || currentRunId;
+                        var bgRunId = res.data.run_id || currentRunId;
+                        showToast('Background migration started (Run: ' + (bgRunId || '').substr(0, 8) + '…). Progress updates every few seconds.', 'success', 6000);
+                        setBannerInfo('⚙ Background migration running via Action Scheduler. You can close this tab — it will continue. Check back for progress.');
+                        startPolling();
                     $('#ow-btn-cancel-bg').prop('disabled', false);
                 } else {
                     var msg = res.data ? res.data.message : 'Could not start background migration.';
@@ -1140,6 +1178,7 @@
             .always(function () {
                 $btn.prop('disabled', false).html(resume ? '⚙ Resume in Background' : '⚙ Start in Background');
             });
+        });
         });
     }
 

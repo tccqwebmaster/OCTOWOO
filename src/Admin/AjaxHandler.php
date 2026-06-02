@@ -99,6 +99,8 @@ class AjaxHandler {
             // v2.5.82: restore points (destructive-op safety net).
             'octowoo_list_restore_points',
             'octowoo_restore_point',
+            // v2.5.84: background cron-health probe.
+            'octowoo_cron_health',
         ];
 
         foreach ( $actions as $action ) {
@@ -378,6 +380,10 @@ class AjaxHandler {
                     'snapshots' => \OctoWoo\Core\RestorePoint::listSnapshots(),
                     'last'      => get_option( 'octowoo_last_restore_point', '' ),
                 ] );
+                break;
+
+            case 'octowoo_cron_health':
+                wp_send_json_success( BackgroundProcessor::cronHealth() );
                 break;
 
             case 'octowoo_restore_point':

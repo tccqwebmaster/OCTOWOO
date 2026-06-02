@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.84
+* Added - MARKETPLACE RELIABILITY (Blocker 4): background cron-health detection with automatic foreground fallback. Many managed hosts silently fail the WP-Cron loopback, so background migrations "freeze at Chunk-start". New BackgroundProcessor::cronHealth() probes whether Action Scheduler's queue has actually run recently; new octowoo_cron_health AJAX action exposes it. Before starting ANY background migration (full Start in Background, Resume in Background, and the Re-run Multilingual recovery), the dashboard now checks cron health and, when it looks dead, recommends running in the browser foreground instead — which drives chunks directly over AJAX and cannot stall on cron. The user can still choose background anyway. Re-run Multilingual now runs in the foreground by default on hosts without working cron, fixing the most common "stuck migration" support case.
+
 2026-06-01 - version 2.5.83
 * Added - Restore Points UI (completes Blocker 6). A new "Safety — Restore points" panel on the dashboard lists the automatic snapshots saved before each destructive operation and offers one-click Restore for each. Restore re-inserts only the rows that were removed (categories/brands, their product links, and WPML translation links) without overwriting or duplicating existing data. Added a small escHtml() helper for safe rendering.
 

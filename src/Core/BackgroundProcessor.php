@@ -46,6 +46,54 @@ class BackgroundProcessor {
         return function_exists( 'as_schedule_single_action' );
     }
 
+    /**
+     * Probe whether background processing can ACTUALLY run on this host.
+     *
+     * Action Scheduler being loaded is not enough: on many managed hosts the
+     * WP-Cron loopback request silently fails, so scheduled chunks never fire and
+     * the migration "freezes at Chunk-start". This checks the real signals:
+     *   - WP-Cron not hard-disabled without a server cron replacement, and
+     *   - Action Scheduler's queue runner has executed recently (it records a
+     *     last-run timestamp), OR no claim is stuck.
+     *
+     * @return array{healthy:bool, reason:string} healthy=false means prefer foreground.
+     */
+    public static function cronHealth(): array {
+        if ( ! self::isAvailable() ) {
+            return [ 'healthy' => false, 'reason' => 'Action Scheduler not available.' ];
+        }
+
+        // WP-Cron disabled and no recent scheduler activity → loopback won't fire.
+        $cron_disabled = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
+
+        // Last time Action Scheduler's queue actually ran (it stores a lock option
+        // with the timestamp). Fresh activity = cron is alive on this host.
+        $last_run = 0;
+        foreach ( [
+            'action_scheduler_lock_async-request-runner',
+            'action_scheduler_lock_action-scheduler_run_queue',
+        ] as $opt ) {
+            $val = get_option( $opt, 0 );
+            // Lock value may be "timestamp" or "owner|timestamp".
+            if ( is_string( $val ) && str_contains( $val, '|' ) ) {
+                $parts = explode( '|', $val );
+                $val   = end( $parts );
+            }
+            $last_run = max( $last_run, (int) $val );
+        }
+        $recent = $last_run > 0 && ( time() - $last_run ) < 600; // within 10 min.
+
+        if ( $cron_disabled && ! $recent ) {
+            return [ 'healthy' => false, 'reason' => 'WP-Cron is disabled and no server cron activity was detected. Background mode will stall — use the in-browser (foreground) runner, or configure a real server cron.' ];
+        }
+        if ( ! $recent && $last_run === 0 ) {
+            // Never observed a run. Inconclusive rather than definitely broken —
+            // but on the cautious side for migrations, recommend foreground.
+            return [ 'healthy' => false, 'reason' => 'No recent background-scheduler activity detected on this host. To avoid a stalled migration, the in-browser (foreground) runner is recommended.' ];
+        }
+        return [ 'healthy' => true, 'reason' => 'Background scheduler is active.' ];
+    }
+
     // ── Registration ──────────────────────────────────────────────────────────
 
     /**
