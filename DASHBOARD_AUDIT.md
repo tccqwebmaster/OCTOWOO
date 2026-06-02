@@ -36,7 +36,7 @@ cron stalls → background runs freeze at "Chunk-start". Foreground recovery but
 7. fix_slugs (ow-t- merge)                                  → verify Full Cleanup uses it
 
 ## Plan (one at a time, each: backend method → register action → JS handler → button → lint → version → commit)
-- [ ] STEP 1: Upgrade Full Cleanup to call today's perfected logic (dedupe + fix_slugs + pair_orphan + audit_purge) with a DRY-RUN preview + report. One safe button = most customer value.
+- [~] STEP 1 (in progress, v2.5.80): Fixed the CRITICAL danger first — dashboard Full Cleanup + actionDedupTerms could merge DIFFERENT brands sharing a slug. Ported the scramble-skip guard from CLI. STILL TODO for Step 1: add a DRY-RUN preview/report to Full Cleanup, and route its ow-t slug handling through the MERGE logic (not rename).
 - [ ] STEP 2: Add "Reset Categories Only" button (reset_categories).
 - [ ] STEP 3: Add "Rebuild Product→Category Links" (relink_categories) — verify vs repair_categories.
 - [ ] STEP 4: Add "Create Missing Arabic Category Twins" (ensure_category_translations).
