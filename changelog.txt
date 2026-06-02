@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.87
+* Added - 'wp octowoo relink_brands' CLI command. Re-links products to their BRAND from the OpenCart source (oc_product.manufacturer_id → WC product_brand term matched by the brand's _octowoo_oc_id) without re-importing products. Links ORIGINAL products only (brands are English-only; Arabic twins inherit the brand from their original). Idempotent — appends the brand, never removes existing terms. Supports --only-missing (touch only products with no brand) and dry-run by default. Mirrors relink_categories.
+
 2026-06-01 - version 2.5.86
 * Added - MARKETPLACE (Blocker 3): automated unit-test suite. New phpunit.xml + tests/bootstrap.php + tests/Unit covering the most safety-critical logic — Arabic/Unicode-preserving slugs (regression guard against percent-encoding), the dedupe scramble-detection (prevents merging two different brands that share a slug), and the WPML reversed-input guard (prevents the catastrophic language flip; now verified language-agnostic). Run with `composer install && composer test`.
 * Added - New src/Core/TaxonomyTools.php: a pure, dependency-free helper holding that critical logic (cleanSlug, hasArabic, isScrambledGroup, isTempSlug, reversedInputCheck) so migrators, WP-CLI, and AJAX cleanup all share one tested implementation. AbstractMigrator::toSlug() now delegates to it. cleanSlug includes an mbstring fallback so it never fatals on minimal PHP builds.

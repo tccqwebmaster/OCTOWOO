@@ -1400,6 +1400,130 @@ class OctoWoo_CLI extends WP_CLI_Command {
     }
 
     /**
+     * Re-link products to their BRAND (manufacturer) from the OpenCart source,
+     * without re-importing products. Reads oc_product.manufacturer_id, maps it to
+     * the WooCommerce product_brand term (matched by the brand term's
+     * _octowoo_oc_id meta), and assigns it to the matching WC product(s).
+     *
+     * Brands are English-only here, so ONLY original (non-translation) products are
+     * linked; Arabic twins correctly inherit the brand from their English original.
+     * Idempotent: APPENDS the brand (does not remove existing terms), so re-running
+     * is safe. Dry-run by default.
+     *
+     * ## OPTIONS
+     *
+     * [--apply]
+     * : Actually assign the brand terms.
+     *
+     * [--only-missing]
+     * : Only touch products that currently have NO brand (faster, surgical).
+     *
+     * ## EXAMPLES
+     *
+     *     wp octowoo relink_brands
+     *     wp octowoo relink_brands --only-missing --apply
+     *
+     * @when after_wp_load
+     */
+    public function relink_brands( array $args, array $assoc_args ): void {
+        global $wpdb;
+        @set_time_limit( 0 );
+
+        $apply        = isset( $assoc_args['apply'] );
+        $only_missing = isset( $assoc_args['only-missing'] );
+        $config       = \OctoWoo\Admin\AdminPage::getConfig();
+
+        WP_CLI::line( '' );
+        WP_CLI::line( '╔══════════════════════════════════════════════════╗' );
+        WP_CLI::line( '║   OctoWoo — Re-link Products → Brand              ║' );
+        WP_CLI::line( '╚══════════════════════════════════════════════════╝' );
+        WP_CLI::line( $apply ? 'Mode: APPLY' : 'Mode: DRY-RUN (no changes)' );
+        WP_CLI::line( $only_missing ? 'Scope: products with NO brand only' : 'Scope: all products' );
+        WP_CLI::line( '' );
+
+        // Detect the brand taxonomy in use.
+        $brand_tax = '';
+        foreach ( [ 'product_brand', 'pwb-brand', 'yith_product_brand', 'pa_brand', 'brand' ] as $t ) {
+            if ( taxonomy_exists( $t ) ) { $brand_tax = $t; break; }
+        }
+        if ( '' === $brand_tax ) { WP_CLI::error( 'No brand taxonomy found.' ); }
+
+        // OpenCart source: product_id → manufacturer_id.
+        $db_config           = $config['db'] ?? [];
+        $db_config['source'] = $config['source'] ?? 'remote';
+        $oc     = new \OctoWoo\Core\DatabaseConnector( $db_config );
+        $oc_pfx = $config['db']['prefix'] ?? 'oc_';
+        $rows   = $oc->fetchAll( "SELECT product_id, manufacturer_id FROM `{$oc_pfx}product` WHERE manufacturer_id > 0" );
+        if ( empty( $rows ) ) { WP_CLI::error( 'No products with a manufacturer found in the OpenCart database.' ); }
+        $oc_brand = [];
+        foreach ( $rows as $r ) { $oc_brand[ (int) $r['product_id'] ] = (int) $r['manufacturer_id']; }
+
+        // OC manufacturer_id → WC brand term_id (via term meta).
+        $bt_rows = $wpdb->get_results( $wpdb->prepare( // phpcs:ignore WordPress.DB
+            "SELECT tm.meta_value AS oc_id, tm.term_id
+             FROM {$wpdb->termmeta} tm
+             JOIN {$wpdb->term_taxonomy} tt ON tt.term_id = tm.term_id AND tt.taxonomy = %s
+             WHERE tm.meta_key = '_octowoo_oc_id'",
+            $brand_tax
+        ) );
+        $brand_map = [];
+        foreach ( $bt_rows as $b ) { $brand_map[ (int) $b->oc_id ] = (int) $b->term_id; }
+
+        // OC product_id → WC ORIGINAL post_id (exclude Arabic twins: brands English-only).
+        $prod_rows = $wpdb->get_results( // phpcs:ignore WordPress.DB
+            "SELECT pm.meta_value AS oc_id, pm.post_id
+             FROM {$wpdb->postmeta} pm
+             JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_type='product'
+             WHERE pm.meta_key='_octowoo_oc_id'
+               AND pm.post_id NOT IN ( SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key='_octowoo_translation_of' )"
+        );
+        $prod_map = [];
+        foreach ( $prod_rows as $pr ) { $prod_map[ (int) $pr->oc_id ][] = (int) $pr->post_id; }
+
+        WP_CLI::line( sprintf( 'Brand taxonomy: %s | OC products w/ manufacturer: %d | WC brand terms mapped: %d | WC products mapped: %d',
+            $brand_tax, count( $oc_brand ), count( $brand_map ), count( $prod_map ) ) );
+        WP_CLI::line( '' );
+
+        $linked = 0; $missing_brand = 0; $missing_prod = 0; $skipped_has = 0;
+        $bar = \WP_CLI\Utils\make_progress_bar( 'Linking brands', max( 1, count( $oc_brand ) ) );
+
+        foreach ( $oc_brand as $oc_pid => $oc_mid ) {
+            $wc_post_ids = $prod_map[ $oc_pid ] ?? [];
+            if ( empty( $wc_post_ids ) ) { $missing_prod++; $bar->tick(); continue; }
+            $term_id = $brand_map[ $oc_mid ] ?? 0;
+            if ( $term_id <= 0 ) { $missing_brand++; $bar->tick(); continue; }
+
+            foreach ( $wc_post_ids as $pid ) {
+                if ( $only_missing ) {
+                    $has = (int) $wpdb->get_var( $wpdb->prepare( // phpcs:ignore WordPress.DB
+                        "SELECT COUNT(*) FROM {$wpdb->term_relationships} tr
+                         JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy = %s
+                         WHERE tr.object_id = %d",
+                        $brand_tax, $pid
+                    ) );
+                    if ( $has > 0 ) { $skipped_has++; continue; }
+                }
+                if ( $apply ) {
+                    // APPEND (do not overwrite other brand terms if multi-brand).
+                    wp_set_object_terms( $pid, [ $term_id ], $brand_tax, true );
+                }
+                $linked++;
+            }
+            $bar->tick();
+        }
+        $bar->finish();
+
+        WP_CLI::line( '' );
+        if ( $apply ) {
+            WP_CLI::success( sprintf( 'Linked brand for %d products. (%d OC manufacturers had no WC term, %d OC products had no WC post%s.)',
+                $linked, $missing_brand, $missing_prod, $only_missing ? sprintf( ', %d already had a brand', $skipped_has ) : '' ) );
+        } else {
+            WP_CLI::warning( sprintf( 'DRY-RUN: would link %d products to a brand. (%d manufacturers unmapped, %d products unmapped%s.) Re-run with --apply.',
+                $linked, $missing_brand, $missing_prod, $only_missing ? sprintf( ', %d already have a brand', $skipped_has ) : '' ) );
+        }
+    }
+
+    /**
      * Ensure EVERY English (primary) category has a linked Arabic (secondary) twin.
      *
      * Creates the Arabic twin with the Arabic NAME from the OpenCart source (via the
