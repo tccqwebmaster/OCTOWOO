@@ -18,6 +18,20 @@ defined( 'ABSPATH' ) || exit;
 
 class Logger {
 
+    /**
+     * Lightweight static debug logger for early-boot / static contexts where a
+     * Logger instance isn't available (asset enqueue, settings save, cron boot,
+     * SQL import). Writes to PHP's error log ONLY when WP_DEBUG is enabled, so a
+     * production install stays silent — satisfying marketplace review while
+     * preserving diagnostics for developers. Never throws.
+     */
+    public static function debugLog( string $message ): void {
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
+            error_log( '[CartShift] ' . $message );
+        }
+    }
+
     // ── Log level constants ───────────────────────────────────────────────────
     const DEBUG   = 'DEBUG';
     const INFO    = 'INFO';

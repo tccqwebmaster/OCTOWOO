@@ -82,7 +82,7 @@ class AdminPage {
         } catch ( \Throwable $e ) {
             $cfg         = [];
             $cron_status = [ 'status' => 'error', 'error' => $e->getMessage() ];
-            error_log( '[CartShift] enqueueAssets error: ' . $e->getMessage() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
+            \OctoWoo\Core\Logger::debugLog( 'enqueueAssets error: ' . $e->getMessage() );
         }
 
         wp_localize_script( 'octowoo-admin', 'octoWoo', [
@@ -269,7 +269,7 @@ class AdminPage {
         } else {
             global $wpdb;
             // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
-            error_log( 'CartShift: settings save failed. DB error: ' . $wpdb->last_error );
+            \OctoWoo\Core\Logger::debugLog( 'settings save failed. DB error: ' . $wpdb->last_error );
             $redirect_params['save_error'] = '1';
         }
 

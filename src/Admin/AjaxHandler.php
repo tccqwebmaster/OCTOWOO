@@ -541,9 +541,9 @@ class AjaxHandler {
                     foreach ( $selected as $key ) {
                         $cp_reset->reset( $key );
                     }
-                    // Checkpoint reset logged via error_log for debugging.
+                    // Checkpoint reset logged via Logger::debugLog (WP_DEBUG only).
                     // phpcs:ignore WordPress.PHP.DevelopmentFunctions
-                    error_log( '[CartShift] Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
+                    \OctoWoo\Core\Logger::debugLog( 'Recovery checkpoint reset: ' . implode( ', ', $selected ) . ' run=' . $reset_run_id );
                 }
             }
         }

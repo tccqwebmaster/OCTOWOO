@@ -2016,12 +2016,21 @@ class WpmlIntegration extends AbstractMigrator {
             $pri_is_arabic = $has_arabic( (string) $primary_term->name );
             $sec_is_arabic = $has_arabic( (string) $sec_term->name );
 
-            // If primary (English) slot has an Arabic name, or the two terms are the
-            // same, the caller's mapping is wrong — do not touch language data.
+            // If primary slot has a name whose script contradicts the primary
+            // language, the caller's mapping is likely reversed — do not touch
+            // language data. We detect this generically rather than hardcoding
+            // English: the guard fires when the PRIMARY term is Arabic-named, the
+            // SECONDARY term is NOT Arabic-named, and the primary language is not
+            // itself an Arabic-script locale. (The secondary here is the Arabic
+            // translation, so an Arabic name belongs in the secondary slot.) This
+            // works for any primary language — en, de, fr, etc. — and only steps
+            // aside for the specific reversed-input pattern.
             if ( $primary_term_id === $translated_term_id ) { return; }
-            if ( $this->primary_lang === 'en' && $pri_is_arabic && ! $sec_is_arabic ) {
-                // Inputs are reversed (Arabic passed as primary, English as secondary).
-                $this->logger->warning( "[multilingual] Skipped term link: primary #{$primary_term_id} is Arabic-named but mapped as {$this->primary_lang}. Inputs look reversed — not flipping languages." );
+            $primary_is_arabic_locale = ( strncmp( (string) $this->primary_lang, 'ar', 2 ) === 0 );
+            if ( ! $primary_is_arabic_locale && $pri_is_arabic && ! $sec_is_arabic ) {
+                // Inputs are reversed (Arabic-named term passed as primary, a
+                // non-Arabic-named term passed as secondary).
+                $this->logger->warning( "[multilingual] Skipped term link: primary #{$primary_term_id} is Arabic-named but mapped as '{$this->primary_lang}'. Inputs look reversed — not flipping languages." );
                 return;
             }
 

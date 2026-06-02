@@ -128,7 +128,7 @@ class SqlImporter {
                         $result = $wpdb->query( $stmt ); // phpcs:ignore WordPress.DB.PreparedSQL
                         if ( $result === false && ! empty( $wpdb->last_error ) ) {
                             // Non-fatal: log and keep going (duplicate key errors on re-import are normal).
-                            error_log( 'CartShift SqlImporter: ' . $wpdb->last_error ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
+                            \OctoWoo\Core\Logger::debugLog( 'SqlImporter: ' . $wpdb->last_error );
                         }
                         $stmt_count++;
                     }

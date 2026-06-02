@@ -158,7 +158,7 @@ class CronManager {
 
         } catch ( \Throwable $e ) {
             // Log but don't crash WP-Cron.
-            error_log( '[CartShift Cron] Error: ' . $e->getMessage() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log,QITStandard.PHP.DebugCode.DebugFunctionFound
+            \OctoWoo\Core\Logger::debugLog( 'Cron error: ' . $e->getMessage() );
         }
     }
 
