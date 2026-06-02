@@ -770,7 +770,71 @@ class AjaxHandler {
             'paused'      => MigrationManager::checkPaused( $run_id ),
             'checkpoints' => $checkpoint->getAll(),
             'started_at'  => get_option( 'octowoo_run_started_at', '' ),
+            // Live store totals — what ACTUALLY exists in WooCommerce right now,
+            // independent of which run created it. The per-run checkpoints above can
+            // be misleading because work is often spread across many runs (and the
+            // table shows only one run_id); these counts reflect the real catalog so
+            // the customer sees "8234 products" instead of "0 / pending".
+            'store_counts' => $this->getLiveStoreCounts(),
         ] );
+    }
+
+    /**
+     * Count what actually exists in the WooCommerce store, per migrated entity.
+     * Read-only and cached briefly so polling doesn't hammer the DB.
+     *
+     * @return array<string,int> Map of entity key → current count in the store.
+     */
+    private function getLiveStoreCounts(): array {
+        $cached = get_transient( 'octowoo_store_counts' );
+        if ( is_array( $cached ) ) {
+            return $cached;
+        }
+
+        global $wpdb;
+        $counts = [];
+
+        // Posts-based entities.
+        $counts['products'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type='product' AND post_status IN ('publish','draft','private')"
+        );
+        $counts['orders'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type IN ('shop_order','shop_order_placehold')"
+        );
+        // HPOS orders (if the custom order table is in use).
+        $hpos = $wpdb->prefix . 'wc_orders';
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos ) ) ) { // phpcs:ignore WordPress.DB
+            $hpos_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$hpos}`" ); // phpcs:ignore WordPress.DB
+            $counts['orders'] = max( $counts['orders'], $hpos_count );
+        }
+        $counts['coupons'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type='shop_coupon'"
+        );
+        $counts['information'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type='page'"
+        );
+        $counts['customers'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->users}"
+        );
+        $counts['images'] = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type='attachment'"
+        );
+
+        // Taxonomy-based entities.
+        $tax_counts = $wpdb->get_results(
+            "SELECT taxonomy, COUNT(*) AS c FROM {$wpdb->term_taxonomy} GROUP BY taxonomy",
+            OBJECT_K
+        );
+        $counts['categories']    = (int) ( $tax_counts['product_cat']->c ?? 0 );
+        $counts['tags']          = (int) ( $tax_counts['product_tag']->c ?? 0 );
+        $brand_tax_count = 0;
+        foreach ( [ 'product_brand', 'pwb-brand', 'yith_product_brand', 'pa_brand' ] as $bt ) {
+            $brand_tax_count = max( $brand_tax_count, (int) ( $tax_counts[ $bt ]->c ?? 0 ) );
+        }
+        $counts['manufacturers'] = $brand_tax_count;
+
+        set_transient( 'octowoo_store_counts', $counts, 30 );
+        return $counts;
     }
 
     // ── Action: get logs ──────────────────────────────────────────────────────

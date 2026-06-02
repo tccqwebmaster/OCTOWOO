@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-01 - version 2.5.89
+* Fixed - MISLEADING PROGRESS TABLE: the dashboard showed per-run checkpoints for only ONE run_id, so entities migrated in earlier runs (or via CLI) displayed as "0 / — PENDING" even though thousands existed in the store. The progress endpoint now also returns live store counts (actual products, categories, brands, orders, customers, images, coupons, pages, tags that exist in WooCommerce right now, HPOS-aware). When a migrator shows pending/zero for the current run but the store actually contains that entity, the row now shows the real count with an "IN STORE" status instead of "PENDING 0". Counts are cached 30s to keep polling light.
+
 2026-06-01 - version 2.5.88
 * Fixed - RE-RUN SAFETY: the Images step previously skipped entirely once marked "complete", so re-running after adding products in OpenCart (or after some images failed to download) never picked up the new/failed images. Now a re-run re-scans when the source has more images than were processed (new products) and supports a force_images flag to re-check everything for previously-failed downloads. Per-image dedup (by OpenCart path, then MD5 hash) means already-imported images are reused instantly — never re-downloaded — so re-scans are cheap and safe. This makes the common customer workflow (periodic OpenCart updates: new products, new images) work correctly without duplicating media.
 * Note - Verified ProductMigrator re-run idempotency: existing products are matched by id_map/_octowoo_oc_id (then SKU) and updated or skipped, never duplicated; a skipped product with no thumbnail still gets its image backfilled on re-run.

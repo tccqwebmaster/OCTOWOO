@@ -27,6 +27,7 @@
     let isPausedState    = false;
     let currentMigrator  = '';
     let migrationEpoch   = 0;
+    let latestStoreCounts = {};  // entity key => actual count in the store (from server)
     let chunkStartTimes  = {};   // migrator => Date.now() when it started
     let chunkItemRates   = {};   // migrator => items/sec rolling average
 
@@ -710,6 +711,7 @@
             }
 
             if (data.migrator) { currentMigrator = data.migrator; }
+            if (data.store_counts) { latestStoreCounts = data.store_counts; }
             if (data.checkpoints) {
                 renderProgressTable(data.checkpoints);
                 updateETA(data.checkpoints, data.migrator, data.chunk);
@@ -1238,6 +1240,7 @@
                 });
             }
 
+            if (data.store_counts) { latestStoreCounts = data.store_counts; }
             if (data.checkpoints) { renderProgressTable(data.checkpoints); }
 
             // If server reports an active run we don't know about (e.g. Re-run
@@ -1373,8 +1376,28 @@
             if (MIGRATOR_LABELS[migKey]) { cp.label = MIGRATOR_LABELS[migKey]; }
             var processed = parseInt(cp.processed_count, 10) || 0;
             var total     = parseInt(cp.total_count, 10)     || 0;
+
+            // If this run's checkpoint shows nothing (pending / 0) but the store
+            // actually CONTAINS this entity (migrated in a different run), show the
+            // real store count instead of a misleading "0 / — PENDING". Work is often
+            // spread across many runs; the customer cares what's in the store now.
+            var storeKeyMap = {
+                categories: 'categories', products: 'products', images: 'images',
+                manufacturers: 'manufacturers', customers: 'customers', orders: 'orders',
+                coupons: 'coupons', information: 'information', tags: 'tags'
+            };
+            var storeKey = storeKeyMap[migKey];
+            var storeCount = (storeKey && latestStoreCounts && latestStoreCounts[storeKey]) ? parseInt(latestStoreCounts[storeKey], 10) : 0;
+            var fromStore = false;
+            if ((cp.status === 'pending' || (cp.status !== 'running' && processed === 0)) && storeCount > 0) {
+                processed = storeCount;
+                total = 0; // unknown source total for prior runs; show count without denominator
+                fromStore = true;
+                cp.status = 'in_store';
+            }
+
             var safe      = total > 0 ? Math.min(processed, total) : processed;
-            var pct       = total > 0 ? Math.round(safe / total * 100) : (cp.status === 'completed' ? 100 : 0);
+            var pct       = total > 0 ? Math.round(safe / total * 100) : ((cp.status === 'completed' || fromStore) ? 100 : 0);
             pct = Math.max(0, Math.min(100, pct));
             var isDone   = cp.status === 'completed';
             var isFailed = cp.status === 'failed';
@@ -1387,6 +1410,7 @@
                 aborted:   '⊘',
                 pending:   '○',
                 skipped:   '⤳',
+                in_store:  '✔',
             };
             var statusColors = {
                 completed: '#2e7d32',
@@ -1395,7 +1419,9 @@
                 aborted:   '#757575',
                 pending:   '#9e9e9e',
                 skipped:   '#ef6c00',
+                in_store:  '#2e7d32',
             };
+            var statusText = { in_store: 'IN STORE' };
 
             var icon  = statusIcons[cp.status]  || '·';
             var color = statusColors[cp.status] || '#333';
@@ -1405,8 +1431,8 @@
 
             var $tr = $('<tr>').attr('data-migrator', cp.migrator).append(
                 $('<td>').html('<strong>' + (LABEL_MAP[cp.migrator] || cp.migrator) + '</strong>'),
-                $('<td>').html('<span style="color:' + color + ';white-space:nowrap;">' + icon + ' ' + cp.status.toUpperCase() + '</span>'),
-                $('<td>').html(safe.toLocaleString() + ' / ' + (total > 0 ? total.toLocaleString() : '—') +
+                $('<td>').html('<span style="color:' + color + ';white-space:nowrap;">' + icon + ' ' + (statusText[cp.status] || cp.status.toUpperCase()) + '</span>'),
+                $('<td>').html(safe.toLocaleString() + ' / ' + (total > 0 ? total.toLocaleString() : (fromStore ? 'in store' : '—')) +
                     (cp.skipped_count > 0 ? ' <span style="color:#888;font-size:10px;" title="' + parseInt(cp.skipped_count).toLocaleString() + ' already existed in WooCommerce">(' + parseInt(cp.skipped_count).toLocaleString() + ' skipped)</span>' : '')),
                 $('<td>').html(barHtml),
                 $('<td>').html('<strong>' + pct + '%</strong>')
