@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-04 - version 2.5.90
+* Fixed - ENTITY SELECTION now strictly honoured for multilingual. Previously the multilingual/translation sync step ran whenever WPML/Polylang was enabled in Settings, regardless of which entities the user selected — so choosing "CMS Pages only" would still re-sync category (and other taxonomy) translations, touching data the user intentionally left alone. The migration config bridge now preserves an explicit run_multilingual=0 from the entity selection instead of overriding it from the global setting. Selecting specific entities without multilingual will no longer run the multilingual step.
+
 2026-06-01 - version 2.5.89
 * Fixed - MISLEADING PROGRESS TABLE: the dashboard showed per-run checkpoints for only ONE run_id, so entities migrated in earlier runs (or via CLI) displayed as "0 / — PENDING" even though thousands existed in the store. The progress endpoint now also returns live store counts (actual products, categories, brands, orders, customers, images, coupons, pages, tags that exist in WooCommerce right now, HPOS-aware). When a migrator shows pending/zero for the current run but the store actually contains that entity, the row now shows the real count with an "IN STORE" status instead of "PENDING 0". Counts are cached 30s to keep polling light.
 

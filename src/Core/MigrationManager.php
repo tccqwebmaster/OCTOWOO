@@ -616,8 +616,18 @@ class MigrationManager {
         // Bridge: multilingual.enabled → migration.run_multilingual.
         // Prevents the multilingual migrator from running silently when the user
         // has not enabled it in Settings and no explicit AJAX override was sent.
-        if ( ! isset( $overrides['migration']['run_multilingual'] ) ) {
+        //
+        // IMPORTANT: only fall back to the global setting when the caller did NOT
+        // explicitly say whether to run multilingual. When a user runs specific
+        // entities (e.g. "CMS Pages only"), the AJAX layer sends run_multilingual=0,
+        // and we MUST honour that — otherwise selecting Pages would still re-sync
+        // categories/taxonomies, touching data the user intentionally left alone.
+        $explicit_ml = isset( $overrides['migration']['run_multilingual'] );
+        if ( ! $explicit_ml ) {
             $merged['migration']['run_multilingual'] = ! empty( $merged['multilingual']['enabled'] );
+        } else {
+            // Preserve the caller's explicit choice through the merge.
+            $merged['migration']['run_multilingual'] = (bool) $overrides['migration']['run_multilingual'];
         }
 
         return $merged;
