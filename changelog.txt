@@ -1,5 +1,8 @@
 *** CartShift – OpenCart to WooCommerce Migration Changelog ***
 
+2026-06-04 - version 2.5.91
+* Fixed - MULTILINGUAL now follows the SAME entity scope as the run. Previously, when the multilingual step ran it ALWAYS processed every taxonomy/post type (categories, brands, products, pages) regardless of which entities were selected — so "Products only" would still re-sync category translations, and any narrow run could rewrite category/brand slugs. New mlEntityInScope() check gates each phase by the run's per-entity flags (run_categories, run_manufacturers, run_products, run_information): a scoped run only syncs translations for the entities chosen, while a full/unscoped run still syncs everything. Term-slug auto-fix is likewise limited to taxonomies in scope. This means "Products only", "Pages only", etc. will not touch the categories you manually corrected in WooCommerce.
+
 2026-06-04 - version 2.5.90
 * Fixed - ENTITY SELECTION now strictly honoured for multilingual. Previously the multilingual/translation sync step ran whenever WPML/Polylang was enabled in Settings, regardless of which entities the user selected — so choosing "CMS Pages only" would still re-sync category (and other taxonomy) translations, touching data the user intentionally left alone. The migration config bridge now preserves an explicit run_multilingual=0 from the entity selection instead of overriding it from the global setting. Selecting specific entities without multilingual will no longer run the multilingual step.
 

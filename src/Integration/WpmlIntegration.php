@@ -110,6 +110,40 @@ class WpmlIntegration extends AbstractMigrator {
 
     // ── Entry point (implements AbstractMigrator::migrate) ────────────────────
 
+    /**
+     * Should the multilingual step sync translations for a given entity on THIS run?
+     *
+     * The translation sync must follow the same entity selection as the migration
+     * itself. If the user ran "Products only", we sync product translations but must
+     * NOT re-sync category/brand translations (which would touch terms left alone).
+     *
+     * Rule: when the run config carries explicit per-entity flags (run_categories,
+     * run_products, run_manufacturers, …) — i.e. the user selected specific entities —
+     * honour the matching flag. When NO per-entity flags are present at all (a full
+     * migration with no narrowing), everything is in scope.
+     *
+     * @param string $entity One of: categories, manufacturers, products, information.
+     */
+    private function mlEntityInScope( string $entity ): bool {
+        $mig = $this->config['migration'] ?? [];
+
+        // Did the caller specify ANY explicit per-entity run flags? If not, this is a
+        // broad run and everything is in scope.
+        $entity_flags = [ 'run_categories', 'run_manufacturers', 'run_products', 'run_information', 'run_tax', 'run_orders', 'run_customers', 'run_coupons' ];
+        $has_explicit = false;
+        foreach ( $entity_flags as $f ) {
+            if ( array_key_exists( $f, $mig ) ) { $has_explicit = true; break; }
+        }
+        if ( ! $has_explicit ) {
+            return true; // full / unscoped run — sync all.
+        }
+
+        // Otherwise honour the specific flag for this entity (default false when the
+        // selection exists but this entity isn't part of it).
+        $key = 'run_' . $entity;
+        return ! empty( $mig[ $key ] );
+    }
+
     public function migrate(): array {
         global $wpdb;
 
@@ -167,8 +201,12 @@ class WpmlIntegration extends AbstractMigrator {
                 $terms_state['prod_done'] = 0;
             }
 
-            // Categories
-            if ( ( $terms_state['cat_off'] ?? 'done' ) !== 'done' ) {
+            // Categories — only when categories are in scope for this run. When the
+            // user runs a specific entity (e.g. Products only), we must NOT re-sync
+            // category translations: that would touch terms the user left alone.
+            // A run with NO explicit entity scope (full migration) syncs everything.
+            if ( $this->mlEntityInScope( 'categories' )
+                && ( $terms_state['cat_off'] ?? 'done' ) !== 'done' ) {
                 $cat_seo = $this->fetchSecondaryCategorySeoMap();
                 [ $p, $s, $f, $more ] = $this->translateTerms( 'product_cat', $cat_seo, 'category', (int) $terms_state['cat_off'], 10 );
                 $processed += $p; $skipped += $s; $failed += $f;
@@ -179,10 +217,14 @@ class WpmlIntegration extends AbstractMigrator {
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
                 $this->logger->info( '[multilingual] Categories complete.' );
+            } elseif ( ! $this->mlEntityInScope( 'categories' ) && ( $terms_state['cat_off'] ?? 'done' ) !== 'done' ) {
+                $terms_state['cat_off'] = 'done';
+                $this->logger->info( '[multilingual] Categories not in this run\'s scope — skipping category translation sync.' );
             }
 
-            // Brands
-            if ( $brand_tax !== '' && ( $terms_state['brand_off'] ?? 'done' ) !== 'done' ) {
+            // Brands — only when manufacturers/brands are in scope.
+            if ( $brand_tax !== '' && $this->mlEntityInScope( 'manufacturers' )
+                && ( $terms_state['brand_off'] ?? 'done' ) !== 'done' ) {
                 [ $p, $s, $f, $more ] = $this->translateTerms( $brand_tax, [], 'manufacturer', (int) $terms_state['brand_off'], 10 );
                 $processed += $p; $skipped += $s; $failed += $f;
                 $terms_state['brand_off'] = $more ? (int) $terms_state['brand_off'] + 10 : 'done';
@@ -192,6 +234,9 @@ class WpmlIntegration extends AbstractMigrator {
                     return [ 'processed' => $processed, 'skipped' => $skipped, 'failed' => $failed, 'is_done' => false ];
                 }
                 $this->logger->info( '[multilingual] Brands complete.' );
+            } elseif ( ! $this->mlEntityInScope( 'manufacturers' ) && ( $terms_state['brand_off'] ?? 'done' ) !== 'done' ) {
+                $terms_state['brand_off'] = 'done';
+                $this->logger->info( '[multilingual] Brands not in this run\'s scope — skipping brand translation sync.' );
             }
 
             $terms_state['done'] = true;
@@ -226,7 +271,10 @@ class WpmlIntegration extends AbstractMigrator {
 
         $total = $this->countUntranslated( $wpdb );
 
-        if ( $total > 0 ) {
+        // Products phase — only when products are in scope for this run. If products
+        // are NOT in scope we fall through to Phase 3 (pages) rather than returning,
+        // so a "Pages only" run still translates pages.
+        if ( $this->mlEntityInScope( 'products' ) && $total > 0 ) {
             // Chunk size must be small enough that a full chunk — including the
             // end-of-chunk checkpoint update + redirect flush below — finishes
             // inside PHP max_execution_time. A 500-row chunk of fully-decorated
@@ -292,11 +340,20 @@ class WpmlIntegration extends AbstractMigrator {
         }
 
         // ── Phase 3: Pages + completion ───────────────────────────────────────
-        [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $sfx, '_octowoo_desc' . $sfx );
-        $processed += $p; $skipped += $s; $failed += $f;
+        if ( $this->mlEntityInScope( 'information' ) ) {
+            [ $p, $s, $f ] = $this->translatePosts( 'page', '_octowoo_title' . $sfx, '_octowoo_desc' . $sfx );
+            $processed += $p; $skipped += $s; $failed += $f;
+        } else {
+            $this->logger->info( '[multilingual] Pages not in this run\'s scope — skipping page translation sync.' );
+        }
 
-        $fix_taxes  = array_filter( [ 'product_cat', $brand_tax ?: null ] );
-        $slug_fixed = $this->autoFixTempSlugs( $fix_taxes );
+        // Only auto-fix term slugs for taxonomies that were actually in scope, so a
+        // products-only or pages-only run never rewrites category/brand slugs.
+        $fix_taxes = array_filter( [
+            $this->mlEntityInScope( 'categories' ) ? 'product_cat' : null,
+            ( $this->mlEntityInScope( 'manufacturers' ) && $brand_tax ) ? $brand_tax : null,
+        ] );
+        $slug_fixed = $fix_taxes ? $this->autoFixTempSlugs( $fix_taxes ) : 0;
         if ( $slug_fixed > 0 ) { $this->logger->info( "[multilingual] Auto-fixed {$slug_fixed} temp slug(s)." ); }
 
         wp_suspend_cache_invalidation( false );
